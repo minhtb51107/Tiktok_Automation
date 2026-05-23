@@ -2,20 +2,33 @@ import { Injectable, Logger } from '@nestjs/common';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as dotenv from 'dotenv'; // <--- Thêm thư viện này
+
+// Yêu cầu hệ thống đọc file .env
+dotenv.config(); 
 
 @Injectable()
 export class GeminiService {
   private readonly logger = new Logger(GeminiService.name);
   
-  // TẠM THỜI GẮN CỨNG API KEY Ở ĐÂY CHO NHANH (Sau này rành hơn bạn có thể cho vào file .env)
-  private readonly apiKey = 'AIzaSyD0KmW4MtGGBsqnSwTLyqE0yDpsNz2I-ok'; 
-  private readonly genAI = new GoogleGenerativeAI(this.apiKey);
+  // Lấy Key từ két sắt ra, KHÔNG GHI CỨNG NỮA
+  private readonly apiKey = process.env.GEMINI_API_KEY; 
+  private genAI: GoogleGenerativeAI;
+
+  constructor() {
+    // Kiểm tra xem đã có key chưa
+    if (!this.apiKey) {
+      this.logger.error('❌ KHÔNG TÌM THẤY GEMINI_API_KEY trong file .env');
+    } else {
+      this.genAI = new GoogleGenerativeAI(this.apiKey);
+    }
+  }
 
   async generateLyricScript(whisperData: any) {
     this.logger.log(`🤖 Đang nhờ Gemini dịch lời bài hát và chèn hiệu ứng...`);
 
-    // Dùng model 1.5 Flash: Tốc độ cực nhanh và miễn phí
-    const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    // Dùng model mới nhất
+    const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     // Trích xuất đoạn text và thời gian từ Whisper để gửi cho AI
     const rawSegments = whisperData.segments.map(seg => ({

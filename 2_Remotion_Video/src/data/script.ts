@@ -1,168 +1,111 @@
-// src/data/script.ts
-
 const sec = (seconds: number) => Math.round(seconds * 30);
 
 export interface WordData {
   text: string;
-  start: number; 
-  // Bổ sung hiệu ứng 'neon-rainbow' vào kiểu dữ liệu
-  effect?: 'shake' | 'glitch' | 'glow-gold' | 'throw-away' | 'flash-climax' | 'neon-rainbow'; 
+  start: number;
+  effect?: 'shake' | 'glitch' | 'glow-gold' | 'throw-away' | 'flash-climax' | 'neon-rainbow';
 }
 
 export interface LyricData {
-  start: number;     
-  duration: number;  
-  words: WordData[]; 
+  start: number;
+  duration: number;
+  words: WordData[];
   vietnamese: string;
 }
 
 export const LYRIC_SCRIPT: LyricData[] = [
-  // ĐOẠN 1: ÁP LỰC, ĐỜI THƯỜNG
   {
     start: sec(4.48),
-    duration: sec(2.7),
+    duration: sec(8.76 - 4.48),
     words: [
-      { text: "I", start: sec(4.48) },
-      { text: "got", start: sec(5.08) },
-      { text: "a", start: sec(5.68) },
-      { text: "lot", start: sec(5.92) },
-      { text: "on", start: sec(6.2) },
-      { text: "my", start: sec(6.34) },
-      { text: "mind", start: sec(6.62), effect: 'shake' }
+      {text:"I",start:4.480000000000002},
+      {text:"got",start:5.080000000000001},
+      {text:"a",start:5.68},
+      {text:"lot",start:5.92, effect: 'shake'},
+      {text:"of",start:6.2},
+      {text:"my",start:6.34},
+      {text:"mind,",start:6.62, effect: 'glitch'},
+      {text:"got",start:7.32},
+      {text:"some",start:7.5},
+      {text:"more",start:7.78, effect: 'glow-gold'},
+      {text:"of",start:8.1},
+      {text:"my",start:8.28},
+      {text:"plate",start:8.46, effect: 'throw-away'}
     ],
-    vietnamese: "Anh có rất nhiều suy nghĩ trong đầu"
+    vietnamese: "Đầu óc bộn bề, trăm công nghìn việc đang chờ"
   },
-  {
-    start: sec(7.32),
-    duration: sec(1.44),
-    words: [
-      { text: "Got", start: sec(7.32) },
-      { text: "some", start: sec(7.5) },
-      { text: "more", start: sec(7.78) },
-      { text: "on", start: sec(8.1) },
-      { text: "my", start: sec(8.28) },
-      { text: "plate", start: sec(8.46), effect: 'glitch' }
-    ],
-    vietnamese: "Và còn nhiều bộn bề lo toan"
-  },
-  // ĐOẠN 2: ĐIỂM ĐỔI MOOD (ĐƯỢC CỨU RỖI)
   {
     start: sec(8.76),
-    duration: sec(2.1),
+    duration: sec(12.52 - 8.76),
     words: [
-      { text: "My", start: sec(8.76) },
-      { text: "baby", start: sec(9.12), effect: 'glow-gold' },
-      { text: "got", start: sec(9.54) },
-      { text: "me", start: sec(9.84) },
-      { text: "looking", start: sec(10.06) },
-      { text: "forward", start: sec(10.44) }
+      {text:"My",start:8.76},
+      {text:"baby",start:9.12, effect: 'flash-climax'},
+      {text:"got",start:9.54},
+      {text:"me",start:9.84},
+      {text:"looking",start:10.06},
+      {text:"forward",start:10.44, effect: 'neon-rainbow'},
+      {text:"to",start:10.86},
+      {text:"the",start:11.24},
+      {text:"end",start:11.52, effect: 'shake'},
+      {text:"of",start:11.78},
+      {text:"the",start:12},
+      {text:"day",start:12.16, effect: 'glitch'}
     ],
-    vietnamese: "Người yêu ơi, em khiến anh chỉ mong chờ"
+    vietnamese: "Anh/Em yêu khiến em mong chờ từng giây phút cuối ngày"
   },
-  {
-    start: sec(10.86),
-    duration: sec(1.66),
-    words: [
-      { text: "to", start: sec(10.86) },
-      { text: "the", start: sec(11.24) },
-      { text: "end", start: sec(11.52) },
-      { text: "of", start: sec(11.78) },
-      { text: "the", start: sec(12.0) },
-      { text: "day", start: sec(12.16), effect: 'glow-gold' }
-    ],
-    vietnamese: "đến khoảnh khắc cuối ngày"
-  },
-  // ĐOẠN 3: LỜI RỦ RÊ TRỐN KHỎI QUÁ KHỨ
   {
     start: sec(12.52),
-    duration: sec(1.4),
+    duration: sec(18.42 - 12.52),
     words: [
-      { text: "What", start: sec(12.52) },
-      { text: "you", start: sec(12.88) },
-      { text: "say?", start: sec(13.08) }
+      {text:"What",start:12.52},
+      {text:"you",start:12.88},
+      {text:"say,",start:13.08},
+      {text:"you",start:13.92},
+      {text:"and",start:14.78},
+      {text:"me,",start:14.98},
+      {text:"just",start:15.7},
+      {text:"forget",start:16.64, effect: 'glow-gold'},
+      {text:"about",start:17.1},
+      {text:"the",start:17.8},
+      {text:"past",start:18.04, effect: 'throw-away'}
     ],
-    vietnamese: "Em nói gì cơ?"
-  },
-  // CÂU 4.2: ĐÃ THAY ĐỔI SANG NEON RAINBOW TẠI ĐÂY
-  {
-    start: sec(13.92),
-    duration: sec(1.78),
-    words: [
-      { text: "You", start: sec(13.92), effect: 'neon-rainbow' },
-      { text: "and", start: sec(14.78), effect: 'neon-rainbow' },
-      { text: "me", start: sec(14.98), effect: 'neon-rainbow' }
-    ],
-    vietnamese: "Chỉ có anh và em"
+    vietnamese: "Sao anh/em không nói gì? Em và anh/em mình cùng quên hết đi quá khứ nhé"
   },
   {
-    start: sec(15.7),
-    duration: sec(2.72),
+    start: sec(19),
+    duration: sec(23.62 - 19),
     words: [
-      { text: "just", start: sec(15.7) },
-      { text: "forget", start: sec(16.64) },
-      { text: "about", start: sec(17.1) },
-      { text: "the", start: sec(17.8) },
-      { text: "past", start: sec(18.04), effect: 'glitch' }
+      {text:"Throw",start:18.779999999999998, effect: 'flash-climax'},
+      {text:"it",start:19.08},
+      {text:"in",start:19.48},
+      {text:"the",start:19.72},
+      {text:"trash,",start:19.88, effect: 'neon-rainbow'},
+      {text:"what",start:20.24},
+      {text:"you",start:20.32},
+      {text:"say,",start:20.5},
+      {text:"you",start:21.16},
+      {text:"and",start:22.2},
+      {text:"me",start:22.42}
     ],
-    vietnamese: "Hãy quên đi quá khứ"
+    vietnamese: "Quẳng hết vào sọt rác! Anh/em nghĩ sao, em và anh/em?"
   },
-  {
-    start: sec(18.78),
-    duration: sec(1.4),
-    words: [
-      { text: "Throw", start: sec(18.78) },
-      { text: "it", start: sec(19.08) },
-      { text: "in", start: sec(19.48) },
-      { text: "the", start: sec(19.72) },
-      { text: "trash", start: sec(19.88), effect: 'throw-away' }
-    ],
-    vietnamese: "Vứt bỏ hết tất cả đi"
-  },
-  {
-    start: sec(20.24),
-    duration: sec(0.92),
-    words: [
-      { text: "what", start: sec(20.24) },
-      { text: "you", start: sec(20.32) },
-      { text: "say?", start: sec(20.5) }
-    ],
-    vietnamese: "Em nói gì cơ?"
-  },
-  // CÂU 7.2: ĐÃ THAY ĐỔI SANG NEON RAINBOW TẠI ĐÂY
-  {
-    start: sec(21.16),
-    duration: sec(2.46),
-    words: [
-      { text: "you", start: sec(21.16), effect: 'neon-rainbow' },
-      { text: "and", start: sec(22.2), effect: 'neon-rainbow' },
-      { text: "me", start: sec(22.42), effect: 'neon-rainbow' }
-    ],
-    vietnamese: "Chỉ có đôi ta"
-  },
-  // ĐOẠN CUỐI: TỰ DO VÀ CLIMAX
   {
     start: sec(23.62),
-    duration: sec(2.06),
+    duration: sec(27.74 - 23.62),
     words: [
-      { text: "Live", start: sec(23.62) },
-      { text: "the", start: sec(24.08) },
-      { text: "life", start: sec(24.3), effect: 'glow-gold' },
-      { text: "we", start: sec(24.76) },
-      { text: "never", start: sec(25.02) },
-      { text: "had", start: sec(25.38) }
+      {text:"Let",start:23.62},
+      {text:"the",start:24.08},
+      {text:"life",start:24.3},
+      {text:"we",start:24.76},
+      {text:"never",start:25.02, effect: 'shake'},
+      {text:"had,",start:25.38, effect: 'glitch'},
+      {text:"like",start:25.68},
+      {text:"I",start:25.96},
+      {text:"never",start:26.18, effect: 'glow-gold'},
+      {text:"thought",start:26.58},
+      {text:"we'd",start:27.18},
+      {text:"love",start:27.54, effect: 'throw-away'}
     ],
-    vietnamese: "Sống một cuộc đời chưa từng trải qua"
-  },
-  {
-    start: sec(25.68),
-    duration: sec(2.06),
-    words: [
-      { text: "like", start: sec(25.68) },
-      { text: "we're", start: sec(25.96) },
-      { text: "never", start: sec(26.18) },
-      { text: "going", start: sec(26.58) },
-      { text: "back", start: sec(27.18), effect: 'flash-climax' }
-    ],
-    vietnamese: "Và chẳng bao giờ muốn quay đầu lại"
+    vietnamese: "Cho cuộc đời ta những gì chưa từng có, như thể em chưa bao giờ nghĩ mình sẽ yêu anh/em vậy"
   }
 ];
