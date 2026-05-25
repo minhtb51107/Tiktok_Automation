@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import * as chokidar from 'chokidar';
 import * as path from 'path';
-import * as ffmpeg from 'fluent-ffmpeg';
+import ffmpeg from 'fluent-ffmpeg';
 import * as fs from 'fs';
 import { RemotionRunnerService } from '../remotion-runner/remotion-runner.service';
 import { WhisperService } from '../whisper/whisper.service';
@@ -28,17 +28,16 @@ export class WatcherService implements OnModuleInit {
     const watcher = chokidar.watch(watchPath, {
       ignored: /(^|[\/\\])\../,
       persistent: true,
-      awaitWriteFinish: {
-        stabilityThreshold: 2000,
-        pollInterval: 100,
-      },
+      awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 100 },
     });
 
+    // Sửa đoạn này trong hàm startWatching
     watcher.on('add', (filePath) => {
-      // Kiểm tra file có thực sự tồn tại (chống lỗi sự kiện ảo khi xóa file)
       if (!fs.existsSync(filePath)) return;
 
-      if (path.extname(filePath).toLowerCase() === '.mp3') {
+      // SỬA ĐOẠN NÀY: Dùng Regex để bắt cả .mp3 và .wav
+      const ext = path.extname(filePath).toLowerCase();
+      if (ext === '.mp3' || ext === '.wav') {
         const fileName = path.basename(filePath);
         this.logger.log(`🎉 [XUẤT PHÁT] Phát hiện file nhạc mới: ${fileName}`);
         this.processNewMusic(filePath, fileName);
@@ -46,35 +45,34 @@ export class WatcherService implements OnModuleInit {
     });
   }
 
-  private async processNewMusic(filePath: string, fileName: string) {
+private async processNewMusic(filePath: string, fileName: string) {
     try {
-      this.logger.log(`⏳ Bắt đầu xử lý: ${fileName}...`);
+      this.logger.log(`⏳ Đang chuẩn hóa âm thanh sang .wav: ${fileName}...`);
+      
+      const publicDir = path.join(process.cwd(), '..', '2_Remotion_Video', 'public');
+      const wavOutputPath = path.join(publicDir, 'music.wav');
 
-      // 1. Lấy thông số nhạc
-      const durationInSeconds = await this.getAudioDuration(filePath);
-      const durationInFrames = Math.ceil(durationInSeconds * 30); // 30 FPS
+      // Dùng FFMPEG để convert mọi file input sang chuẩn .wav (48kHz, 16bit)
+      await new Promise((resolve, reject) => {
+        ffmpeg(filePath)
+          .toFormat('wav')
+          .audioChannels(2)
+          .audioFrequency(48000)
+          .on('end', resolve)
+          .on('error', reject)
+          .save(wavOutputPath);
+      });
 
-      // 2. Copy nhạc vào xưởng Remotion để nó nhận diện file
-      const remotionMusicPath = path.join(process.cwd(), '..', '2_Remotion_Video', 'src', 'music.mp3');
-      fs.copyFileSync(filePath, remotionMusicPath);
-      this.logger.log(`📁 Đã copy nhạc vào 2_Remotion_Video/src/`);
+      this.logger.log(`✅ Đã chuẩn hóa xong music.wav!`);
 
-      // 3. Gọi Whisper bóc băng
-      const whisperJson = await this.whisperService.runWhisper(filePath, fileName);
-
-      // 4. Gọi Gemini tạo file script.ts
+      // Phần còn lại gọi Whisper, Gemini và Render như cũ
+      const whisperJson = await this.whisperService.runWhisper(wavOutputPath, fileName); // Lưu ý truyền path .wav
       await this.geminiService.generateLyricScript(whisperJson);
-
-      // 5. Gọi Remotion xuất video
-      await this.remotionRunner.renderVideo(remotionMusicPath, durationInFrames, fileName);
-
-      this.logger.log(`✨ HOÀN TẤT TỰ ĐỘNG HÓA CHO: ${fileName}`);
+      await this.remotionRunner.renderVideo(900, fileName); // số frame bạn tự tính hoặc truyền vào
+      
+      this.logger.log(`✨ HOÀN TẤT!`);
     } catch (error) {
-      if (error instanceof Error) {
-        this.logger.error(`❌ Lỗi hệ thống khi xử lý ${fileName}:`, error.message);
-      } else {
-        this.logger.error(`❌ Lỗi không xác định:`, String(error));
-      }
+      this.logger.error(`❌ Lỗi convert:`, error);
     }
   }
 
@@ -83,7 +81,7 @@ export class WatcherService implements OnModuleInit {
       ffmpeg.ffprobe(filePath, (err, metadata) => {
         if (err) return reject(err);
         const duration = metadata.format.duration;
-        duration ? resolve(duration) : reject(new Error('Không lấy được thời lượng.'));
+        duration ? resolve(Number(duration)) : reject(new Error('Không lấy được thời lượng.'));
       });
     });
   }

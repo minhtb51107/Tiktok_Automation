@@ -1,65 +1,56 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { bundle } from '@remotion/bundler';
-import { renderMedia, selectComposition } from '@remotion/renderer';
+import { spawn } from 'child_process';
 import * as path from 'path';
 
 @Injectable()
 export class RemotionRunnerService {
   private readonly logger = new Logger(RemotionRunnerService.name);
 
-  async renderVideo(audioPath: string, durationInFrames: number, fileName: string) {
-    this.logger.log(`🚀 Bắt đầu lệnh Render Video cho: ${fileName}`);
+  async renderVideo(durationInFrames: number, originalFileName: string): Promise<void> {
+    this.logger.log(`🚀 Bắt đầu lệnh Render Video cho: ${originalFileName}`);
     
-    try {
-      const remotionProjectDir = path.join(process.cwd(), '..', '2_Remotion_Video');
-      const entryPoint = path.join(remotionProjectDir, 'src', 'index.ts');
+    return new Promise((resolve, reject) => {
+      const remotionProjectDir = path.resolve(process.cwd(), '..', '2_Remotion_Video');
       
-      const outputFileName = fileName.replace('.mp3', '.mp4');
-      const outputLocation = path.join(process.cwd(), '..', '3_Storage_Assets', 'output_ready', outputFileName);
-      const compositionId = 'ProLyricVideo'; 
+      // FIX LỖI ĐUÔI FILE: Bóc lấy tên gốc (ví dụ "music") và gắn cứng đuôi ".mp4"
+      const baseName = path.parse(originalFileName).name;
+      const outputFileName = `${baseName}.mp4`;
+      
+      const outputLocation = path.resolve(process.cwd(), '..', '3_Storage_Assets', 'output_ready', outputFileName);
 
-      this.logger.log(`📦 Đang chuẩn bị Xưởng sản xuất (Bundling)...`);
-      const bundleLocation = await bundle({
-        entryPoint,
-        webpackOverride: (config) => config,
+      this.logger.log(`🎬 Đang tiến hành Render ngầm... (Hãy xem thanh tiến độ của Remotion bên dưới 👇)`);
+      
+      const cliArgs = [
+        'remotion', 'render', 'src/index.ts', 'ProLyricVideo', outputLocation,
+        '--codec=h264',           
+        '--audio-codec=aac',      
+        '--pixel-format=yuv420p', 
+        '--crf=22',               // 👈 ĐÃ SỬA: Đưa về chuẩn 22 để trình phát video không bị sập
+        '--log=verbose' 
+      ];
+
+      this.logger.debug(`[DEBUG 2] Lệnh thực thi CLI: npx ${cliArgs.join(' ')}`);
+
+      const remotionProcess = spawn('npx', cliArgs, {
+        cwd: remotionProjectDir,
+        shell: true,
+        stdio: 'inherit' 
       });
 
-      this.logger.log(`🔍 Đang lấy thông số khung hình...`);
-      const composition = await selectComposition({
-        serveUrl: bundleLocation,
-        id: compositionId,
+      remotionProcess.on('close', (code) => {
+        if (code === 0) {
+          this.logger.log(`✅ THÀNH CÔNG! Đã xuất video tại: ${outputLocation}`);
+          resolve();
+        } else {
+          this.logger.error(`❌ Lỗi khi render: Tiến trình kết thúc với mã lỗi ${code}`);
+          reject(new Error(`Render failed with code ${code}`));
+        }
       });
-
-      composition.durationInFrames = durationInFrames;
-
-      this.logger.log(`🎬 Đang Render video... (Vui lòng đợi)`);
       
-      // Biến ghi nhớ tiến độ để tránh log spam
-      let lastReportedProgress = -1;
-
-await renderMedia({
-        composition,
-        serveUrl: bundleLocation,
-        codec: 'h264',
-        outputLocation,
-        timeoutInMilliseconds: 120000, // <--- THÊM DÒNG NÀY VÀO (Cho phép tối đa 120 giây/1 khung hình)
-        onProgress: ({ progress }) => {
-          const currentProgress = Math.floor(progress * 10) * 10; 
-          if (currentProgress > lastReportedProgress) {
-            this.logger.log(`⏳ Tiến độ Render: ${currentProgress}%`);
-            lastReportedProgress = currentProgress;
-          }
-        },
+      remotionProcess.on('error', (err) => {
+        this.logger.error(`❌ Lỗi hệ thống: ${err.message}`);
+        reject(err);
       });
-
-      this.logger.log(`✅ THÀNH CÔNG! Đã xuất video tại: ${outputLocation}`);
-      
-    } catch (error) {
-      if (error instanceof Error) {
-        this.logger.error(`❌ Lỗi khi render: ${error.message}`);
-      } else {
-        this.logger.error(`❌ Lỗi không xác định khi render: ${String(error)}`);
-      }
-    }
+    });
   }
 }

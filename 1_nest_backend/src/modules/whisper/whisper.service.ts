@@ -17,7 +17,7 @@ export class WhisperService {
     // Đường dẫn lưu file json tạm thời
     const outputDir = path.join(process.cwd(), '..', '3_Storage_Assets', 'temp_whisper');
     
-    // Lệnh Terminal y hệt như bạn hay gõ (Mình thêm --word_timestamps True để lấy thời gian khớp từng chữ)
+    // Lệnh Terminal
     const command = `whisper "${audioPath}" --model base --output_format json --word_timestamps True --output_dir "${outputDir}"`;
 
     try {
@@ -25,8 +25,10 @@ export class WhisperService {
       await execAsync(command);
       this.logger.log(`✅ Whisper đã nghe và bóc băng xong!`);
 
-      // 2. Tìm và đọc file JSON vừa được tạo ra
-      const jsonFileName = fileName.replace('.mp3', '.json');
+      // 2. TÌM VÀ ĐỌC FILE JSON (ĐÃ FIX LỖI TÊN FILE)
+      // Dùng path.parse để lấy chữ "music" bất kể đuôi là gì
+      const baseName = path.parse(fileName).name; 
+      const jsonFileName = `${baseName}.json`; 
       const jsonFilePath = path.join(outputDir, jsonFileName);
 
       const rawJsonData = fs.readFileSync(jsonFilePath, 'utf8');

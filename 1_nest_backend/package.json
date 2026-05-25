@@ -27,6 +27,8 @@
     "@prisma/client": "^5.22.0",
     "@remotion/bundler": "^4.0.465",
     "@remotion/renderer": "^4.0.465",
+    "@remotion/tailwind": "^4.0.465",
+    "@remotion/tailwind-v4": "^4.0.465",
     "axios": "^1.16.1",
     "chokidar": "^4.0.3",
     "dotenv": "^17.4.2",
