@@ -9,23 +9,20 @@ dotenv.config();
 @Injectable()
 export class GeminiService {
   private readonly logger = new Logger(GeminiService.name);
-  
   private apiKeys: string[] = [];
   private currentKeyIndex: number = 0;
   private genAI: GoogleGenerativeAI;
 
   constructor() {
     const envKeys = process.env.GEMINI_API_KEY;
-    
     if (!envKeys) {
       this.logger.error('❌ KHÔNG TÌM THẤY GEMINI_API_KEY trong file .env');
     } else {
       this.apiKeys = envKeys.split(',').map(key => key.trim()).filter(key => key.length > 0);
-      
       if (this.apiKeys.length === 0) {
         this.logger.error('❌ Danh sách Key Gemini trống!');
       } else {
-        this.logger.log(`🔑 Đã nạp thành công ${this.apiKeys.length} API Key vào hệ thống xoay vòng (Rotation).`);
+        this.logger.log(`🔑 Đã nạp thành công ${this.apiKeys.length} API Key.`);
         this.genAI = new GoogleGenerativeAI(this.apiKeys[this.currentKeyIndex]);
       }
     }
@@ -33,75 +30,94 @@ export class GeminiService {
 
   private rotateKey() {
     this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
-    const newKey = this.apiKeys[this.currentKeyIndex];
-    this.genAI = new GoogleGenerativeAI(newKey);
-    this.logger.warn(`🔄 Đã nạp đạn! Xoay vòng sang API Key số ${this.currentKeyIndex + 1}/${this.apiKeys.length}`);
+    this.genAI = new GoogleGenerativeAI(this.apiKeys[this.currentKeyIndex]);
+    this.logger.warn(`🔄 Đã chuyển sang API Key số ${this.currentKeyIndex + 1}`);
   }
 
-  async generateLyricScript(whisperData: any) {
-    this.logger.log(`🤖 Đang nhờ Gemini dịch lời bài hát và chèn hiệu ứng...`);
+  async generateLyricScript(whisperData: any, originalLyrics?: string) {
+    this.logger.log(`🤖 Đang nhờ Gemini phân tích bài hát và ráp nối dữ liệu...`);
 
-    const rawSegments = whisperData.segments.map(seg => ({
+    const rawSegments = whisperData.segments.map((seg: any) => ({
       start: seg.start,
       end: seg.end,
-      words: seg.words.map(w => ({ text: w.word.trim(), start: w.start }))
+      words: seg.words.map((w: any) => ({ text: w.word.trim(), start: w.start }))
     }));
 
-    // ĐÃ SỬA: Ép AI chỉ trả về JSON thuần túy
-    const prompt = `
-    Tôi có dữ liệu thời gian bài hát:
-    ${JSON.stringify(rawSegments)}
+    let prompt = `Tôi có dữ liệu thời gian (timestamp) của một bài hát được bóc tách bằng AI (có thể có sai sót về mặt từ ngữ):\n${JSON.stringify(rawSegments)}\n\n`;
 
-    Nhiệm vụ của bạn:
-    1. Dịch ý nghĩa mỗi câu hát sang tiếng Việt thật mượt mà, hợp ngữ cảnh.
-    2. Ở những từ khóa mang cảm xúc mạnh, hãy ngẫu nhiên gán thêm thuộc tính effect: 'shake' | 'glitch' | 'glow-gold' | 'throw-away' | 'flash-climax' | 'neon-rainbow'.
-    3. Thời gian start và duration giữ nguyên là số thực (giây).
+    if (originalLyrics) {
+      prompt += `⚠️ QUAN TRỌNG: Dưới đây là TOÀN BỘ LỜI BÀI HÁT GỐC CHÍNH XÁC 100% từ kho dữ liệu:\n"""\n${originalLyrics}\n"""\n
+      HƯỚNG DẪN XỬ LÝ BẢN REMIX / ĐOẠN TRÍCH NGẮN (ĐỌC KỸ):
+      - File nhạc hiện tại có thể chỉ là một đoạn ngắn, một bản Remix, hoặc chỉ hát một phần nhỏ (ví dụ: chỉ hát đoạn điệp khúc) của bài hát gốc ở trên.
+      - Hãy đối chiếu phần chữ lủng củng mà AI nghe được (trong dữ liệu timestamp) với TOÀN BỘ LỜI BÀI HÁT GỐC để tìm ra xem đoạn nhạc này đang thực sự hát khúc nào.
+      - BẠN CHỈ ĐƯỢC LẤY những câu thực sự có hát trong đoạn nhạc để khớp thời gian. Hãy BỎ QUA HOÀN TOÀN các đoạn/câu lyric khác không được hát. Tuyệt đối KHÔNG ĐƯỢC nhồi nhét toàn bộ lời bài hát gốc vào nếu bài nhạc không hát hết.
+      
+      QUÂN LỆNH KHỚP CHỮ:
+      1. Đối với những câu thực sự được hát, bạn phải dùng CHÍNH XÁC từng từ ngữ và chính tả từ LỜI BÀI HÁT GỐC ở trên để thay thế cho phần chữ bị sai của timestamp.
+      2. Phải tuân thủ nghiêm ngặt việc CHIA NHỎ các đoạn hát thành các câu CỰC NGẮN (từ 3 đến tối đa 7 từ mỗi câu) để làm video Tiktok. Không gom câu dài.
+      3. Dự đoán "Tên bài hát" và "Ca sĩ/Tác giả" thể hiện bài này.\n`;
+    } else {
+      prompt += `Nhiệm vụ của bạn:\n1. Dựa vào dữ liệu timestamp, hãy dự đoán chính xác "Tên bài hát" và "Ca sĩ/Tác giả". Nếu quá lạ hãy để "Unknown Song" và "Unknown Artist".\n`;
+    }
 
-    QUAN TRỌNG NHẤT: BẠN CHỈ ĐƯỢC TRẢ VỀ ĐÚNG 1 MẢNG JSON HỢP LỆ. KHÔNG CÓ BẤT KỲ ĐOẠN TEXT GIẢI THÍCH NÀO TRƯỚC HAY SAU.
-    Ví dụ định dạng bạn phải trả về:
-    [
-      {
-        "start": 0.5,
-        "duration": 2.5,
-        "vietnamese": "Lời dịch câu 1",
-        "words": [
-          { "text": "Hello", "start": 0.5, "effect": "shake" }
-        ]
-      }
-    ]
+    // ĐÂY LÀ PHẦN ĐÃ ĐƯỢC NÂNG CẤP MẠNH MẼ ĐỂ TRỊ BỆNH DỊCH THÔ CỨNG
+    prompt += `
+    ⚠️ QUÂN LỆNH DỊCH THUẬT TIẾNG VIỆT (VÔ CÙNG QUAN TRỌNG):
+    - BẠN LÀ MỘT NHÀ THƠ, MỘT DỊCH GIẢ ÂM NHẠC CHUYÊN NGHIỆP TRÊN TIKTOK. 
+    - TUYỆT ĐỐI KHÔNG dịch thô cứng kiểu word-by-word (Google Translate). 
+    - ĐẠI TỪ XƯNG HÔ: Đánh giá nội dung bài hát. Nếu là nhạc tình yêu, tâm trạng, buồn bã hay thả thính, TUYỆT ĐỐI KHÔNG dùng "Tôi" và "Bạn". Hãy linh hoạt sử dụng "Anh" - "Em", "Người" - "Ta", v.v... sao cho thật lãng mạn, da diết và tự nhiên.
+    - DỊCH THOÁT Ý: Nắm bắt đúng tâm tư, cảm xúc và linh hồn của bài hát. Đôi khi không cần dịch sát nghĩa đen, mà phải dịch đúng cái "vibe" (cảm giác) của câu hát sang tiếng Việt thật mượt mà, đậm chất thơ.
+
+    Các yêu cầu bắt buộc khác:
+    - Giá trị 'start' của mỗi câu phải là 'start' của từ đầu tiên trong câu đó. 'duration' là thời gian hiển thị.
+
+    QUAN TRỌNG NHẤT: BẠN CHỈ ĐƯỢC TRẢ VỀ ĐÚNG 1 OBJECT JSON HỢP LỆ. KHÔNG GIẢI THÍCH GÌ THÊM.
+    Ví dụ định dạng trả về:
+    {
+      "songTitle": "Tên bài hát",
+      "artist": "Tên ca sĩ",
+      "lyrics": [
+        {
+          "start": 4.48,
+          "duration": 2.7,
+          "vietnamese": "Trong đầu anh giờ đây ngập tràn bóng hình em",
+          "words": [
+            { "text": "I", "start": 4.48 },
+            { "text": "got", "start": 5.08 },
+            { "text": "a", "start": 5.68 }
+          ]
+        }
+      ]
+    }
     `;
 
-    let retries = this.apiKeys.length * 2; 
+    let retries = 6; 
+    let currentWaitTime = 5000; 
+    let currentModel = 'gemini-2.5-flash'; 
+    
     const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
     while (retries > 0) {
       try {
-        const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-        
+        const model = this.genAI.getGenerativeModel({ model: currentModel });
         const result = await model.generateContent(prompt);
         let aiResponse = result.response.text();
         
-        // Dọn dẹp rác markdown nếu AI lỡ tay bọc code
         aiResponse = aiResponse.replace(/```json/g, '').replace(/```typescript/g, '').replace(/```/g, '').trim();
 
-        // 1. TÌM VÀ CẮT LẤY CHUỖI JSON ĐỂ TRÁNH LỖI AI GIẢI THÍCH LẰNG NHẰNG
-        const jsonStart = aiResponse.indexOf('[');
-        const jsonEnd = aiResponse.lastIndexOf(']');
+        const jsonStart = aiResponse.indexOf('{');
+        const jsonEnd = aiResponse.lastIndexOf('}');
         
         if (jsonStart === -1 || jsonEnd === -1) {
-          throw new Error("AI không sinh ra mảng JSON");
+          throw new Error("AI không sinh ra object JSON");
         }
         
         const jsonString = aiResponse.substring(jsonStart, jsonEnd + 1);
-
-        // 2. PARSE ĐỂ KIỂM DUYỆT - Nếu JSON sai cú pháp, nó sẽ Throw Error nhảy xuống catch để auto-retry
         const parsedData = JSON.parse(jsonString);
 
-        // 3. TỰ ĐỘNG SINH CODE TYPESCRIPT CHUẨN 100% TỪ NODE.JS
         const tsContent = `export interface WordData {
   text: string;
   start: number; 
-  effect?: 'shake' | 'glitch' | 'glow-gold' | 'throw-away' | 'flash-climax' | 'neon-rainbow'; 
 }
 
 export interface LyricData {
@@ -111,34 +127,48 @@ export interface LyricData {
   vietnamese: string;
 }
 
-export const LYRIC_SCRIPT: LyricData[] = ${JSON.stringify(parsedData, null, 2)};
+export const LYRIC_SCRIPT: LyricData[] = ${JSON.stringify(parsedData.lyrics, null, 2)};
 `;
 
         const scriptPath = path.join(process.cwd(), '..', '2_Remotion_Video', 'src', 'data', 'script.ts');
         fs.writeFileSync(scriptPath, tsContent, 'utf8');
 
-        this.logger.log(`✅ Tuyệt vời! Gemini đã viết xong JSON và Node.js đã compile ra TypeScript hoàn hảo!`);
-        return true;
+        this.logger.log(`✅ Gemini đã hoàn tất! Bài hát: ${parsedData.songTitle} - ${parsedData.artist} (Model: ${currentModel})`);
+        
+        return {
+          songTitle: parsedData.songTitle,
+          artist: parsedData.artist
+        };
 
       } catch (error: any) {
-        // Nếu lỗi do AI viết sai JSON
-        if (error instanceof SyntaxError || error.message === "AI không sinh ra mảng JSON") {
-          this.logger.warn(`⚠️ AI viết sai cú pháp JSON. Đang bắt AI viết lại...`);
+        if (error instanceof SyntaxError || error.message === "AI không sinh ra object JSON") {
+          this.logger.warn(`⚠️ AI viết sai cú pháp JSON. Đang thử lại...`);
           retries--;
-          continue; // Vòng lại ngay
+          continue; 
         }
 
-        if (error?.status === 429) {
+        if (error?.status === 404) {
+          this.logger.warn(`🚨 Model "${currentModel}" lỗi 404! Chuyển sang "gemini-flash"...`);
+          currentModel = 'gemini-flash';
+          retries--;
+          continue;
+        }
+
+        if (error?.status === 429 || error?.status === 503 || error?.status === 500) {
           retries--;
           if (retries === 0) {
-            this.logger.error(`❌ Đã xoay vòng hết TẤT CẢ các Key nhưng đều bị nghẽn (429).`);
+            this.logger.error(`❌ Đã thử lại nhiều lần nhưng Google vẫn sập! Xin hãy thử lại sau vài phút.`);
             throw error;
           }
-          this.logger.warn(`🔥 Key hiện tại bị nghẽn (429). Chuẩn bị đổi Key...`);
+
+          this.logger.warn(`🔥 Server Gemini đang bận (Lỗi ${error.status}). Sẽ đợi ${currentWaitTime / 1000}s rồi thử lại... (${retries} lần thử còn lại)`);
+          
           this.rotateKey();
-          await delay(2000); 
+          await delay(currentWaitTime);
+          currentWaitTime += 5000; 
+          continue; 
         } else {
-          this.logger.error(`❌ Lỗi không xác định khi nhờ Gemini làm việc:`, error);
+          this.logger.error(`❌ Lỗi Gemini:`, error);
           throw error;
         }
       }

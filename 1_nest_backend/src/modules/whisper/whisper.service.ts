@@ -4,7 +4,6 @@ import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
 
-// Biến hàm exec thành Promise để có thể dùng async/await chờ nó chạy xong
 const execAsync = promisify(exec);
 
 @Injectable()
@@ -14,20 +13,20 @@ export class WhisperService {
   async runWhisper(audioPath: string, fileName: string) {
     this.logger.log(`🎧 Bắt đầu gọi Whisper nghe bài hát: ${fileName}...`);
 
-    // Đường dẫn lưu file json tạm thời
     const outputDir = path.join(process.cwd(), '..', '3_Storage_Assets', 'temp_whisper');
     
-    // Lệnh Terminal
-    const command = `whisper "${audioPath}" --model base --output_format json --word_timestamps True --output_dir "${outputDir}"`;
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+    
+    // NÂNG CẤP LỖ TAI: Dùng model 'small' thay vì 'base'
+    const command = `whisper "${audioPath}" --model small --output_format json --word_timestamps True --output_dir "${outputDir}"`;
 
     try {
-      // 1. NestJS gõ lệnh và ngồi chờ Whisper chạy xong
       await execAsync(command);
       this.logger.log(`✅ Whisper đã nghe và bóc băng xong!`);
 
-      // 2. TÌM VÀ ĐỌC FILE JSON (ĐÃ FIX LỖI TÊN FILE)
-      // Dùng path.parse để lấy chữ "music" bất kể đuôi là gì
-      const baseName = path.parse(fileName).name; 
+      const baseName = path.parse(audioPath).name; 
       const jsonFileName = `${baseName}.json`; 
       const jsonFilePath = path.join(outputDir, jsonFileName);
 
@@ -36,7 +35,6 @@ export class WhisperService {
 
       this.logger.log(`📄 Đã lấy được dữ liệu JSON có chứa timestamp.`);
 
-      // Trả dữ liệu về để chuẩn bị đưa cho AI dịch
       return whisperOutput;
 
     } catch (error) {

@@ -1,7 +1,6 @@
 export interface WordData {
   text: string;
   start: number; 
-  effect?: 'shake' | 'glitch' | 'glow-gold' | 'throw-away' | 'flash-climax' | 'neon-rainbow'; 
 }
 
 export interface LyricData {
@@ -13,284 +12,389 @@ export interface LyricData {
 
 export const LYRIC_SCRIPT: LyricData[] = [
   {
-    "start": 4.52,
-    "duration": 4.24,
-    "vietnamese": "Tôi có nhiều thứ trong đầu, lại thêm việc phải lo.",
+    "start": 0,
+    "duration": 7.1,
+    "vietnamese": "Dù chẳng ngừng nghỉ, tiền cứ cuốn trôi không dứt, ta chẳng thể né tránh mãi một ngày.",
     "words": [
       {
-        "text": "I",
-        "start": 4.52
+        "text": "Even",
+        "start": 0
       },
       {
-        "text": "got",
-        "start": 5.1
+        "text": "I",
+        "start": 0.32
+      },
+      {
+        "text": "wouldn't",
+        "start": 0.58
+      },
+      {
+        "text": "book",
+        "start": 0.84
       },
       {
         "text": "a",
-        "start": 5.68
+        "start": 1.02
       },
       {
-        "text": "lot",
-        "start": 5.92,
-        "effect": "flash-climax"
+        "text": "money",
+        "start": 1.14
       },
       {
-        "text": "of",
-        "start": 6.2
+        "text": "won't",
+        "start": 1.34
       },
       {
-        "text": "my",
-        "start": 6.34
+        "text": "stop",
+        "start": 1.62
       },
       {
-        "text": "mind,",
-        "start": 6.62,
-        "effect": "glitch"
-      },
-      {
-        "text": "got",
-        "start": 7.32
-      },
-      {
-        "text": "some",
-        "start": 7.5
-      },
-      {
-        "text": "more",
-        "start": 7.78
-      },
-      {
-        "text": "of",
-        "start": 8.1
-      },
-      {
-        "text": "my",
-        "start": 8.28
-      },
-      {
-        "text": "plate",
-        "start": 8.48,
-        "effect": "neon-rainbow"
-      }
-    ]
-  },
-  {
-    "start": 8.76,
-    "duration": 3.76,
-    "vietnamese": "Em yêu khiến tôi mong chờ được hết ngày.",
-    "words": [
-      {
-        "text": "My",
-        "start": 8.76
-      },
-      {
-        "text": "baby",
-        "start": 9.12,
-        "effect": "glow-gold"
-      },
-      {
-        "text": "got",
-        "start": 9.54
-      },
-      {
-        "text": "me",
-        "start": 9.84
-      },
-      {
-        "text": "looking",
-        "start": 10.06
-      },
-      {
-        "text": "forward",
-        "start": 10.44,
-        "effect": "shake"
-      },
-      {
-        "text": "to",
-        "start": 10.86
-      },
-      {
-        "text": "the",
-        "start": 11.24
-      },
-      {
-        "text": "end",
-        "start": 11.52
-      },
-      {
-        "text": "of",
-        "start": 11.78
-      },
-      {
-        "text": "the",
-        "start": 12
-      },
-      {
-        "text": "day",
-        "start": 12.16
-      }
-    ]
-  },
-  {
-    "start": 12.52,
-    "duration": 5.9,
-    "vietnamese": "Em nghĩ sao, anh và em, hãy cứ quên đi quá khứ.",
-    "words": [
-      {
-        "text": "What",
-        "start": 12.52
-      },
-      {
-        "text": "you",
-        "start": 12.88
-      },
-      {
-        "text": "say,",
-        "start": 13.08
-      },
-      {
-        "text": "you",
-        "start": 13.92
+        "text": "chasing",
+        "start": 1.8
       },
       {
         "text": "and",
-        "start": 14.78
-      },
-      {
-        "text": "me,",
-        "start": 14.98
-      },
-      {
-        "text": "just",
-        "start": 15.7
-      },
-      {
-        "text": "forget",
-        "start": 16.64,
-        "effect": "throw-away"
-      },
-      {
-        "text": "about",
-        "start": 17.1
-      },
-      {
-        "text": "the",
-        "start": 17.8
-      },
-      {
-        "text": "past",
-        "start": 18.04,
-        "effect": "glitch"
-      }
-    ]
-  },
-  {
-    "start": 19,
-    "duration": 4.62,
-    "vietnamese": "Vứt hết vào thùng rác đi, em nghĩ sao, anh và em?",
-    "words": [
-      {
-        "text": "Throw",
-        "start": 18.79,
-        "effect": "glitch"
-      },
-      {
-        "text": "it",
-        "start": 19.08
-      },
-      {
-        "text": "in",
-        "start": 19.48
-      },
-      {
-        "text": "the",
-        "start": 19.72
-      },
-      {
-        "text": "trash,",
-        "start": 19.88,
-        "effect": "throw-away"
-      },
-      {
-        "text": "what",
-        "start": 20.24
-      },
-      {
-        "text": "you",
-        "start": 20.32
-      },
-      {
-        "text": "say,",
-        "start": 20.5
-      },
-      {
-        "text": "you",
-        "start": 21.16
-      },
-      {
-        "text": "and",
-        "start": 22.2
-      },
-      {
-        "text": "me",
-        "start": 22.42
-      }
-    ]
-  },
-  {
-    "start": 23.62,
-    "duration": 4.12,
-    "vietnamese": "Hãy sống cuộc đời ta chưa từng có, như tôi chưa bao giờ nghĩ mình sẽ yêu.",
-    "words": [
-      {
-        "text": "Let",
-        "start": 23.62
-      },
-      {
-        "text": "the",
-        "start": 24.08
-      },
-      {
-        "text": "life",
-        "start": 24.3
+        "start": 2.36
       },
       {
         "text": "we",
-        "start": 24.76
+        "start": 2.92
       },
       {
-        "text": "never",
-        "start": 25.02,
-        "effect": "flash-climax"
+        "text": "can't",
+        "start": 3.36
       },
       {
-        "text": "had,",
-        "start": 25.38
+        "text": "dance",
+        "start": 4.18
       },
       {
-        "text": "like",
-        "start": 25.68
+        "text": "a",
+        "start": 4.7
+      },
+      {
+        "text": "day",
+        "start": 5.1
+      },
+      {
+        "text": "around",
+        "start": 5.68
+      },
+      {
+        "text": "it",
+        "start": 6.64
+      }
+    ]
+  },
+  {
+    "start": 7.1,
+    "duration": 4.1,
+    "vietnamese": "Nếu người muốn, ta sẽ bùng cháy sức sống.",
+    "words": [
+      {
+        "text": "If",
+        "start": 7.1
+      },
+      {
+        "text": "you",
+        "start": 7.9
+      },
+      {
+        "text": "fund",
+        "start": 8.3
+      },
+      {
+        "text": "it,",
+        "start": 9
+      },
+      {
+        "text": "I'll",
+        "start": 9.36
+      },
+      {
+        "text": "be",
+        "start": 10.04
+      },
+      {
+        "text": "bouncing",
+        "start": 10.4
+      }
+    ]
+  },
+  {
+    "start": 11.2,
+    "duration": 5.34,
+    "vietnamese": "Nếu em khao khát, hãy hét lên, gào lên đi em yêu!",
+    "words": [
+      {
+        "text": "If",
+        "start": 11.2
+      },
+      {
+        "text": "you",
+        "start": 12.08
+      },
+      {
+        "text": "want",
+        "start": 12.64
+      },
+      {
+        "text": "it,",
+        "start": 13.1
+      },
+      {
+        "text": "scream",
+        "start": 13.86
+      },
+      {
+        "text": "it,",
+        "start": 14.12
+      },
+      {
+        "text": "shout",
+        "start": 14.92
+      },
+      {
+        "text": "it",
+        "start": 15.26
+      },
+      {
+        "text": "babe",
+        "start": 15.74
+      }
+    ]
+  },
+  {
+    "start": 17.4,
+    "duration": 2.32,
+    "vietnamese": "Trước khi anh để em phải lạc lõng.",
+    "words": [
+      {
+        "text": "Before",
+        "start": 17.4
       },
       {
         "text": "I",
-        "start": 25.96
+        "start": 18.2
       },
       {
-        "text": "never",
-        "start": 26.18
+        "text": "leave",
+        "start": 18.58
       },
       {
-        "text": "thought",
-        "start": 26.58
+        "text": "you",
+        "start": 18.84
       },
       {
-        "text": "we'd",
-        "start": 27.18
+        "text": "try",
+        "start": 19.08
+      }
+    ]
+  },
+  {
+    "start": 19.72,
+    "duration": 4.26,
+    "vietnamese": "Chẳng hề hay biết khoảnh khắc ấy, nhưng vẫn mãi đắm chìm trong giây phút.",
+    "words": [
+      {
+        "text": "Didn't",
+        "start": 19.72
       },
       {
-        "text": "love",
-        "start": 27.54,
-        "effect": "glow-gold"
+        "text": "like",
+        "start": 20.96
+      },
+      {
+        "text": "the",
+        "start": 21.1
+      },
+      {
+        "text": "moment,",
+        "start": 21.36
+      },
+      {
+        "text": "keeping",
+        "start": 22.18
+      },
+      {
+        "text": "me",
+        "start": 22.5
+      },
+      {
+        "text": "in",
+        "start": 23.02
+      },
+      {
+        "text": "the",
+        "start": 23.22
+      },
+      {
+        "text": "moment",
+        "start": 23.46
+      }
+    ]
+  },
+  {
+    "start": 23.98,
+    "duration": 4.22,
+    "vietnamese": "Anh cá em đã có một khoảnh khắc rồi, sao không nói ra đi?",
+    "words": [
+      {
+        "text": "I",
+        "start": 23.98
+      },
+      {
+        "text": "bet",
+        "start": 24.56
+      },
+      {
+        "text": "you",
+        "start": 24.82
+      },
+      {
+        "text": "had",
+        "start": 25.1
+      },
+      {
+        "text": "a",
+        "start": 25.46
+      },
+      {
+        "text": "moment,",
+        "start": 25.66
+      },
+      {
+        "text": "why",
+        "start": 26.32
+      },
+      {
+        "text": "don't",
+        "start": 26.74
+      },
+      {
+        "text": "you",
+        "start": 27.04
+      },
+      {
+        "text": "say",
+        "start": 27.2
+      },
+      {
+        "text": "so",
+        "start": 27.6
+      }
+    ]
+  },
+  {
+    "start": 28.919999999999998,
+    "duration": 3.58,
+    "vietnamese": "Chẳng hề nhận ra, chẳng còn chút sức lực nào để vùng vẫy nữa rồi.",
+    "words": [
+      {
+        "text": "Didn't",
+        "start": 28.919999999999998
+      },
+      {
+        "text": "even",
+        "start": 29.56
+      },
+      {
+        "text": "notice,",
+        "start": 29.84
+      },
+      {
+        "text": "no",
+        "start": 30.84
+      },
+      {
+        "text": "punches",
+        "start": 30.98
+      },
+      {
+        "text": "left",
+        "start": 31.42
+      },
+      {
+        "text": "to",
+        "start": 31.84
+      },
+      {
+        "text": "roll",
+        "start": 32.12
+      }
+    ]
+  },
+  {
+    "start": 32.5,
+    "duration": 4.46,
+    "vietnamese": "Em phải giữ anh tập trung, em muốn nói ra điều gì?",
+    "words": [
+      {
+        "text": "You",
+        "start": 32.5
+      },
+      {
+        "text": "got",
+        "start": 32.86
+      },
+      {
+        "text": "to",
+        "start": 33.44
+      },
+      {
+        "text": "keep",
+        "start": 33.7
+      },
+      {
+        "text": "me",
+        "start": 33.98
+      },
+      {
+        "text": "focused,",
+        "start": 34.22
+      },
+      {
+        "text": "you",
+        "start": 35.14
+      },
+      {
+        "text": "want",
+        "start": 35.36
+      },
+      {
+        "text": "to",
+        "start": 35.74
+      },
+      {
+        "text": "say",
+        "start": 35.9
+      },
+      {
+        "text": "so",
+        "start": 36.22
+      }
+    ]
+  },
+  {
+    "start": 37.64,
+    "duration": 1.02,
+    "vietnamese": "Chẳng hề hay biết khoảnh khắc ấy...",
+    "words": [
+      {
+        "text": "Didn't",
+        "start": 37.64
+      },
+      {
+        "text": "like",
+        "start": 38.28
+      },
+      {
+        "text": "the",
+        "start": 38.4
+      },
+      {
+        "text": "moment",
+        "start": 38.56
       }
     ]
   }

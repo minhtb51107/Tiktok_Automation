@@ -1,0 +1,12 @@
+# Bỏ qua file nhạc, video và ảnh gốc
+3_Storage_Assets/music_inputs/*
+3_Storage_Assets/background_images/*
+3_Storage_Assets/output_ready/*
+3_Storage_Assets/temp_whisper/*
+2_Remotion_Video/public/music.wav
+
+# Bỏ qua file cấu hình tạm của Remotion
+2_Remotion_Video/props_*.json
+
+# Chỉ giữ lại cấu trúc thư mục rỗng (tùy chọn)
+!.gitkeep
