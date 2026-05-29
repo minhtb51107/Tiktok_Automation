@@ -1,11 +1,10 @@
 import { Module } from '@nestjs/common';
 import { WatcherService } from './watcher.service';
-import { RemotionRunnerModule } from '../remotion-runner/remotion-runner.module';
-import { WhisperModule } from '../whisper/whisper.module'; // <--- Thêm dòng này
-import { GeminiModule } from '../gemini/gemini.module';
+import { TiktokLyricsModule } from '../workflows/tiktok-lyrics/tiktok-lyrics.module';
+import { ThreadsTopicModule } from '../workflows/threads-topic/threads-topic.module';
 
 @Module({
-  imports: [RemotionRunnerModule, WhisperModule, GeminiModule], // <--- Thêm GeminiModule
+  imports: [TiktokLyricsModule, ThreadsTopicModule], // Nạp 2 phân xưởng vào
   providers: [WatcherService],
 })
 export class WatcherModule {}
