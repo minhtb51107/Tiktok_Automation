@@ -1,62 +1,43 @@
-import React from 'react';
-import { Composition, getInputProps } from 'remotion';
-
-// Import cả 2 giao diện
-import { MyComposition as TiktokComposition } from './tiktok/TiktokComposition'; // Tên hàm trong file cũ của bạn là MyComposition
+import { Composition } from 'remotion';
+import { MyComposition } from './tiktok/TiktokComposition'; // File nhạc cũ của bạn
 import { ThreadsComposition } from './threads/ThreadsComposition';
-import { LYRIC_SCRIPT } from './data/script';
-import './index.css'; 
 
 export const RemotionRoot: React.FC = () => {
-  const inputProps = getInputProps();
-
-  // ==========================================
-  // TÍNH TOÁN THỜI GIAN CHO TIKTOK
-  // ==========================================
-  const lastLyric = LYRIC_SCRIPT.length > 0 ? LYRIC_SCRIPT[LYRIC_SCRIPT.length - 1] : null;
-  const getTrueStartFrame = (start: number) => start < 1000 ? Math.round(start * 30) : Math.round(start);
-  const getTrueDurationFrame = (duration: number) => duration < 20 ? Math.round(duration * 30) : Math.round(duration);
-
-  const tiktokTotalDuration = lastLyric 
-    ? getTrueStartFrame(lastLyric.start) + getTrueDurationFrame(lastLyric.duration) + 60 
-    : 900;
-
-  // ==========================================
-  // ĐÓNG GÓI PROPS TỪ BACKEND TRUYỀN SANG
-  // ==========================================
-  const tiktokProps = {
-    imageList: (inputProps.imageList as string[]) || [],
-    songTitle: (inputProps.songTitle as string) || "THIS IS WHAT FALLING IN LOVE FEELS LIKE",
-    artist: (inputProps.artist as string) || "JVKE"
-  };
-
-  const threadsProps = {
-    topicText: (inputProps.topicText as string) || "Nội dung Threads mặc định nếu chưa có text",
-    author: (inputProps.author as string) || "@tiktok_automation"
-  };
-
   return (
     <>
-      {/* 1. MẪU VIDEO DÀNH CHO TIKTOK LYRICS */}
       <Composition
-        id="ProLyricVideo"
-        component={TiktokComposition}
-        durationInFrames={tiktokTotalDuration}
+        id="TiktokMusic"
+        component={MyComposition}
+        durationInFrames={150} 
         fps={30}
         width={1080}
-        height={1080} // Gốc của bạn đang là video vuông 1080x1080
-        defaultProps={tiktokProps}
+        height={1920}
       />
-
-      {/* 2. MẪU VIDEO DÀNH CHO THREADS TOPIC */}
+      
       <Composition
         id="ThreadsTopicVideo"
         component={ThreadsComposition}
-        durationInFrames={300} // Đặt mặc định độ dài video Threads là 10 giây (300 frames)
-        fps={30}
+        fps={60} // ĐÃ NÂNG LÊN 60 FPS: Khớp định dạng chuẩn với background, video xuất ra siêu mượt
         width={1080}
-        height={1920} // Video Threads/Tiktok thường dùng khổ dọc 9:16
-        defaultProps={threadsProps}
+        height={1920}
+        calculateMetadata={({ props }) => {
+          if (!props.post) return { durationInFrames: 300 };
+          const totalFrames = props.post.durationInFrames + props.comments.reduce((total, cmt) => total + cmt.durationInFrames, 0);
+          return { durationInFrames: totalFrames };
+        }}
+        defaultProps={{
+          backgroundVideo: "backgrounds/minecraft_parkour.mp4",
+          bgm: "bgm/lofi.mp3",
+          post: { 
+            author: "minhtridev", 
+            avatar: "avatars/default_avatar.jpg", 
+            text: "Đang test giao diện tự động hóa mẫu...", 
+            audioSrc: "", 
+            durationInFrames: 120, // 2 giây hiển thị mặc định ở cấu hình 60fps
+            gender: "male", likes: "1.2K", comments: "128", reposts: "45", timeAgo: "5 phút"
+          },
+          comments: []
+        }}
       />
     </>
   );

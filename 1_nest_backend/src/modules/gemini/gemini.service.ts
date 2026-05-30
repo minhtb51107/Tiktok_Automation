@@ -34,6 +34,7 @@ export class GeminiService {
     this.logger.warn(`🔄 Đã chuyển sang API Key số ${this.currentKeyIndex + 1}`);
   }
 
+  // --- HÀM XỬ LÝ NHẠC CŨ (Giữ nguyên) ---
   async generateLyricScript(whisperData: any, originalLyrics?: string) {
     this.logger.log(`🤖 Đang nhờ Gemini phân tích bài hát và ráp nối dữ liệu...`);
 
@@ -60,7 +61,6 @@ export class GeminiService {
       prompt += `Nhiệm vụ của bạn:\n1. Dựa vào dữ liệu timestamp, hãy dự đoán chính xác "Tên bài hát" và "Ca sĩ/Tác giả". Nếu quá lạ hãy để "Unknown Song" và "Unknown Artist".\n`;
     }
 
-    // ĐÂY LÀ PHẦN ĐÃ ĐƯỢC NÂNG CẤP MẠNH MẼ ĐỂ TRỊ BỆNH DỊCH THÔ CỨNG
     prompt += `
     ⚠️ QUÂN LỆNH DỊCH THUẬT TIẾNG VIỆT (VÔ CÙNG QUAN TRỌNG):
     - BẠN LÀ MỘT NHÀ THƠ, MỘT DỊCH GIẢ ÂM NHẠC CHUYÊN NGHIỆP TRÊN TIKTOK. 
@@ -173,5 +173,35 @@ export const LYRIC_SCRIPT: LyricData[] = ${JSON.stringify(parsedData.lyrics, nul
         }
       }
     }
+  }
+
+  // --- THÊM HÀM NÀY CHO PHẦN THREADS (CÓ CƠ CHẾ RETRY) ---
+  async generateText(prompt: string, retries = 3): Promise<string> {
+    this.logger.log(`🤖 Đang gọi Gemini AI xử lý Text cho Threads...`);
+    let attempt = 0;
+
+    while (attempt < retries) {
+      try {
+        // Mẹo: Đổi sang gemini-1.5-flash nếu 2.5-flash hay bị quá tải
+        const modelName = attempt === 0 ? 'gemini-2.5-flash' : 'gemini-1.5-flash-latest';
+        if (attempt > 0) this.logger.log(`🔄 Thử lại lần ${attempt} với model ${modelName}...`);
+        
+        const model = this.genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent(prompt);
+        return result.response.text();
+      } catch (error: any) {
+        attempt++;
+        this.logger.error(`❌ Lỗi Gemini (Lần ${attempt}/${retries}): ${error.message}`);
+        
+        if (attempt >= retries) {
+          throw new Error('Gemini API hiện đang quá tải sau nhiều lần thử.');
+        }
+        
+        // Nghỉ 3 giây và xoay API Key trước khi gọi lại để tránh spam server Google
+        this.rotateKey();
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+    }
+    return '';
   }
 }

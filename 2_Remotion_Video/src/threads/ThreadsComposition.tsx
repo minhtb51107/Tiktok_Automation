@@ -1,44 +1,69 @@
 import React from 'react';
-import { AbsoluteFill, useCurrentFrame, useVideoConfig, spring, interpolate } from 'remotion';
+import { AbsoluteFill, Audio, Series, staticFile, Video } from 'remotion'; // Quay lại với Video
+import { ThreadCard } from './ThreadCard';
 
-export interface ThreadsProps {
-  topicText?: string;
-  author?: string;
-}
+type ThreadProps = {
+  backgroundVideo: string;
+  bgm: string;
+  post: { 
+    author: string; avatar: string; text: string; audioSrc: string; durationInFrames: number; 
+    gender?: string; attachedImage?: string; 
+    likes?: string; comments?: string; reposts?: string; timeAgo?: string 
+  };
+  comments: Array<{ 
+    author: string; avatar: string; text: string; audioSrc: string; durationInFrames: number; 
+    gender?: string; attachedImage?: string; 
+    likes?: string; timeAgo?: string 
+  }>;
+};
 
-export const ThreadsComposition: React.FC<ThreadsProps> = ({ 
-  topicText = "Hôm nay bầu trời thật đẹp, giống như lúc chúng ta mới quen nhau...", 
-  author = "@minhtb51107" 
-}) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-
-  // Hiệu ứng nảy (pop-up) mượt mà lúc video bắt đầu
-  const scale = spring({ frame, fps, config: { damping: 12 } });
-  const opacity = interpolate(frame, [0, 15], [0, 1]);
+export const ThreadsComposition: React.FC<ThreadProps> = ({ backgroundVideo, bgm, post, comments }) => {
+  if (!post) return null;
 
   return (
-    <AbsoluteFill className="bg-slate-900 flex items-center justify-center p-10 font-sans">
+    <AbsoluteFill style={{ backgroundColor: '#111' }}>
       
-      {/* Khung bài viết giống giao diện Threads / X */}
-      <div 
-        className="bg-white rounded-[2rem] p-10 w-full max-w-3xl shadow-2xl flex flex-col"
-        style={{ transform: `scale(${scale})`, opacity }}
-      >
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-16 h-16 bg-gradient-to-tr from-pink-500 to-orange-400 rounded-full"></div>
-          <div className="font-bold text-3xl text-black tracking-tight">{author}</div>
-        </div>
-        
-        <div className="text-4xl text-gray-800 leading-relaxed font-medium">
-          {topicText}
-        </div>
-        
-        <div className="mt-8 text-gray-400 text-xl font-light">
-          Remotion x NestJS Auto System
-        </div>
-      </div>
+      {/* SỬ DỤNG THẺ <Video> TIÊU CHUẨN: 
+          Bỏ OffthreadVideo để dập tắt lỗi 'No frame found'. 
+          Khung hình đã được FFmpeg ép mượt ở Backend nên dùng thẻ này vẫn sẽ mượt mà không bị giật.
+      */}
+      <AbsoluteFill>
+        <Video 
+          src={staticFile(backgroundVideo)} 
+          style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0 }} 
+          muted 
+          // Không cần 'loop' vì video đã được cắt dài hơn bài viết 3 giây.
+        />
+      </AbsoluteFill>
 
+      {/* Nhạc nền loop bình thường */}
+      {bgm && <Audio src={staticFile(bgm)} volume={0.05} loop />}
+
+      <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+        <Series>
+          
+          <Series.Sequence durationInFrames={post.durationInFrames}>
+            <ThreadCard 
+              author={post.author} text={post.text} avatar={post.avatar} 
+              attachedImage={post.attachedImage} 
+              likes={post.likes} comments={post.comments} reposts={post.reposts} timeAgo={post.timeAgo} 
+            />
+            {post.audioSrc && <Audio src={staticFile(post.audioSrc)} />}
+          </Series.Sequence>
+
+          {comments.map((cmt, idx) => (
+            <Series.Sequence key={idx} durationInFrames={cmt.durationInFrames}>
+              <ThreadCard 
+                author={cmt.author} text={cmt.text} avatar={cmt.avatar} 
+                attachedImage={cmt.attachedImage} 
+                likes={cmt.likes} timeAgo={cmt.timeAgo} 
+              />
+              {cmt.audioSrc && <Audio src={staticFile(cmt.audioSrc)} />}
+            </Series.Sequence>
+          ))}
+          
+        </Series>
+      </AbsoluteFill>
     </AbsoluteFill>
   );
 };

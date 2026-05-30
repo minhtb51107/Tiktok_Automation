@@ -14,7 +14,7 @@ export const LYRIC_SCRIPT: LyricData[] = [
   {
     "start": 0,
     "duration": 7.1,
-    "vietnamese": "Dù anh chẳng hề lung lay, tiền tài vẫn cứ vây quanh, ta nào tránh được tháng ngày.",
+    "vietnamese": "Dù có đặt cả tin yêu vào, em cũng chẳng ngừng đuổi theo, và ta nào thể né tránh mãi được duyên mình.",
     "words": [
       {
         "text": "Even",
@@ -89,7 +89,7 @@ export const LYRIC_SCRIPT: LyricData[] = [
   {
     "start": 7.1,
     "duration": 4.1,
-    "vietnamese": "Nếu em thực sự mong muốn, anh sẽ hân hoan bay lượn.",
+    "vietnamese": "Nếu người khao khát nó",
     "words": [
       {
         "text": "If",
@@ -124,7 +124,7 @@ export const LYRIC_SCRIPT: LyricData[] = [
   {
     "start": 11.2,
     "duration": 5.34,
-    "vietnamese": "Nếu em khao khát thật lòng, hãy cứ gọi tên, hãy cứ hét vang đi, người ơi.",
+    "vietnamese": "Nếu anh khao khát, hãy gào thét lên, hãy gọi tên em đi, người hỡi!",
     "words": [
       {
         "text": "If",
@@ -167,7 +167,7 @@ export const LYRIC_SCRIPT: LyricData[] = [
   {
     "start": 17.4,
     "duration": 2.32,
-    "vietnamese": "Trước khi anh rời đi, em đã cố gắng rồi.",
+    "vietnamese": "Trước khi em buông tay, anh đã cố gắng rồi",
     "words": [
       {
         "text": "Before",
@@ -194,7 +194,7 @@ export const LYRIC_SCRIPT: LyricData[] = [
   {
     "start": 19.72,
     "duration": 4.26,
-    "vietnamese": "Khoảnh khắc ấy chẳng hề làm anh vui, nhưng vẫn cứ níu giữ anh hoài.",
+    "vietnamese": "Thật lòng chẳng thích khoảnh khắc này, nhưng người lại giữ em ở lại đây",
     "words": [
       {
         "text": "Didn't",
@@ -237,7 +237,7 @@ export const LYRIC_SCRIPT: LyricData[] = [
   {
     "start": 23.98,
     "duration": 4.22,
-    "vietnamese": "Anh cá em cũng có rung động riêng, sao em chẳng chịu nói ra?",
+    "vietnamese": "Anh ơi, em tin người cũng rung động, sao chẳng chịu nói ra đi?",
     "words": [
       {
         "text": "I",
@@ -287,8 +287,8 @@ export const LYRIC_SCRIPT: LyricData[] = [
   },
   {
     "start": 28.919999999999998,
-    "duration": 3.58,
-    "vietnamese": "Anh nào hay biết, chẳng còn sức để cố gắng thêm.",
+    "duration": 3.580000000000001,
+    "vietnamese": "Chẳng hề nhận ra, đã cạn hết sức để đấu tranh rồi",
     "words": [
       {
         "text": "Didn't",
@@ -327,7 +327,7 @@ export const LYRIC_SCRIPT: LyricData[] = [
   {
     "start": 32.5,
     "duration": 4.46,
-    "vietnamese": "Em phải giữ anh tỉnh táo, em muốn nói điều gì đó, phải không?",
+    "vietnamese": "Anh phải giữ em luôn vững tâm, anh muốn nói thế đúng không?",
     "words": [
       {
         "text": "You",
@@ -378,7 +378,7 @@ export const LYRIC_SCRIPT: LyricData[] = [
   {
     "start": 37.64,
     "duration": 1.02,
-    "vietnamese": "Chẳng hề ưa khoảnh khắc ấy.",
+    "vietnamese": "Em chẳng hề thích khoảnh khắc này",
     "words": [
       {
         "text": "Didn't",

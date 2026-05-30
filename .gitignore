@@ -12,5 +12,13 @@
 3_Storage_Assets/temp_processing/*
 3_Storage_Assets/output_ready/*
 
+# Bỏ qua các tài nguyên nặng và file tự sinh
+2_Remotion_Video/public/attached_images/
+2_Remotion_Video/public/avatars/
+2_Remotion_Video/public/backgrounds/
+2_Remotion_Video/public/threads_audio/
+2_Remotion_Video/public/threads_script.json
+3_Storage_Assets/output_ready/
+
 # Chỉ giữ lại cấu trúc thư mục rỗng (Tùy chọn)
 !.gitkeep

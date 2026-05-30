@@ -76,4 +76,45 @@ export class RemotionRunnerService {
       });
     });
   }
+
+  // --- THÊM HÀM MỚI DÀNH RIÊNG CHO THREADS ---
+  async renderThreadsVideo(compositionId: string, propsFilePath: string, outputFileName: string): Promise<void> {
+    this.logger.log(`🚀 Bắt đầu lệnh Render Video Threads: ${outputFileName}`);
+    
+    return new Promise((resolve, reject) => {
+      const remotionProjectDir = path.resolve(process.cwd(), '..', '2_Remotion_Video');
+      const outputLocation = path.resolve(process.cwd(), '..', '3_Storage_Assets', 'output_ready', outputFileName);
+
+const cliArgs = [
+        'remotion', 'render', 'src/index.ts', compositionId, outputLocation,
+        '--codec=h264',           
+        '--audio-codec=aac',      
+        '--pixel-format=yuv420p', 
+        `--props=${propsFilePath}`,
+        // Xóa dòng '--concurrency=1' đi, để Remotion tự dùng 100% sức mạnh CPU
+        '--log=info' // Đổi từ verbose sang info cho terminal bớt lag
+      ];
+
+      const remotionProcess = spawn('npx', cliArgs, {
+        cwd: remotionProjectDir,
+        shell: true,
+        stdio: 'inherit' 
+      });
+
+      remotionProcess.on('close', (code) => {
+        if (code === 0) {
+          this.logger.log(`✅ THÀNH CÔNG! Đã xuất video Threads tại: ${outputLocation}`);
+          resolve();
+        } else {
+          this.logger.error(`❌ Lỗi khi render Threads: Tiến trình kết thúc với mã lỗi ${code}`);
+          reject(new Error(`Render failed with code ${code}`));
+        }
+      });
+      
+      remotionProcess.on('error', (err) => {
+        this.logger.error(`❌ Lỗi hệ thống: ${err.message}`);
+        reject(err);
+      });
+    });
+  }
 }
