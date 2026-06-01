@@ -9,7 +9,7 @@ import FormData = require('form-data');
 
 import { RemotionRunnerService } from '../remotion-runner/remotion-runner.service';
 import { WhisperService } from '../whisper/whisper.service';
-import { GeminiService } from '../gemini/gemini.service';
+import { GeminiService } from '../ai/gemini.service';
 // THÊM IMPORT NÀY
 import { ThreadsTopicService } from '../workflows/threads-topic/threads-topic.service';
 

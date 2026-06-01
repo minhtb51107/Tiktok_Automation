@@ -38,6 +38,7 @@
     "get-audio-duration": "^4.0.1",
     "google-tts-api": "^2.0.2",
     "msedge-tts": "^2.0.5",
+    "openai": "^6.39.1",
     "puppeteer": "^24.43.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",

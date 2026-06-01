@@ -1,133 +1,110 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as googleTTS from 'google-tts-api'; 
-import { getAudioDurationInSeconds } from 'get-audio-duration';
+import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
-import axios from 'axios';
-import * as dotenv from 'dotenv';
-dotenv.config();
 
 @Injectable()
 export class TtsService {
   private readonly logger = new Logger(TtsService.name);
-  private readonly FPS = 60; 
-  private readonly fptApiKey = process.env.FPT_AI_KEY;
+  private apiKeys: string[] = [];
+  private currentKeyIndex: number = 0;
 
-  private estimateDurationInSeconds(text: string): number {
-    if (!text) return 2;
-    const wordCount = text.split(/\s+/).length;
-    return (wordCount * 0.35) + 0.5;
-  }
-
-  // CƠ CHẾ POLLING KIÊN NHẪN: Tăng lên 30 lượt thử (~1 phút đợi) để ép FPT nhả file bằng được
-  private async downloadFptAudio(url: string, filePath: string, retries = 30): Promise<boolean> {
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
-    for (let i = 0; i < retries; i++) {
-      try {
-        const response = await axios({
-          method: 'GET',
-          url: url,
-          responseType: 'arraybuffer',
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          },
-          timeout: 10000,
-        });
-        
-        const contentType = response.headers['content-type'];
-        if (typeof contentType === 'string' && contentType.includes('application/json')) {
-          this.logger.debug(`FPT.AI đang render âm thanh (Lượt quét ${i + 1}/${retries})... Đợi thêm 1.5s`);
-          await new Promise(resolve => setTimeout(resolve, 1500));
-          continue; 
-        }
-
-        if (response.data.length < 1000) {
-          await new Promise(resolve => setTimeout(resolve, 1500));
-          continue;
-        }
-
-        fs.writeFileSync(filePath, response.data);
-        this.logger.log(`✅ Đã tải xong file giọng đọc chuẩn từ FPT.AI!`);
-        return true; 
-        
-      } catch (error: any) {
-        if (error.response?.status !== 404) {
-          this.logger.warn(`Lỗi kết nối khi tải audio: ${error.message}`);
-        }
-        await new Promise(resolve => setTimeout(resolve, 1500)); 
-      }
+  constructor() {
+    const envKeys = process.env.FPT_API_KEY || process.env.FPT_AI_KEY;
+    if (envKeys) {
+      this.apiKeys = envKeys.split(',').map(key => key.trim()).filter(key => key.length > 0);
     }
-    return false;
   }
 
-  private async fallbackToGoogleTTS(text: string, outputPath: string, gender: string) {
-    this.logger.warn('⚠️ Kích hoạt luồng cứu cánh dự phòng Google TTS...');
-    // SỬA ĐỔI: slow: false để đồng bộ nhịp điệu nhanh và cuốn như FPT
-    const chunks = await googleTTS.getAllAudioBase64(text, {
-      lang: 'vi',
-      slow: false, 
-      host: 'https://translate.google.com',
-      timeout: 10000,
-    });
-    const audioBuffer = Buffer.concat(chunks.map(chunk => Buffer.from(chunk.base64, 'base64')));
-    fs.writeFileSync(outputPath, audioBuffer);
+  private rotateKey() {
+    if (this.apiKeys.length <= 1) return;
+    this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
+    this.logger.warn(`🔄 FPT dính lỗi. Đã chuyển sang API Key FPT số ${this.currentKeyIndex + 1}`);
   }
 
   async generateAudio(text: string, fileName: string, gender: string = 'neutral'): Promise<{ audioSrc: string, durationInFrames: number }> {
-    const outputPath = path.join(process.cwd(), '../2_Remotion_Video/public/threads_audio', fileName);
-    
-    if (!fs.existsSync(path.dirname(outputPath))) {
-      fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    if (!text || text.trim() === '') {
+      this.logger.warn(`⚠️ Text đầu vào rỗng. Bỏ qua tạo TTS, trả về thời lượng ảo (fileName: ${fileName})`);
+      const publicDir = path.join(process.cwd(), '../2_Remotion_Video/public/threads_audio');
+      if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
+      fs.writeFileSync(path.join(publicDir, fileName), Buffer.from(''));
+      return { audioSrc: `threads_audio/${fileName}`, durationInFrames: 30 };
     }
 
-    let finalDurationFrames = Math.ceil(this.estimateDurationInSeconds(text) * this.FPS);
+    if (this.apiKeys.length === 0) throw new Error("Lỗi thiếu cấu hình FPT.AI");
 
-    try {
-      if (this.fptApiKey) {
-        let voiceName = 'banmai'; 
-        if (gender === 'male') voiceName = 'leminh'; 
-        
-        const fptResponse = await axios.post('https://api.fpt.ai/hmi/tts/v5', text, {
-          headers: {
-            'api-key': this.fptApiKey,
-            'voice': voiceName,
-            'speed': '1', 
-            'format': 'mp3'
-          },
-          timeout: 40000 // NÂNG LÊN 40 GIÂY: Tránh đứt gãy luồng kết nối khi server FPT tải chậm
-        });
+    // LỌC GIỌNG CHUẨN BẮC & NAM (LOẠI BỎ GIỌNG HUẾ/MIỀN TRUNG)
+    const femaleVoices = ['banmai', 'thuminh', 'thuquynh', 'linhsan', 'lanngoc'];
+    const maleVoices = ['leminh', 'minhquang', 'thanhlong', 'chienthang'];
 
-        if (fptResponse.data && fptResponse.data.async) {
-          const success = await this.downloadFptAudio(fptResponse.data.async, outputPath);
-          if (!success) throw new Error("FPT.AI trả file quá chậm.");
-        } else {
-          throw new Error("API FPT.AI không trả về link async.");
-        }
-      } else {
-        await this.fallbackToGoogleTTS(text, outputPath, gender);
-      }
+    let voice = 'banmai'; 
+    if (gender === 'male') {
+      voice = maleVoices[Math.floor(Math.random() * maleVoices.length)];
+    } else {
+      voice = femaleVoices[Math.floor(Math.random() * femaleVoices.length)];
+    }
 
-      if (fs.existsSync(outputPath)) {
-        const durationInSeconds = await getAudioDurationInSeconds(outputPath);
-        finalDurationFrames = Math.ceil(durationInSeconds * this.FPS) + 6;
-      }
+    this.logger.log(`🎙️ [FPT] Đang dùng giọng ${gender === 'male' ? 'Nam' : 'Nữ'} (${voice}) đọc: "${text.substring(0, 40)}..."`);
 
-      return { audioSrc: `threads_audio/${fileName}`, durationInFrames: finalDurationFrames };
+    const url = 'https://api.fpt.ai/hmi/tts/v5';
+    let fptRetries = 5;
+    let audioUrl = '';
 
-    } catch (error: any) {
-      this.logger.error(`🚨 Luồng FPT.AI gặp sự cố (${error.message}). Chuyển hướng sang Google TTS!`);
+    while (fptRetries > 0) {
+      const currentApiKey = this.apiKeys[this.currentKeyIndex];
+      const headers = {
+        'api-key': currentApiKey,
+        'voice': voice,
+        'speed': '',
+        'Content-Type': 'application/x-www-form-urlencoded'
+      };
+
       try {
-        await this.fallbackToGoogleTTS(text, outputPath, gender);
-        if (fs.existsSync(outputPath)) {
-          const durationInSeconds = await getAudioDurationInSeconds(outputPath);
-          finalDurationFrames = Math.ceil(durationInSeconds * this.FPS) + 6;
+        const response = await axios.post(url, text, { headers });
+        if (response.data && response.data.async) {
+          audioUrl = response.data.async;
+          break; 
         }
-        return { audioSrc: `threads_audio/${fileName}`, durationInFrames: finalDurationFrames };
-      } catch (fallbackError: any) {
-        this.logger.error(`❌ Lỗi luồng dự phòng!`, fallbackError);
-        return { audioSrc: null, durationInFrames: finalDurationFrames }; 
+        throw new Error("Không nhận được URL từ FPT");
+      } catch (error: any) {
+        fptRetries--;
+        this.rotateKey();
+        if (fptRetries === 0) throw new Error("FPT.AI sập toàn tập");
+        await new Promise(res => setTimeout(res, 3000)); 
       }
     }
+
+    let downloadRetries = 25; 
+    const publicDir = path.join(process.cwd(), '../2_Remotion_Video/public/threads_audio');
+    if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
+    
+    const filePath = path.join(publicDir, fileName);
+
+    while (downloadRetries > 0) {
+      try {
+        await new Promise(res => setTimeout(res, 3000)); 
+        const audioRes = await axios.get(audioUrl, { responseType: 'arraybuffer' });
+        
+        if (audioRes.data.byteLength > 100) {
+            fs.writeFileSync(filePath, audioRes.data);
+            
+            const estimatedSeconds = Math.max(text.length * 0.08, 1.5); 
+            const durationInFrames = Math.ceil(estimatedSeconds * 60);
+
+            return {
+                audioSrc: `threads_audio/${fileName}`,
+                durationInFrames: durationInFrames
+            };
+        }
+        throw new Error("File chưa sẵn sàng hoặc rỗng");
+      } catch (error) {
+        downloadRetries--;
+        if (downloadRetries === 0) {
+            this.logger.error(`🚨 FPT kẹt cứng ở URL: ${audioUrl}.`);
+            throw new Error("Timeout khi tải file từ FPT.AI");
+        }
+      }
+    }
+    throw new Error("Lỗi không xác định trong TTS");
   }
 }

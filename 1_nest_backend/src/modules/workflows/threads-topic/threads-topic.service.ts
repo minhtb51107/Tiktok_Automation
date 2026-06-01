@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { GeminiService } from '../../gemini/gemini.service';
+import { AiService } from '../../ai/ai.service'; 
 import { RemotionRunnerService } from '../../remotion-runner/remotion-runner.service';
 import { ScraperService } from './scraper.service';
 import { TtsService } from './tts.service';
@@ -16,7 +16,7 @@ export class ThreadsTopicService {
   private readonly logger = new Logger(ThreadsTopicService.name);
 
   constructor(
-    private readonly geminiService: GeminiService,
+    private readonly aiService: AiService, 
     private readonly remotionRunnerService: RemotionRunnerService,
     private readonly scraperService: ScraperService,
     private readonly ttsService: TtsService,
@@ -62,7 +62,6 @@ export class ThreadsTopicService {
     }
   }
 
-// NÂNG CẤP LỆNH FFMPEG: Trị dứt điểm "No frame found" của OffthreadVideo Remotion
   private async prepareDynamicBackground(totalFrames: number, timestamp: number): Promise<string> {
     const sourceBgPath = path.join(process.cwd(), '../2_Remotion_Video/public/backgrounds/source_minecraft.mp4');
     const outputBgName = `bg_temp_${timestamp}.mp4`;
@@ -73,25 +72,17 @@ export class ThreadsTopicService {
       return "backgrounds/minecraft_parkour.mp4";
     }
 
-    // Cộng thêm 3 giây đệm an toàn
     const durationInSeconds = Math.ceil(totalFrames / 60) + 3; 
-    
-    // Đảm bảo không random quá đà lố thời gian file gốc
     const randomStartTime = Math.floor(Math.random() * (400 - durationInSeconds));
 
-    this.logger.log(`✂️ Đang tự động cắt ${durationInSeconds}s làm nền, gọt dọc 1080x1920... (Cấu hình Remotion Safe)`);
+    this.logger.log(`✂️ Đang tự động cắt ${durationInSeconds}s làm nền...`);
     
-    // CÚ TWIST FFMPEG CUỐI CÙNG:
-    // -vf fps=60: Ép chuẩn khung hình vào thẳng trong bộ lọc ảnh
-    // -g 1: Every frame is a keyframe (Diệt tận gốc lỗi trích xuất frame của Rust Compositor)
-    // -movflags +faststart: Giúp Remotion đọc file siêu tốc
     const ffmpegCmd = `ffmpeg -y -ss ${randomStartTime} -i "${sourceBgPath}" -t ${durationInSeconds} -vf "crop=ih*9/16:ih,scale=1080:1920,fps=60" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -g 1 -movflags +faststart -an "${outputBgPath}"`;
 
     try {
       await execAsync(ffmpegCmd);
       return `backgrounds/${outputBgName}`;
     } catch (error) {
-      this.logger.error('Lỗi khi cắt background tự động, fallback về mặc định', error);
       return "backgrounds/minecraft_parkour.mp4";
     }
   }
@@ -109,39 +100,66 @@ export class ThreadsTopicService {
         }
       } catch (e) {}
     });
-    this.logger.log('🧹 Đã dọn sạch file rác!');
   }
 
-async processThreadsVideo(threadUrl: string) {
+  async processThreadsVideo(threadUrl: string) {
     const timestamp = Date.now();
     const rawData = await this.scraperService.scrapeThreadsUrl(threadUrl);
 
-    this.logger.log('Đang nhờ AI xử lý...');
-    const prompt = `Từ bài post và danh sách comment sau, chọn ra 5 comment. 
-    1. Dự đoán giới tính (male/female/neutral).
-    2. Tạo số tương tác ảo ("1.2K").
-    3. Dịch các từ viết tắt Gen Z và xóa Emoji ở trường "ttsText".
-    4. Nếu thấy URL trong trường attachedImage, hãy giữ nguyên. Nếu trống, để chuỗi rỗng "".
+    this.logger.log('Đang nhờ AI làm đạo diễn...');
     
-    JSON format:
+    const memeDictionaryPath = path.join(process.cwd(), 'meme_dictionary.json');
+    const sfxDictionaryPath = path.join(process.cwd(), 'sfx_dictionary.json');
+
+    let memeDictionaryText = "{}";
+    let sfxDictionaryText = "{}";
+
+    try {
+      if (fs.existsSync(memeDictionaryPath)) memeDictionaryText = fs.readFileSync(memeDictionaryPath, 'utf8');
+      if (fs.existsSync(sfxDictionaryPath)) sfxDictionaryText = fs.readFileSync(sfxDictionaryPath, 'utf8');
+    } catch (err) {}
+
+    // PROMPT ĐƯỢC THIẾT KẾ LẠI ĐỂ ÉP GROQ HOẠT ĐỘNG
+    const prompt = `Bạn là một Đạo diễn Video chuyên nghiệp. Từ bài post và danh sách comment sau, hãy chọn 5 comment thú vị nhất. 
+    Trực tiếp thực hiện 5 YÊU CẦU SAU VÀ CHỈ TRẢ VỀ JSON:
+    
+    1. DỊCH THUẬT (ttsText): BẮT BUỘC dịch TẤT CẢ từ viết tắt tiếng Việt, từ lóng Gen Z sang từ hoàn chỉnh (VD: "ko"->"không", "dc"->"được", "j"->"gì", "khum"->"không", "mng"->"mọi người"). Xóa toàn bộ Emoji.
+    2. GIỚI TÍNH (gender): Dựa vào Tên tác giả (author) và cách xưng hô trong text để suy luận bắt buộc là "male" (Nam) hoặc "female" (Nữ). (Ví dụ: Quỳnh, Hoa, Chị, Em gái -> female. Hùng, Huy, Anh, Bro -> male).
+    3. TƯƠNG TÁC: Random số ảo hợp lý cho likes (VD: "1.2K"), timeAgo (VD: "5 phút"). Giữ nguyên URL ảnh ở "attachedImage" nếu có.
+    4. SFX (Âm thanh): Dùng: ${sfxDictionaryText}. PHẢI THÊM sfx nếu comment giật gân, chê bai, hài hước. (Tỷ lệ thêm sfx là 40%). Nếu không dùng, để "".
+    5. MEME: Dùng: ${memeDictionaryText}. PHẢI THÊM meme (.mp4 hoặc .jpg) nếu comment cực kỳ châm biếm, đồng tình mạnh hoặc gây sốc. Đừng lười biếng bỏ qua, nhưng cũng đừng spam. Nếu không dùng, để "".
+    
+    JSON format bắt buộc:
     {
-      "post": {"author": "...", "avatar": "...", "text": "...", "ttsText": "...", "attachedImage": "...", "gender": "...", "likes": "...", "comments": "...", "reposts": "...", "timeAgo": "..."}, 
-      "comments": [{"author": "...", "avatar": "...", "text": "...", "ttsText": "...", "attachedImage": "...", "gender": "...", "likes": "...", "timeAgo": "..."}]
+      "post": {"author": "...", "avatar": "...", "text": "...", "ttsText": "...", "attachedImage": "...", "vibe": "...", "sfx": "...", "memeMp4": "...", "gender": "...", "likes": "...", "timeAgo": "..."}, 
+      "comments": [{"author": "...", "avatar": "...", "text": "...", "ttsText": "...", "attachedImage": "...", "vibe": "...", "sfx": "...", "memeMp4": "...", "gender": "...", "likes": "...", "timeAgo": "..."}]
     }
-    Data: ${JSON.stringify(rawData)}`;
+    
+    Data cần xử lý: ${JSON.stringify(rawData)}`;
     
     let filteredData;
-    try {
-      const aiResponse = await this.geminiService.generateText(prompt);
-      filteredData = JSON.parse(aiResponse.replace(/```json|```/g, '').trim());
-    } catch (error) {
-      this.logger.error("⚠️ AI lỗi Fallback!");
-      filteredData = { 
-        post: { ...rawData.post, ttsText: rawData.post.text, attachedImage: rawData.post.attachedImage || "", gender: 'neutral', likes: "2.1K", comments: "128", reposts: "45", timeAgo: "10 phút" }, 
-        comments: rawData.comments.slice(0, 5).map(c => ({ ...c, ttsText: c.text, attachedImage: c.attachedImage || "", gender: 'neutral', likes: "12", timeAgo: "2 phút" }))
-      };
+    let parseRetries = 3;
+
+    while (parseRetries > 0) {
+      try {
+        const aiResponse = await this.aiService.generateJsonText(prompt);
+        
+        const jsonStart = aiResponse.indexOf('{');
+        const jsonEnd = aiResponse.lastIndexOf('}');
+        if (jsonStart === -1 || jsonEnd === -1) throw new Error("JSON rỗng");
+        
+        filteredData = JSON.parse(aiResponse.substring(jsonStart, jsonEnd + 1));
+        break; 
+      } catch (error: any) {
+        parseRetries--;
+        await new Promise(r => setTimeout(r, 2000));
+      }
     }
 
+    if (!filteredData) throw new Error("Lỗi hệ thống AI.");
+
+    this.logger.log('Đang tạo âm thanh và tải ảnh...');
+    
     const postAudio = await this.ttsService.generateAudio(filteredData.post.ttsText, `post_${timestamp}.mp3`, filteredData.post.gender);
     const postAvatarLocal = await this.downloadAvatar(filteredData.post.avatar, `avatar_post_${timestamp}.jpg`);
     const postImageLocal = await this.downloadAttachedImage(filteredData.post.attachedImage, `image_post_${timestamp}.jpg`);
@@ -181,7 +199,6 @@ async processThreadsVideo(threadUrl: string) {
 
     const outputFileName = `threads_output_${timestamp}.mp4`;
     
-    // GOM TOÀN BỘ FILE RÁC NGAY TRƯỚC KHI RENDER
     const trashFiles = [
       postAudio.audioSrc, postAvatarLocal, postImageLocal,
       dynamicBackground, 
@@ -190,18 +207,13 @@ async processThreadsVideo(threadUrl: string) {
       ...trashAttachedImages
     ].filter(Boolean) as string[];
 
-    // DÙNG TRY...FINALLY ĐỂ CHỐNG KẸT RÁC
     try {
-      this.logger.log('Bắt đầu Render Remotion...');
+      this.logger.log('🚀 Bắt đầu Render Remotion...');
       await this.remotionRunnerService.renderThreadsVideo('ThreadsTopicVideo', scriptPath, outputFileName);
       return { success: true, script: scriptData, videoName: outputFileName };
-      
     } catch (error) {
-      this.logger.error('❌ Render thất bại, nhưng hệ thống vẫn sẽ dọn rác...');
       throw error; 
-      
     } finally {
-      // Dù Render sập hay thành công, rác chắc chắn 100% sẽ được dọn!
       this.cleanupFiles(trashFiles);
     }
   }

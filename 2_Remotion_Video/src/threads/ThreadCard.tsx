@@ -1,35 +1,30 @@
 import React from 'react';
-import { spring, useCurrentFrame, useVideoConfig, Img, staticFile } from 'remotion';
+import { spring, useCurrentFrame, useVideoConfig, Img, staticFile, Video } from 'remotion';
 
 export const ThreadCard: React.FC<{ 
-  author: string; text: string; avatar?: string; attachedImage?: string; // Thêm nhận diện attachedImage
+  author: string; text: string; avatar?: string; attachedImage?: string; memeMp4?: string;
   likes?: string; comments?: string; reposts?: string; timeAgo?: string 
-}> = ({ author, text, avatar, attachedImage, likes = "1.2K", comments = "128", reposts = "45", timeAgo = "5 phút" }) => {
+}> = ({ author, text, avatar, attachedImage, memeMp4, likes = "1.2K", comments = "128", reposts = "45", timeAgo = "5 phút" }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
   const scale = spring({ frame, fps, config: { damping: 14, mass: 0.8 } });
+  const memeScale = spring({ frame: frame - 10, fps, config: { damping: 12, stiffness: 200 } });
 
   const safeAvatar = avatar?.startsWith('http') || avatar?.startsWith('data:') 
     ? avatar : staticFile(avatar || 'avatars/default_avatar.jpg');
 
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '30px' }}>
       
+      {/* KHỐI 1: THẺ THREAD CARD CHÍNH */}
       <div
         style={{
           transform: `scale(${scale})`,
-          backgroundColor: '#181818', 
-          color: '#F3F5F7',           
-          padding: '40px',
-          borderRadius: '24px',
-          width: '900px',             
-          height: 'fit-content', 
-          border: '1px solid #333638',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
-          display: 'flex',
-          flexDirection: 'row',       
-          gap: '24px',
+          backgroundColor: '#181818', color: '#F3F5F7',
+          padding: '40px', borderRadius: '24px', width: '900px',
+          height: 'fit-content', border: '1px solid #333638',
+          boxShadow: '0 20px 40px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'row', gap: '24px',
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -47,21 +42,12 @@ export const ThreadCard: React.FC<{
             {text}
           </p>
 
-          {/* VỤ ẢNH BẮT ĐẦU TẠI ĐÂY: Nếu có ảnh đính kèm, hiển thị khung hình bo góc mượt mà */}
           {attachedImage && (
             <div style={{ marginTop: '20px', width: '100%', overflow: 'hidden', borderRadius: '16px', border: '1px solid #333638' }}>
-              <Img 
-                src={staticFile(attachedImage)} 
-                style={{ 
-                  width: '100%', 
-                  maxHeight: '400px', // Khống chế chiều cao tối đa tránh vỡ layout dọc
-                  objectFit: 'cover' 
-                }} 
-              />
+              <Img src={staticFile(attachedImage)} style={{ width: '100%', maxHeight: '400px', objectFit: 'cover' }} />
             </div>
           )}
 
-          {/* DÀN ICON SVG CHUẨN */}
           <div style={{ display: 'flex', gap: '40px', marginTop: '35px', color: '#777', alignItems: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
@@ -82,6 +68,23 @@ export const ThreadCard: React.FC<{
         </div>
       </div>
 
+      {/* KHỐI 2: MEME POP-UP TRÀN ĐẦY LINH HOẠT */}
+      {memeMp4 && (
+        <div style={{
+          transform: `scale(${memeScale})`, 
+          borderRadius: '16px', overflow: 'hidden',
+          boxShadow: '0 10px 30px rgba(0,0,0,0.8)',
+          maxWidth: '900px', // Đảm bảo rộng tối đa bằng Card chính
+          maxHeight: '600px', // Kích thước thả nổi tùy tỷ lệ ảnh
+          display: 'flex', justifyContent: 'center', alignItems: 'center'
+        }}>
+          {memeMp4.endsWith('.mp4') ? (
+            <Video src={staticFile(`memes/${memeMp4}`)} style={{ maxWidth: '100%', maxHeight: '600px', objectFit: 'contain', display: 'block' }} muted/>
+          ) : (
+            <Img src={staticFile(`memes/${memeMp4}`)} style={{ maxWidth: '100%', maxHeight: '600px', objectFit: 'contain', display: 'block' }} />
+          )}
+        </div>
+      )}
     </div>
   );
 };

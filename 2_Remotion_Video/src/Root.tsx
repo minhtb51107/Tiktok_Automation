@@ -1,5 +1,5 @@
 import { Composition } from 'remotion';
-import { MyComposition } from './tiktok/TiktokComposition'; // File nhạc cũ của bạn
+import { MyComposition } from './tiktok/TiktokComposition';
 import { ThreadsComposition } from './threads/ThreadsComposition';
 
 export const RemotionRoot: React.FC = () => {
@@ -17,12 +17,18 @@ export const RemotionRoot: React.FC = () => {
       <Composition
         id="ThreadsTopicVideo"
         component={ThreadsComposition}
-        fps={60} // ĐÃ NÂNG LÊN 60 FPS: Khớp định dạng chuẩn với background, video xuất ra siêu mượt
+        fps={60} // Khớp định dạng chuẩn 60fps
         width={1080}
         height={1920}
         calculateMetadata={({ props }) => {
           if (!props.post) return { durationInFrames: 300 };
-          const totalFrames = props.post.durationInFrames + props.comments.reduce((total, cmt) => total + cmt.durationInFrames, 0);
+          
+          // CỘNG THÊM 1 GIÂY NGHỈ SAU MỖI CARD (60fps = 1 giây)
+          const PADDING_FRAMES = 60; 
+          
+          let totalFrames = props.post.durationInFrames + PADDING_FRAMES;
+          totalFrames += props.comments.reduce((total, cmt) => total + cmt.durationInFrames + PADDING_FRAMES, 0);
+          
           return { durationInFrames: totalFrames };
         }}
         defaultProps={{
@@ -33,7 +39,7 @@ export const RemotionRoot: React.FC = () => {
             avatar: "avatars/default_avatar.jpg", 
             text: "Đang test giao diện tự động hóa mẫu...", 
             audioSrc: "", 
-            durationInFrames: 120, // 2 giây hiển thị mặc định ở cấu hình 60fps
+            durationInFrames: 120,
             gender: "male", likes: "1.2K", comments: "128", reposts: "45", timeAgo: "5 phút"
           },
           comments: []

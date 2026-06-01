@@ -1,3 +1,4 @@
+import 'dotenv/config'; // <--- BẮT BUỘC THÊM DÒNG NÀY LÊN TRÊN CÙNG
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
