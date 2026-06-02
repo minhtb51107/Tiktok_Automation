@@ -33,7 +33,9 @@ export class TtsService {
 
     if (this.apiKeys.length === 0) throw new Error("Lỗi thiếu cấu hình FPT.AI");
 
-    // LỌC GIỌNG CHUẨN BẮC & NAM (LOẠI BỎ GIỌNG HUẾ/MIỀN TRUNG)
+    // LỌC SẠCH KÝ TỰ ĐẶC BIỆT, TOÁN HỌC, NGOẶC NHỌN (Giữ lại chữ, số và dấu chấm phẩy)
+    const cleanText = text.replace(/[^\w\s\dàáãạảăắằẳẵặâấầẩẫậèéẹẻẽêềếểễệđìíĩỉịòóõọỏôốồổỗộơớờởỡợùúũụủưứừửữựỳýỵỷỹ,.\?!]/gi, ' ').replace(/\s+/g, ' ').trim();
+
     const femaleVoices = ['banmai', 'thuminh', 'thuquynh', 'linhsan', 'lanngoc'];
     const maleVoices = ['leminh', 'minhquang', 'thanhlong', 'chienthang'];
 
@@ -44,7 +46,7 @@ export class TtsService {
       voice = femaleVoices[Math.floor(Math.random() * femaleVoices.length)];
     }
 
-    this.logger.log(`🎙️ [FPT] Đang dùng giọng ${gender === 'male' ? 'Nam' : 'Nữ'} (${voice}) đọc: "${text.substring(0, 40)}..."`);
+    this.logger.log(`🎙️ [FPT] Đang dùng giọng ${gender === 'male' ? 'Nam' : 'Nữ'} (${voice}) đọc: "${cleanText.substring(0, 40)}..."`);
 
     const url = 'https://api.fpt.ai/hmi/tts/v5';
     let fptRetries = 5;
@@ -60,7 +62,7 @@ export class TtsService {
       };
 
       try {
-        const response = await axios.post(url, text, { headers });
+        const response = await axios.post(url, cleanText, { headers });
         if (response.data && response.data.async) {
           audioUrl = response.data.async;
           break; 
@@ -74,7 +76,8 @@ export class TtsService {
       }
     }
 
-    let downloadRetries = 25; 
+    // GIỚI HẠN THỜI GIAN TẢI FILE: Tối đa 10 lần thử (khoảng 30 giây) thay vì 25 lần
+    let downloadRetries = 10; 
     const publicDir = path.join(process.cwd(), '../2_Remotion_Video/public/threads_audio');
     if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
     
@@ -88,7 +91,7 @@ export class TtsService {
         if (audioRes.data.byteLength > 100) {
             fs.writeFileSync(filePath, audioRes.data);
             
-            const estimatedSeconds = Math.max(text.length * 0.08, 1.5); 
+            const estimatedSeconds = Math.max(cleanText.length * 0.08, 1.5); 
             const durationInFrames = Math.ceil(estimatedSeconds * 60);
 
             return {
@@ -100,8 +103,8 @@ export class TtsService {
       } catch (error) {
         downloadRetries--;
         if (downloadRetries === 0) {
-            this.logger.error(`🚨 FPT kẹt cứng ở URL: ${audioUrl}.`);
-            throw new Error("Timeout khi tải file từ FPT.AI");
+            this.logger.error(`🚨 FPT quá tải không trả về file cho URL: ${audioUrl}. Hủy bỏ sau 30s.`);
+            throw new Error("Timeout khi tải file từ FPT.AI (Khả năng do kịch bản quá dị)");
         }
       }
     }

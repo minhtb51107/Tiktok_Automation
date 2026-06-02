@@ -53,4 +53,10 @@ export class AiService {
       }
     }
   }
+
+  // Gọi GEMINI cho việc tạo Vector (0 đồng trọn đời)
+  async generateEmbedding(text: string): Promise<number[]> {
+    this.logger.log(`🧬 Đang chuyển đổi văn bản thành Vector bằng Gemini...`);
+    return await this.gemini.generateEmbedding(text);
+  }
 }

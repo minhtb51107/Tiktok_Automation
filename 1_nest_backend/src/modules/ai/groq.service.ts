@@ -10,7 +10,7 @@ export class GroqService extends BaseAiService {
     super(GroqService.name);
     const key = process.env.GROQ_API_KEY;
     if (key) {
-      this.groqClient = new OpenAI({ apiKey: key, baseURL: '[https://api.groq.com/openai/v1](https://api.groq.com/openai/v1)' });
+      this.groqClient = new OpenAI({ apiKey: key, baseURL: 'https://api.groq.com/openai/v1' });
     }
   }
 
