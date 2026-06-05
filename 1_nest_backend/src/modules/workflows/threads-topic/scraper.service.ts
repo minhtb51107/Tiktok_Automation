@@ -5,10 +5,10 @@ import puppeteer from 'puppeteer';
 export class ScraperService {
   private readonly logger = new Logger(ScraperService.name);
 
-async scrapeThreadsUrl(url: string) {
-    // 1. ÉP BUỘC ĐỔI .COM THÀNH .NET TRƯỚC KHI TRUY CẬP ĐỂ KHÔNG BỊ ĐÁ VĂNG
+  async scrapeThreadsUrl(url: string) {
+    // 1. ÉP BUỘC ĐỔI .COM THÀNH .NET TRƯỚC KHI TRUY CẬP ĐỂ CHỐNG BUG
     const targetUrl = url.replace('threads.com', 'threads.net');
-    this.logger.log(`Bắt đầu cào dữ liệu từ URL chuẩn xác: ${targetUrl}`);
+    this.logger.log(`🔍 Bắt đầu cào URL chuẩn: ${targetUrl}`);
     
     const browser = await puppeteer.launch({ 
       headless: true,
@@ -28,60 +28,66 @@ async scrapeThreadsUrl(url: string) {
     try {
       await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 15000 });
 
-      // 2. KIỂM TRA XEM CÓ BỊ ĐÁ VỀ TRANG CHỦ HOẶC BẮT ĐĂNG NHẬP KHÔNG
+      // 2. KIỂM TRA XEM CÓ BỊ ĐÁ VĂNG RA TRANG ĐĂNG NHẬP KHÔNG
       const currentUrl = page.url();
       if (currentUrl === 'https://www.threads.net/' || currentUrl.includes('login')) {
-          throw new Error("Bot bị Meta chặn hoặc bài viết này 18+ yêu cầu đăng nhập. Bot đã bị đá văng ra trang chủ!");
+          throw new Error("Bot bị Meta chặn hoặc bài viết này yêu cầu 18+ bắt đăng nhập. Bot bị văng ra trang chủ!");
       }
 
       await page.waitForSelector('[data-pressable-container="true"]', { timeout: 10000 });
 
       const data = await page.evaluate(() => {
-        const mainPostEl = document.querySelector('div[data-pressable-container="true"]');
-        if (!mainPostEl) return null;
+        // 🔥 LẤY TOÀN BỘ CÁC KHỐI CHỨA BÀI VIẾT VÀ BÌNH LUẬN TRÊN MÀN HÌNH
+        const elements = Array.from(document.querySelectorAll('div[data-pressable-container="true"]'));
+        if (!elements || elements.length === 0) return null;
 
-        const authorEl = mainPostEl.querySelector('span[dir="auto"]');
-        const author = authorEl ? authorEl.textContent : 'Anonymous';
+        const extracted = elements.map(el => {
+          const authorEl = el.querySelector('span[dir="auto"]');
+          const author = authorEl ? authorEl.textContent : 'Anonymous';
 
-        const imgElements = Array.from(mainPostEl.querySelectorAll('img'));
-        const avatar = imgElements.length > 0 ? imgElements[0].src : 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png';
+          const imgElements = Array.from(el.querySelectorAll('img'));
+          const avatar = imgElements.length > 0 ? imgElements[0].src : 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png';
 
-        let attachedImage = "";
-        for (let i = 1; i < imgElements.length; i++) {
-           const img = imgElements[i];
-           const src = img.src;
-           if (src && src !== avatar && !src.includes('emoji') && !src.includes('rsrc.php')) {
-              if (img.width > 100 || img.height > 100) {
-                 attachedImage = src;
-                 break; 
-              }
-           }
-        }
+          let attachedImage = "";
+          for (let i = 1; i < imgElements.length; i++) {
+             const img = imgElements[i];
+             const src = img.src;
+             if (src && src !== avatar && !src.includes('emoji') && !src.includes('rsrc.php')) {
+                if (img.width > 100 || img.height > 100) {
+                   attachedImage = src;
+                   break; 
+                }
+             }
+          }
 
-        const textNodes = Array.from(mainPostEl.querySelectorAll('span[dir="auto"]'));
-        
-        // 3. LỌC BỎ RÁC NHƯ "Mười sáu giờ", TÊN TÁC GIẢ, CÁC NÚT BẤM (Thường rất ngắn)
-        const text = textNodes
-            .map(n => n.textContent)
-            .filter(t => t && t.length > 15 && t !== author && !t.includes('giờ') && !t.includes('phút'))
-            .join('. ');
+          const textNodes = Array.from(el.querySelectorAll('span[dir="auto"]'));
+          const text = textNodes
+              .map(n => n.textContent)
+              .filter(t => t && t.length > 10 && t !== author && !t.includes('giờ') && !t.includes('phút') && !t.includes('giây'))
+              .join('. ');
 
+          return { author, avatar, text, attachedImage };
+        }).filter(item => item.text.length > 5); // Lọc bỏ các khối trống
+
+        // Phân tách: Khối đầu tiên là Post gốc, các khối còn lại là Comment
         return {
-          post: { author, avatar, text, attachedImage },
-          comments: [] 
+          post: extracted[0],
+          comments: extracted.slice(1) 
         };
       });
 
       await browser.close();
+
       if (!data || !data.post || data.post.text.length < 5) {
           throw new Error("Cào được giao diện nhưng không thấy nội dung chữ.");
       }
       
       return data;
+
     } catch (error: any) {
       await browser.close();
-      this.logger.error('Lỗi cào dữ liệu Threads: ' + error.message);
-      throw new Error(error.message); // Quăng đúng lỗi ra Discord để bạn biết
+      this.logger.error('Lỗi cào Threads: ' + error.message);
+      throw new Error(error.message); 
     }
   }
 
@@ -89,13 +95,12 @@ async scrapeThreadsUrl(url: string) {
   // CHIẾN THUẬT 2: KÝ SINH THUẬT TOÁN (LƯỚT TRANG CHỦ THREADS)
   // ====================================================================
   async scrapeForYouFeed(scrolls: number = 3): Promise<any[]> {
-    this.logger.log('🕷️ Đang khởi động Puppeteer lướt trang "For You"...');
+    this.logger.log('🕷️ Đang thả không Puppeteer lướt trang "For You"...');
     
     const browser = await puppeteer.launch({
       headless: true, 
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-notifications', '--lang=vi-VN,vi']
     });
-
     const page = await browser.newPage();
     
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'vi-VN,vi;q=0.9' });
@@ -109,12 +114,12 @@ async scrapeThreadsUrl(url: string) {
       await page.goto('https://www.threads.net/', { waitUntil: 'networkidle2', timeout: 60000 });
 
       for (let i = 0; i < scrolls; i++) {
-        this.logger.log(`🖱️ Đang cuộn trang lần ${i + 1}/${scrolls}...`);
+        this.logger.log(`⏳ Đang cuộn trang lần ${i + 1}/${scrolls}...`);
         await page.evaluate(() => window.scrollBy(0, window.innerHeight * 2));
         await new Promise(r => setTimeout(r, 3000)); 
       }
 
-      this.logger.log('🕸️ Đang bóc tách dữ liệu từ bảng tin...');
+      this.logger.log('⛏️ Đang bóc tách dòng tin...');
       
       const posts = await page.evaluate(() => {
         const extractedPosts = [];
@@ -138,10 +143,10 @@ async scrapeThreadsUrl(url: string) {
             const attachedImage = images.length > 1 ? images[images.length - 1].getAttribute('src') : null;
 
             if (url && text.length > 15) { 
-              extractedPosts.push({ url, author, avatar, text, attachedImage });
+               extractedPosts.push({ url, author, avatar, text, attachedImage });
             }
           } catch (err) {
-            // Bỏ qua lỗi
+            // Bỏ qua lỗi lẻ tẻ
           }
         });
 
@@ -150,7 +155,7 @@ async scrapeThreadsUrl(url: string) {
       });
 
       results.push(...posts);
-      this.logger.log(`🎣 Lưới đã kéo lên! Thu hoạch được ${results.length} bài viết nguyên bản.`);
+      this.logger.log(`✅ Lưới đầy! Thu hoạch được ${results.length} bài viết nguyên liệu.`);
 
     } catch (error: any) {
       this.logger.error(`❌ Puppeteer lỗi: ${error.message}`);

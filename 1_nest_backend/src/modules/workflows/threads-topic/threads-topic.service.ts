@@ -91,129 +91,193 @@ export class ThreadsTopicService {
     files.forEach(file => {
       try {
         const fullPath = path.join(process.cwd(), '../2_Remotion_Video/public', file);
-        if (fs.existsSync(fullPath) && !file.includes('default_avatar') && !file.includes('source_minecraft')) {
+        if (fs.existsSync(fullPath) && !file.includes('default_avatar') && !file.includes('source_minecraft') && !file.includes('minecraft_parkour')) {
           fs.unlinkSync(fullPath);
           if (file.endsWith('audio.mp3')) {
              const parentDir = path.dirname(fullPath);
-             if (fs.existsSync(parentDir)) fs.rmdirSync(parentDir); 
-          }
+             if (fs.existsSync(parentDir)) fs.rmdirSync(parentDir);
+           }
         }
       } catch (e) {}
     });
   }
 
-  async processThreadsVideo(threadUrl: string) {
-    const timestamp = Date.now();
-    const rawData = await this.scraperService.scrapeThreadsUrl(threadUrl);
+// HÀM ĐÃ NÂNG CẤP BỘ LỌC CHỐNG "AI ẢO GIÁC" (ANTI-HALLUCINATION)
+  private async processSingleText(author: string, rawText: string, avatarUrl: string, attachedImgUrl: string, sfxDictKeys: string, memeDictKeys: string) {
+    const [cleanTextRaw, genderRaw, sfxMemeRaw] = await Promise.all([
+      this.aiService.askGroq(`Viết lại câu sau sang tiếng Việt chuẩn, sửa lỗi chính tả, dịch từ lóng. CHỈ TRẢ VỀ CÂU ĐÃ SỬA: "${rawText}"`, false),
+      this.aiService.askGroq(`Nội dung: "${rawText}". Giới tính là "male" hay "female"? CHỈ TRẢ VỀ ĐÚNG 1 CHỮ ĐÓ.`, false),
+      
+      // PROMPT MỚI: Quát nạt nó cấm nói nhiều
+      this.aiService.askGroq(`Bạn là một hệ thống máy móc. Đọc câu: "${rawText}". Chọn 1 tên từ [${sfxDictKeys}] và 1 tên từ [${memeDictKeys}]. CHỈ IN RA DUY NHẤT: "SFX:ten_file | MEME:ten_file". TUYỆT ĐỐI KHÔNG giải thích, KHÔNG nói thêm chữ nào khác.`, false)
+    ]);
 
-    this.logger.log('Đang nhờ AI làm đạo diễn...');
+    const gender = genderRaw.toLowerCase().includes('female') ? 'female' : 'male';
+    
+    let sfx = "";
+    let meme = "";
+    
+    try {
+      // BỘ LỌC REGEX: Dù AI có nói "Tôi chọn file ABC.mp3 nha sếp" thì nó chỉ nhặt đúng "ABC.mp3"
+      const sfxMatch = sfxMemeRaw.match(/([a-zA-Z0-9_]+\.mp3)/i);
+      const memeMatch = sfxMemeRaw.match(/([a-zA-Z0-9_]+\.(mp4|jpg|png))/i);
+
+      if (sfxMatch) sfx = sfxMatch[1];
+      if (memeMatch) meme = memeMatch[1];
+
+      // Chốt chặn cuối: Nếu vì lý do nào đó tên file quá dài (tào lao) hoặc chứa dấu cách, hủy luôn
+      if (sfx.length > 40 || sfx.includes(' ')) sfx = "";
+      if (meme.length > 40 || meme.includes(' ')) meme = "";
+
+    } catch (e) {
+      this.logger.warn("Không trích xuất được SFX/Meme, bỏ qua bước này.");
+    }
+
+    return {
+      author: author,
+      avatar: avatarUrl || "",
+      text: rawText,
+      ttsText: cleanTextRaw.replace(/"/g, '').trim(),
+      attachedImage: attachedImgUrl || "",
+      gender: gender,
+      sfx: sfx,
+      memeMp4: meme,
+      likes: Math.floor(Math.random() * 900 + 100) + " Lượt thích",
+      timeAgo: Math.floor(Math.random() * 23 + 1) + " giờ trước"
+    };
+  }
+
+  async processThreadsVideo(threadUrl: string, onProgress?: (status: string) => Promise<void>) {
+    const timestamp = Date.now();
+    const trashFiles: string[] = [];
+    
+    const scriptName = `threads_script_${timestamp}.json`;
+    trashFiles.push(scriptName);
+
+    if (onProgress) await onProgress('🕷️ **Bước 1/5:** Đang khởi động Puppeteer cào bài viết Threads...');
+    const rawData = await this.scraperService.scrapeThreadsUrl(threadUrl);
+    
+    if (onProgress) await onProgress('🤖 **Bước 2/5:** Đang đưa vào dây chuyền đa tác nhân Groq phân tích...');
     
     const memeDictionaryPath = path.join(process.cwd(), 'meme_dictionary.json');
     const sfxDictionaryPath = path.join(process.cwd(), 'sfx_dictionary.json');
 
-    let memeDictionaryText = "{}";
-    let sfxDictionaryText = "{}";
+    // 🔥 ÉP CÂN DỮ LIỆU: Chỉ lấy cái tên file để làm Token, vứt bỏ toàn bộ JSON thừa thãi
+    let memeKeys = "";
+    let sfxKeys = "";
 
     try {
-      if (fs.existsSync(memeDictionaryPath)) memeDictionaryText = fs.readFileSync(memeDictionaryPath, 'utf8');
-      if (fs.existsSync(sfxDictionaryPath)) sfxDictionaryText = fs.readFileSync(sfxDictionaryPath, 'utf8');
-    } catch (err) {}
-
-    // PROMPT ĐƯỢC THIẾT KẾ LẠI ĐỂ ÉP GROQ HOẠT ĐỘNG
-    const prompt = `Bạn là một Đạo diễn Video chuyên nghiệp. Từ bài post và danh sách comment sau, hãy chọn 5 comment thú vị nhất. 
-    Trực tiếp thực hiện 5 YÊU CẦU SAU VÀ CHỈ TRẢ VỀ JSON:
-    
-    1. DỊCH THUẬT (ttsText): BẮT BUỘC dịch TẤT CẢ từ viết tắt tiếng Việt, từ lóng Gen Z sang từ hoàn chỉnh (VD: "ko"->"không", "dc"->"được", "j"->"gì", "khum"->"không", "mng"->"mọi người"). Xóa toàn bộ Emoji.
-    2. GIỚI TÍNH (gender): Dựa vào Tên tác giả (author) và cách xưng hô trong text để suy luận bắt buộc là "male" (Nam) hoặc "female" (Nữ). (Ví dụ: Quỳnh, Hoa, Chị, Em gái -> female. Hùng, Huy, Anh, Bro -> male).
-    3. TƯƠNG TÁC: Random số ảo hợp lý cho likes (VD: "1.2K"), timeAgo (VD: "5 phút"). Giữ nguyên URL ảnh ở "attachedImage" nếu có.
-    4. SFX (Âm thanh): Dùng: ${sfxDictionaryText}. PHẢI THÊM sfx nếu comment giật gân, chê bai, hài hước. (Tỷ lệ thêm sfx là 40%). Nếu không dùng, để "".
-    5. MEME: Dùng: ${memeDictionaryText}. PHẢI THÊM meme (.mp4 hoặc .jpg) nếu comment cực kỳ châm biếm, đồng tình mạnh hoặc gây sốc. Đừng lười biếng bỏ qua, nhưng cũng đừng spam. Nếu không dùng, để "".
-    
-    JSON format bắt buộc:
-    {
-      "post": {"author": "...", "avatar": "...", "text": "...", "ttsText": "...", "attachedImage": "...", "vibe": "...", "sfx": "...", "memeMp4": "...", "gender": "...", "likes": "...", "timeAgo": "..."}, 
-      "comments": [{"author": "...", "avatar": "...", "text": "...", "ttsText": "...", "attachedImage": "...", "vibe": "...", "sfx": "...", "memeMp4": "...", "gender": "...", "likes": "...", "timeAgo": "..."}]
-    }
-    
-    Data cần xử lý: ${JSON.stringify(rawData)}`;
-    
-    let filteredData;
-    let parseRetries = 3;
-
-    while (parseRetries > 0) {
-      try {
-        const aiResponse = await this.aiService.generateJsonText(prompt);
-        
-        const jsonStart = aiResponse.indexOf('{');
-        const jsonEnd = aiResponse.lastIndexOf('}');
-        if (jsonStart === -1 || jsonEnd === -1) throw new Error("JSON rỗng");
-        
-        filteredData = JSON.parse(aiResponse.substring(jsonStart, jsonEnd + 1));
-        break; 
-      } catch (error: any) {
-        parseRetries--;
-        await new Promise(r => setTimeout(r, 2000));
+      if (fs.existsSync(memeDictionaryPath)) {
+        const parsedMeme = JSON.parse(fs.readFileSync(memeDictionaryPath, 'utf8'));
+        memeKeys = Object.keys(parsedMeme).join(', '); // Chỉ trích xuất Keys: "cat_crying, dog_laughing..."
       }
+      if (fs.existsSync(sfxDictionaryPath)) {
+        const parsedSfx = JSON.parse(fs.readFileSync(sfxDictionaryPath, 'utf8'));
+        sfxKeys = Object.keys(parsedSfx).join(', '); // Chỉ trích xuất Keys: "punch, vine_boom..."
+      }
+    } catch (err) {
+      this.logger.warn("⚠️ Lỗi đọc từ điển, hệ thống sẽ bỏ qua bước gán Meme/SFX.");
     }
 
-    if (!filteredData) throw new Error("Lỗi hệ thống AI.");
+    const topComments = rawData.comments.slice(0, 5);
 
-    this.logger.log('Đang tạo âm thanh và tải ảnh...');
+    // 🔥 XẾP HÀNG TUẦN TỰ: Tránh lỗi Groq Rate Limit (429) do bùng nổ Request quá nhanh
+    this.logger.log('Đang xử lý Bài gốc...');
+    const processedPost = await this.processSingleText(rawData.post.author, rawData.post.text, rawData.post.avatar, rawData.post.attachedImage, sfxKeys, memeKeys);
     
-    const postAudio = await this.ttsService.generateAudio(filteredData.post.ttsText, `post_${timestamp}.mp3`, filteredData.post.gender);
-    const postAvatarLocal = await this.downloadAvatar(filteredData.post.avatar, `avatar_post_${timestamp}.jpg`);
-    const postImageLocal = await this.downloadAttachedImage(filteredData.post.attachedImage, `image_post_${timestamp}.jpg`);
-    
-    filteredData.post.avatar = postAvatarLocal; 
-    filteredData.post.attachedImage = postImageLocal; 
-    
-    let totalFramesCalculated = postAudio.durationInFrames;
-    const commentsProps = [];
-    const trashAttachedImages: string[] = [];
-
-    for (let i = 0; i < filteredData.comments.length; i++) {
-      const cmt = filteredData.comments[i];
-      const audioData = await this.ttsService.generateAudio(cmt.ttsText, `cmt_${timestamp}_${i}.mp3`, cmt.gender);
-      const avatarLocal = await this.downloadAvatar(cmt.avatar, `avatar_cmt_${timestamp}_${i}.jpg`);
-      const cmtImageLocal = await this.downloadAttachedImage(cmt.attachedImage, `image_cmt_${timestamp}_${i}.jpg`);
-      
-      cmt.avatar = avatarLocal; 
-      cmt.attachedImage = cmtImageLocal;
-      if (cmtImageLocal) trashAttachedImages.push(cmtImageLocal);
-
-      totalFramesCalculated += audioData.durationInFrames;
-      commentsProps.push({ ...cmt, ...audioData });
+    this.logger.log('Đang xử lý lần lượt 5 Comments...');
+    const processedComments = [];
+    for (const cmt of topComments) {
+       // Xử lý từng comment một, chậm một chút nhưng cực kỳ an toàn
+       const pCmt = await this.processSingleText(cmt.author, cmt.text, cmt.avatar, cmt.attachedImage, sfxKeys, memeKeys);
+       processedComments.push(pCmt);
     }
 
-    const dynamicBackground = await this.prepareDynamicBackground(totalFramesCalculated, timestamp);
+    this.logger.log('Đang đẻ Caption Tiktok...');
+    const captionRaw = await this.aiService.askGroq(`Tóm tắt drama sau thành 1 câu giật gân để đăng Tiktok, kèm 4 hashtag. Dưới 100 chữ. Nội dung: "${rawData.post.text}"`, true);
 
-    const scriptData = {
-      backgroundVideo: dynamicBackground, 
-      bgm: "bgm/lofi.mp3",
-      post: { ...filteredData.post, ...postAudio },
-      comments: commentsProps
+    const filteredData = {
+      tiktok_caption: captionRaw.replace(/"/g, '').trim(),
+      post: processedPost,
+      comments: processedComments
     };
 
-    const scriptPath = path.join(process.cwd(), '../2_Remotion_Video/public/threads_script.json');
-    fs.writeFileSync(scriptPath, JSON.stringify(scriptData, null, 2));
-
-    const outputFileName = `threads_output_${timestamp}.mp4`;
-    
-    const trashFiles = [
-      postAudio.audioSrc, postAvatarLocal, postImageLocal,
-      dynamicBackground, 
-      ...commentsProps.map(c => c.audioSrc),
-      ...commentsProps.map(c => c.avatar),
-      ...trashAttachedImages
-    ].filter(Boolean) as string[];
-
     try {
-      this.logger.log('🚀 Bắt đầu Render Remotion...');
+      this.logger.log('Đang tạo âm thanh và tải ảnh...');
+      if (onProgress) await onProgress('🎙️ **Bước 3/5:** Đang gửi text sang FPT AI tạo giọng đọc chuẩn...');
+      
+      const postAudio = await this.ttsService.generateAudio(filteredData.post.ttsText, `post_${timestamp}.mp3`, filteredData.post.gender);
+      trashFiles.push(postAudio.audioSrc);
+
+      const postAvatarLocal = await this.downloadAvatar(filteredData.post.avatar, `avatar_post_${timestamp}.jpg`);
+      trashFiles.push(postAvatarLocal);
+
+      const postImageLocal = await this.downloadAttachedImage(filteredData.post.attachedImage, `image_post_${timestamp}.jpg`);
+      if (postImageLocal) trashFiles.push(postImageLocal);
+      
+      filteredData.post.avatar = postAvatarLocal;
+      filteredData.post.attachedImage = postImageLocal;
+      
+      let totalFramesCalculated = postAudio.durationInFrames;
+      const commentsProps = [];
+
+      for (let i = 0; i < filteredData.comments.length; i++) {
+        const cmt = filteredData.comments[i];
+        try {
+            const audioData = await this.ttsService.generateAudio(cmt.ttsText, `cmt_${timestamp}_${i}.mp3`, cmt.gender);
+            trashFiles.push(audioData.audioSrc);
+
+            const avatarLocal = await this.downloadAvatar(cmt.avatar, `avatar_cmt_${timestamp}_${i}.jpg`);
+            trashFiles.push(avatarLocal);
+
+            const cmtImageLocal = await this.downloadAttachedImage(cmt.attachedImage, `image_cmt_${timestamp}_${i}.jpg`);
+            if (cmtImageLocal) trashFiles.push(cmtImageLocal);
+            
+            cmt.avatar = avatarLocal;
+            cmt.attachedImage = cmtImageLocal;
+            
+            totalFramesCalculated += audioData.durationInFrames;
+            commentsProps.push({ ...cmt, ...audioData }); 
+            
+        } catch (cmtError: any) {
+            this.logger.warn(`✂️ BỎ QUA COMMENT SỐ ${i + 1}: Cắt khỏi kịch bản vì lỗi TTS (${cmtError.message})`);
+        }
+      }
+
+      const dynamicBackground = await this.prepareDynamicBackground(totalFramesCalculated, timestamp);
+      trashFiles.push(dynamicBackground);
+
+      const scriptData = {
+        tiktok_caption: filteredData.tiktok_caption, 
+        backgroundVideo: dynamicBackground,
+        bgm: "bgm/lofi.mp3",
+        post: { ...filteredData.post, ...postAudio },
+        comments: commentsProps
+      };
+
+      const scriptPath = path.join(process.cwd(), '../2_Remotion_Video/public', scriptName);
+      fs.writeFileSync(scriptPath, JSON.stringify(scriptData, null, 2));
+
+      const outputFileName = `threads_output_${timestamp}.mp4`;
+      const outputPath = path.resolve(process.cwd(), '../3_Storage_Assets/output_ready', outputFileName);
+      
+      this.logger.log('Bắt đầu Render Remotion...');
+      if (onProgress) await onProgress('🎬 **Bước 4/5:** Đang nạp nguyên liệu vào lò Render Remotion (Quá trình này mất 1-2 phút)...');
+      
       await this.remotionRunnerService.renderThreadsVideo('ThreadsTopicVideo', scriptPath, outputFileName);
-      return { success: true, script: scriptData, videoName: outputFileName };
+      
+      return { 
+        success: true, 
+        script: scriptData, 
+        videoName: outputFileName, 
+        outputPath,
+        caption: filteredData.tiktok_caption
+      };
+
     } catch (error) {
       throw error; 
     } finally {
+      if (onProgress) await onProgress('🧹 **Bước 5/5:** Đang dọn dẹp các tệp tin rác...');
       this.cleanupFiles(trashFiles);
     }
   }

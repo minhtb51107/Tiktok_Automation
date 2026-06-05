@@ -1,18 +1,17 @@
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"] // Kích hoạt tính năng dùng Extension của Postgres
+  previewFeatures = ["postgresqlExtensions"] 
 }
 
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [vector] // Bật extension pgvector
+  extensions = [vector] 
 }
 
-// Bảng lưu trữ Bài viết cào được từ Threads
 model ThreadPost {
   id              String   @id @default(uuid())
-  threadId        String   @unique // ID gốc của bài viết trên Threads (để chống cào trùng)
+  threadId        String   @unique 
   author          String
   avatarUrl       String?
   content         String
@@ -20,19 +19,18 @@ model ThreadPost {
   url             String
 
   // ================= AI SCORING & ĐẠO DIỄN =================
-  aiScore         Int      @default(0)     // Điểm chấm từ 1-10 (Độ mặn)
-  vibe            String?                  // Cảm xúc: funny, sad, serious...
-  sfx             String?                  // Tên file âm thanh AI chọn
-  memeMp4         String?                  // Tên file meme AI chọn
+  aiScore         Int      @default(0)     
+  vibe            String?                  
+  sfx             String?                  
+  memeMp4         String?                  
   
-  // ================= QUẢN LÝ TRẠNG THÁI =================
-  isApproved      Boolean  @default(false) // Bấm duyệt trên Dashboard thì thành true
-  isRendered      Boolean  @default(false) // Đã render thành video MP4 chưa
-  isPublished     Boolean  @default(false) // Đã auto đăng lên Tiktok chưa
+  // ================= QUẢN LÝ TRẠNG THÁI & UPLOAD =================
+  caption         String?                  // 🔥 [MỚI THÊM VÀO]: Lưu Tiêu đề + Hashtag Tiktok
+  isApproved      Boolean  @default(false) 
+  isRendered      Boolean  @default(false) 
+  isPublished     Boolean  @default(false) 
 
-  // ================= BỘ NÃO VECTOR (Chống trùng & Bắt Trend) =================
-  // Sử dụng vector 1536 chiều của model text-embedding-3-small (OpenAI)
-  // Thay đổi từ 1536 xuống 768
+  // ================= BỘ NÃO VECTOR =================
   embedding       Unsupported("vector(768)")?
 
   createdAt       DateTime @default(now())

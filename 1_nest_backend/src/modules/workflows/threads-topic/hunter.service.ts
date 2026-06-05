@@ -17,7 +17,7 @@ export class HunterService {
     private readonly discordService: DiscordService,
   ) {}
 
-  @Cron(CronExpression.EVERY_2_HOURS)
+  // @Cron(CronExpression.EVERY_MINUTE) // Sếp comment bỏ dòng này đi là Bot săn dừng hoạt động
   async startHunting() {
     this.logger.log('🚀 BẮT ĐẦU CA TUẦN TRA KÉP (Kết hợp 2 Chiến thuật)...');
 
@@ -103,19 +103,16 @@ export class HunterService {
   // ====================================================================
   private async processAndSavePost(postData: any, fallbackUrl: string) {
     try {
-      // Cắt phần params dư thừa ở URL Threads để lấy ID chuẩn
       const cleanUrl = postData.url ? postData.url.split('?')[0] : fallbackUrl; 
       const contentHash = crypto.createHash('md5').update(postData.text || '').digest('hex');
       const threadId = cleanUrl || `thread_${contentHash}`; 
 
-      // BƯỚC A: CHỐNG TRÙNG LẶP ID (Database Check)
       const isExists = await this.prisma.threadPost.findUnique({ where: { threadId: threadId } });
       if (isExists) {
         this.logger.log(`⏭️ Bài này đã bốc rồi, bỏ qua!`);
         return;
       }
 
-      // BƯỚC B: RADAR VECTOR (Chống Đạo Nhái)
       const embedding = await this.aiService.generateEmbedding(postData.text);
       const similarPosts: any[] = await this.prisma.$queryRaw`
         SELECT id, 1 - (embedding <=> ${embedding}::vector) as similarity
@@ -129,12 +126,11 @@ export class HunterService {
         return;
       }
 
-      // BƯỚC C: AI GIÁM KHẢO CHẤM ĐIỂM
       this.logger.log(`⚖️ Content sạch! Chuyển cho AI chấm độ mặn...`);
       const scorePrompt = `
         Đọc bài viết sau và CHẤM ĐIỂM độ mặn mòi, drama, thú vị, hoặc khả năng lên xu hướng Tiktok từ 1 đến 10.
         Bài viết: "${postData.text}"
-        Định dạng JSON BẮT BUỘC:
+        Định dạng JSON BẮT bắt buộc:
         {"score": 8, "vibe": "funny"}
       `;
       const aiScoreRes = await this.aiService.generateJsonText(scorePrompt);
@@ -143,7 +139,6 @@ export class HunterService {
 
       this.logger.log(`📊 AI chấm: ${aiEvaluation.score}/10 điểm - Vibe: ${aiEvaluation.vibe}`);
 
-      // BƯỚC D: LƯU VÀO KHO NEON DB
       if (aiEvaluation.score >= 7) {
         await this.prisma.$executeRaw`
           INSERT INTO "ThreadPost" (

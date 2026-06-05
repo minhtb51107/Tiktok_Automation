@@ -65,7 +65,7 @@ export class GeminiService extends BaseAiService {
     let attempt = 0;
     while (attempt < this.apiKeys.length) {
       try {
-        const model = this.genAI.getGenerativeModel({ model: 'text-embedding-004' });
+       const model = this.genAI.getGenerativeModel({ model: 'embedding-001' });
         const result = await model.embedContent(text);
         return result.embedding.values;
       } catch (error: any) {
