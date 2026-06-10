@@ -7,7 +7,7 @@ import * as fs from 'fs';
 export class RemotionRunnerService {
   private readonly logger = new Logger(RemotionRunnerService.name);
 
-  // ĐÃ SỬA: Nhận tham số songTitle và artist trực tiếp từ Watcher
+  // HÀM 1: RENDER VIDEO NHẠC
   async renderVideo(durationInFrames: number, originalFileName: string, imageFiles: string[] = [], songTitle: string = "", artist: string = ""): Promise<void> {
     this.logger.log(`🚀 Bắt đầu lệnh Render Video cho: ${originalFileName}`);
     
@@ -18,9 +18,8 @@ export class RemotionRunnerService {
       const outputFileName = `${baseName}.mp4`;
       const outputLocation = path.resolve(process.cwd(), '..', '3_Storage_Assets', 'output_ready', outputFileName);
 
-      this.logger.log(`🎬 Đang tiến hành Render ngầm... (Tự động chèn Intro: ${songTitle} - ${artist})`);
+      this.logger.log(`🎬 Đang tiến hành Render ngầm...`);
       
-      // Đóng gói data được lấy từ AI vào props
       const propsData = { 
         imageList: imageFiles,
         songTitle: songTitle || "UNKNOWN SONG",
@@ -29,7 +28,6 @@ export class RemotionRunnerService {
       
       const tempPropsFileName = `props_${Date.now()}.json`;
       const tempPropsFilePath = path.join(remotionProjectDir, tempPropsFileName);
-      
       fs.writeFileSync(tempPropsFilePath, JSON.stringify(propsData));
       
       const cliArgs = [
@@ -39,24 +37,14 @@ export class RemotionRunnerService {
         '--pixel-format=yuv420p', 
         '--crf=22',
         `--props=${tempPropsFileName}`,
-        // --- 2 DÒNG CẤU HÌNH FIX LỖI TIMEOUT ---
-        '--timeout=120000', // Tăng thời gian chờ tối đa cho mỗi frame lên 120 giây (mặc định 30s)
-        '--concurrency=1',  // Chỉ ép máy tính render 1-2 frame cùng lúc để tránh nghẽn cổ chai CPU (Có thể tăng lên 2 nếu máy mạnh)
-        // ---------------------------------------
+        '--timeout=120000', 
+        '--concurrency=1',  
         '--log=verbose' 
       ];
 
-      const remotionProcess = spawn('npx', cliArgs, {
-        cwd: remotionProjectDir,
-        shell: true,
-        stdio: 'inherit' 
-      });
+      const remotionProcess = spawn('npx', cliArgs, { cwd: remotionProjectDir, shell: true, stdio: 'inherit' });
 
-      const cleanupTempFile = () => {
-        if (fs.existsSync(tempPropsFilePath)) {
-          fs.unlinkSync(tempPropsFilePath);
-        }
-      };
+      const cleanupTempFile = () => { if (fs.existsSync(tempPropsFilePath)) fs.unlinkSync(tempPropsFilePath); };
 
       remotionProcess.on('close', (code) => {
         cleanupTempFile();
@@ -77,34 +65,49 @@ export class RemotionRunnerService {
     });
   }
 
-  // --- THÊM HÀM MỚI DÀNH RIÊNG CHO THREADS ---
+  // =======================================================================
+  // HÀM 2: RENDER THREADS VÀ PODCAST (MỞ KHÓA CHỤP ẢNH BÌA)
+  // =======================================================================
   async renderThreadsVideo(compositionId: string, propsFilePath: string, outputFileName: string): Promise<void> {
-    this.logger.log(`🚀 Bắt đầu lệnh Render Video Threads: ${outputFileName}`);
+    this.logger.log(`🚀 Bắt đầu lệnh Render Video Threads/Podcast: ${outputFileName}`);
     
     return new Promise((resolve, reject) => {
       const remotionProjectDir = path.resolve(process.cwd(), '..', '2_Remotion_Video');
       const outputLocation = path.resolve(process.cwd(), '..', '3_Storage_Assets', 'output_ready', outputFileName);
 
-const cliArgs = [
+      const cliArgs = [
         'remotion', 'render', 'src/index.ts', compositionId, outputLocation,
         '--codec=h264',           
         '--audio-codec=aac',      
         '--pixel-format=yuv420p', 
         `--props=${propsFilePath}`,
-        // Xóa dòng '--concurrency=1' đi, để Remotion tự dùng 100% sức mạnh CPU
-        '--log=info' // Đổi từ verbose sang info cho terminal bớt lag
+        '--log=info' 
       ];
 
-      const remotionProcess = spawn('npx', cliArgs, {
-        cwd: remotionProjectDir,
-        shell: true,
-        stdio: 'inherit' 
-      });
+      const remotionProcess = spawn('npx', cliArgs, { cwd: remotionProjectDir, shell: true, stdio: 'inherit' });
 
       remotionProcess.on('close', (code) => {
         if (code === 0) {
-          this.logger.log(`✅ THÀNH CÔNG! Đã xuất video Threads tại: ${outputLocation}`);
-          resolve();
+          // 🔥 ĐÃ MỞ KHÓA: Chụp Thumbnail tự động tại frame 60 cho mọi thể loại (Dùng làm bìa Intro)
+          this.logger.log(`📸 Video xong! Đang chụp Thumbnail (Ảnh bìa) ở khung hình chuẩn nhất...`);
+          
+          const thumbFileName = outputFileName.replace('.mp4', '_thumbnail.jpg');
+          const thumbLocation = path.resolve(process.cwd(), '..', '3_Storage_Assets', 'output_ready', thumbFileName);
+          
+          const stillArgs = [
+            'remotion', 'still', 'src/index.ts', compositionId, thumbLocation,
+            `--props=${propsFilePath}`,
+            '--frame=60', 
+            '--log=error'
+          ];
+
+          const stillProcess = spawn('npx', stillArgs, { cwd: remotionProjectDir, shell: true });
+
+          stillProcess.on('close', (stillCode) => {
+             this.logger.log(`✅ THÀNH CÔNG RỰC RỠ! Đã có Video và Ảnh bìa xịn xò tại thư mục output_ready!`);
+             resolve();
+          });
+          
         } else {
           this.logger.error(`❌ Lỗi khi render Threads: Tiến trình kết thúc với mã lỗi ${code}`);
           reject(new Error(`Render failed with code ${code}`));

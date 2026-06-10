@@ -1,10 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { ScraperService } from './scraper.service';
-import { AiService } from '../../ai/ai.service';
+// ĐÃ SỬA ĐƯỜNG DẪN:
+import { ScraperService } from '../../core/scraper/scraper.service';
+import { AiService } from '../../core/ai/ai.service';
+import { DiscordService } from '../../core/notification/discord.service';
 import { PrismaService } from '../../../prisma/prisma.service'; 
-import { DiscordService } from './discord.service';
 import * as crypto from 'crypto';
+
+// ... (Giữ nguyên phần code bên dưới của sếp) ...
 
 @Injectable()
 export class HunterService {
@@ -17,22 +20,19 @@ export class HunterService {
     private readonly discordService: DiscordService,
   ) {}
 
-  // @Cron(CronExpression.EVERY_MINUTE) // Sếp comment bỏ dòng này đi là Bot săn dừng hoạt động
+  // 🔥 Đã đổi thành EVERY_10_MINUTES (Cứ 10 phút chạy 1 lần)
+  // @Cron(CronExpression.EVERY_10_MINUTES) 
   async startHunting() {
     this.logger.log('🚀 BẮT ĐẦU CA TUẦN TRA KÉP (Kết hợp 2 Chiến thuật)...');
 
     try {
-      // Chạy Chiến thuật 1
       await this.huntWithAiKeywords();
-      
-      // Chạy Chiến thuật 2
       await this.huntWithForYouFeed();
-
     } catch (e: any) {
       this.logger.error(`❌ Lỗi tổng trong ca đi săn: ${e.message}`);
     }
 
-    this.logger.log('🏁 Kết thúc ca đi săn kép. Kho đã đầy thêm, đi ngủ đợi 2 tiếng sau!');
+    this.logger.log('🏁 Kết thúc ca đi săn kép. Kho đã đầy thêm, đi ngủ đợi 10 phút sau!');
   }
 
   // ====================================================================
@@ -57,7 +57,7 @@ export class HunterService {
       this.logger.log(`🎯 Lưới đã đan xong với các từ khóa: ${JSON.stringify(dynamicKeywords)}`);
     } catch (e) {
       this.logger.warn('⚠️ AI không đẻ được từ khóa, dùng lưới dự phòng...');
-      dynamicKeywords = ['tâm sự', 'chuyện công sở', 'hỏi thật']; // Fallback nếu AI lỗi
+      dynamicKeywords = ['tâm sự', 'chuyện công sở', 'hỏi thật']; 
     }
 
     for (const keyword of dynamicKeywords) {
@@ -151,6 +151,13 @@ export class HunterService {
           );
         `;
         this.logger.log(`✅ VIÊN KIM CƯƠNG ĐÃ ĐƯỢC LƯU VÀO KHO!`);
+
+        // 🔥 NÂNG CẤP: Gọi Bot Discord gửi tin nhắn kèm nút bấm cho Sếp duyệt
+        const savedPost = await this.prisma.threadPost.findUnique({ where: { threadId: threadId } });
+        if (savedPost) {
+           await this.discordService.sendPostToReview(savedPost);
+        }
+        
       } else {
         this.logger.warn(`🗑️ Khá nhạt nhẽo (Dưới 7 điểm). Bỏ qua.`);
       }

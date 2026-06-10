@@ -8,7 +8,10 @@ import FormData = require('form-data');
 
 import { RemotionRunnerService } from '../../remotion-runner/remotion-runner.service';
 import { WhisperService } from '../../whisper/whisper.service';
-import { GeminiService } from '../../ai/gemini.service';
+// ĐÃ SỬA ĐƯỜNG DẪN:
+import { GeminiService } from '../../core/ai/gemini.service';
+
+// ... (Giữ nguyên phần code bên dưới của sếp) ...
 
 @Injectable()
 export class TiktokLyricsService {

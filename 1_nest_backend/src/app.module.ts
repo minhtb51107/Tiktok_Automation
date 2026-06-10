@@ -4,10 +4,12 @@ import { AppService } from './app.service';
 import { WatcherModule } from './modules/watcher/watcher.module';
 import { RemotionRunnerModule } from './modules/remotion-runner/remotion-runner.module';
 import { WhisperModule } from './modules/whisper/whisper.module';
-import { GeminiModule } from './modules/ai/gemini.module';
-import { ThreadsTopicModule } from './modules/workflows/threads-topic/threads-topic.module';
-import { ScheduleModule } from '@nestjs/schedule'; // IMPORT MODULE NÀY
+import { GeminiModule } from './modules/core/ai/gemini.module';
+import { ScheduleModule } from '@nestjs/schedule'; 
 import { PrismaModule } from './prisma/prisma.module';
+
+// 🔥 IMPORT TRẠM TRUNG GIAN (Nó đã chứa sẵn Drama và Serious bên trong)
+import { DiscordModule } from './modules/core/notification/discord.module';
 
 @Module({
   imports: [
@@ -16,8 +18,8 @@ import { PrismaModule } from './prisma/prisma.module';
     RemotionRunnerModule, 
     WhisperModule, 
     GeminiModule,
-    ThreadsTopicModule,
-    PrismaModule // Đã thêm module Threads
+    PrismaModule,
+    DiscordModule // <--- Khởi động trạm trung gian
   ],
   controllers: [AppController],
   providers: [AppService],

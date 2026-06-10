@@ -1,14 +1,14 @@
 import { Controller, Get, Post, Param, Delete, Logger, Body } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { ThreadsTopicService } from './threads-topic.service';
+import { ThreadsDramaService } from './threads-drama.service';
 
 @Controller('api/threads')
-export class ThreadsTopicController {
-  private readonly logger = new Logger(ThreadsTopicController.name);
+export class ThreadsDramaController {
+  private readonly logger = new Logger(ThreadsDramaController.name);
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly threadsTopicService: ThreadsTopicService,
+    private readonly threadsTopicService: ThreadsDramaService,
   ) {}
 
   // ====================================================================
@@ -24,7 +24,7 @@ export class ThreadsTopicController {
     
     try {
       // Gọi thẳng vào service xử lý tổng thể
-      const result = await this.threadsTopicService.processThreadsVideo(url);
+      const result = await this.threadsTopicService.processDramaVideo(url);
       return result;
     } catch (error: any) {
       this.logger.error(`❌ Lỗi xử lý thủ công: ${error.message}`);
@@ -67,7 +67,7 @@ export class ThreadsTopicController {
       });
 
       // Kích hoạt lõi Render (Chạy ngầm để API trả về kết quả ngay lập tức)
-      this.threadsTopicService.processThreadsVideo(post.url).then(async (res) => {
+      this.threadsTopicService.processDramaVideo(post.url).then(async (res) => {
         this.logger.log(`✅ Render thành công video: ${res?.videoName}`);
         // Đánh dấu đã render xong
         await this.prisma.threadPost.update({

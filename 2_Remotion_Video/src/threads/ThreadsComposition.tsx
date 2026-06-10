@@ -1,5 +1,5 @@
 import React from 'react';
-import { AbsoluteFill, Audio, Series, staticFile, Video } from 'remotion'; 
+import { AbsoluteFill, Audio, Series, Sequence, staticFile, Video } from 'remotion'; 
 import { ThreadCard } from './ThreadCard';
 
 type ThreadProps = {
@@ -8,12 +8,14 @@ type ThreadProps = {
   post: { 
     author: string; avatar: string; text: string; audioSrc: string; durationInFrames: number; 
     gender?: string; attachedImage?: string; sfx?: string; memeMp4?: string;
-    likes?: string; comments?: string; reposts?: string; timeAgo?: string 
+    likes?: string; comments?: string; reposts?: string; shares?: string; timeAgo?: string 
   };
   comments: Array<{ 
     author: string; avatar: string; text: string; audioSrc: string; durationInFrames: number; 
+    parentAudioDuration?: number; // Cần thiết để Canh thời gian cho Con đọc
     gender?: string; attachedImage?: string; sfx?: string; memeMp4?: string;
-    likes?: string; timeAgo?: string 
+    likes?: string; comments?: string; reposts?: string; shares?: string; timeAgo?: string;
+    reply?: any; // Hứng dữ liệu bình luận Con
   }>;
 };
 
@@ -40,25 +42,31 @@ export const ThreadsComposition: React.FC<ThreadProps> = ({ backgroundVideo, bgm
       <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
         <Series>
           
+          {/* TRẠM 1: BÀI VIẾT GỐC */}
           <Series.Sequence durationInFrames={post.durationInFrames + PADDING_FRAMES}>
-            <ThreadCard 
-              author={post.author} text={post.text} avatar={post.avatar} 
-              attachedImage={post.attachedImage} memeMp4={post.memeMp4}
-              likes={post.likes} comments={post.comments} reposts={post.reposts} timeAgo={post.timeAgo} 
-            />
+            <ThreadCard {...post} />
             {post.audioSrc && <Audio src={staticFile(post.audioSrc)} />}
             {post.sfx && <Audio src={staticFile(`sfx/${post.sfx}`)} volume={0.2} />}
           </Series.Sequence>
 
+          {/* TRẠM 2: DANH SÁCH BÌNH LUẬN (CÓ THỂ CÓ CON) */}
           {comments.map((cmt, idx) => (
             <Series.Sequence key={idx} durationInFrames={cmt.durationInFrames + PADDING_FRAMES}>
-              <ThreadCard 
-                author={cmt.author} text={cmt.text} avatar={cmt.avatar} 
-                attachedImage={cmt.attachedImage} memeMp4={cmt.memeMp4}
-                likes={cmt.likes} timeAgo={cmt.timeAgo} 
-              />
+              
+              {/* Card hiển thị UI đã bao bọc cả Cha lẫn Con bên trong */}
+              <ThreadCard {...cmt} />
+              
+              {/* Âm thanh Cha */}
               {cmt.audioSrc && <Audio src={staticFile(cmt.audioSrc)} />}
               {cmt.sfx && <Audio src={staticFile(`sfx/${cmt.sfx}`)} volume={0.2} />}
+
+              {/* Âm thanh Con (Dùng thẻ Sequence để Delay, chờ Cha đọc xong + nghỉ 15 frames) */}
+              {cmt.reply && cmt.reply.audioSrc && (
+                <Sequence from={(cmt.parentAudioDuration || 0) + 15}>
+                  <Audio src={staticFile(cmt.reply.audioSrc)} />
+                </Sequence>
+              )}
+
             </Series.Sequence>
           ))}
           

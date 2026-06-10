@@ -18,6 +18,9 @@ model ThreadPost {
   attachedImg     String?
   url             String
 
+  // ================= PHÂN LOẠI NỘI DUNG =================
+  category        String   @default("DRAMA")        // 🔥 [MỚI]: Phân biệt "DRAMA" và "SERIOUS"
+
   // ================= AI SCORING & ĐẠO DIỄN =================
   aiScore         Int      @default(0)     
   vibe            String?                  
@@ -25,7 +28,7 @@ model ThreadPost {
   memeMp4         String?                  
   
   // ================= QUẢN LÝ TRẠNG THÁI & UPLOAD =================
-  caption         String?                  // 🔥 [MỚI THÊM VÀO]: Lưu Tiêu đề + Hashtag Tiktok
+  caption         String?                           // Lưu Tiêu đề + Hashtag Tiktok
   isApproved      Boolean  @default(false) 
   isRendered      Boolean  @default(false) 
   isPublished     Boolean  @default(false) 

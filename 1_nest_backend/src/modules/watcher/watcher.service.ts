@@ -9,9 +9,11 @@ import FormData = require('form-data');
 
 import { RemotionRunnerService } from '../remotion-runner/remotion-runner.service';
 import { WhisperService } from '../whisper/whisper.service';
-import { GeminiService } from '../ai/gemini.service';
-// THÊM IMPORT NÀY
-import { ThreadsTopicService } from '../workflows/threads-topic/threads-topic.service';
+// ĐÃ SỬA ĐƯỜNG DẪN:
+import { GeminiService } from '../core/ai/gemini.service';
+import { ThreadsDramaService } from '../workflows/threads-drama/threads-drama.service';
+
+// ... (Giữ nguyên phần code bên dưới của sếp) ...
 
 @Injectable()
 export class WatcherService implements OnModuleInit {
@@ -24,7 +26,7 @@ export class WatcherService implements OnModuleInit {
     private readonly whisperService: WhisperService,
     private readonly geminiService: GeminiService,
     // THÊM DÒNG NÀY
-    private readonly threadsTopicService: ThreadsTopicService, 
+    private readonly threadsTopicService: ThreadsDramaService, 
   ) {}
 
   onModuleInit() {
@@ -113,7 +115,7 @@ export class WatcherService implements OnModuleInit {
 
           if (url && url.includes('threads.net')) {
             this.logger.log(`🔗 Đang xử lý link: ${url}`);
-            await this.threadsTopicService.processThreadsVideo(url);
+            await this.threadsTopicService.processDramaVideo(url);
             fs.unlinkSync(txtFilePath);
             this.logger.log(`🗑️ Đã xóa file yêu cầu ${txtFiles[0]}`);
           } else {

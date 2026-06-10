@@ -15,11 +15,14 @@ export class OpenaiService extends BaseAiService {
   // Hàm tạo text thông thường
   async generateCore(prompt: string): Promise<string> {
     if (!this.openaiClient) throw new Error("Chưa cấu hình OpenAI Key");
+    
+    // Đã thay đổi cách gọi để tương thích với sức mạnh của GPT-5
     const response = await this.openaiClient.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-5', // 🔥 LÊN HẲN BẢN TRÙM CUỐI THEO CHỈ ĐẠO CỦA SẾP
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' }
     });
+    
     return response.choices[0].message.content || '';
   }
 
