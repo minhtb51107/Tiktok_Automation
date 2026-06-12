@@ -98,6 +98,42 @@ export class ThreadsDramaService {
     return null;
   }
 
+  // 🔥 TÍNH NĂNG MỚI: TỰ ĐỘNG FETCH MEME MP4 TỪ GIPHY API (Thay thế Tenor)
+  private async fetchMemeFromAPI(keyword: string, timestamp: number, id: string | number): Promise<string> {
+    try {
+        const apiKey = process.env.GIPHY_API_KEY;
+        if (!apiKey || !keyword) return "";
+
+        this.logger.log(`🔎 Kho thiếu Meme! Đang gọi Giphy API tìm: [${keyword}]...`);
+        
+        // Gọi Giphy API
+        const url = `https://api.giphy.com/v1/gifs/search?api_key=${apiKey}&q=${encodeURIComponent(keyword)}&limit=1`;
+        const res = await axios.get(url, { timeout: 10000 });
+        
+        // Bóc tách cấu trúc dữ liệu của Giphy để lấy link MP4
+        if (res.data.data && res.data.data.length > 0) {
+            const mp4Url = res.data.data[0].images.original_mp4.mp4;
+            
+            const memesDir = path.join(process.cwd(), '../2_Remotion_Video/public/memes');
+            if (!fs.existsSync(memesDir)) fs.mkdirSync(memesDir, { recursive: true });
+            
+            const fileName = `api_meme_${timestamp}_${id}.mp4`;
+            const filePath = path.join(memesDir, fileName);
+            
+            const videoRes = await axios({ url: mp4Url, method: 'GET', responseType: 'arraybuffer', timeout: 15000 });
+            
+            if (videoRes.data.length > 1000) {
+               fs.writeFileSync(filePath, videoRes.data);
+               this.logger.log(`✅ Lấy Meme từ Giphy thành công: ${fileName}`);
+               return `memes/${fileName}`;
+            }
+        }
+    } catch (e: any) {
+        this.logger.warn(`⚠️ Lỗi khi lấy Meme ngoài cho [${keyword}]: ${e.message}`);
+    }
+    return "";
+  }
+
   private async prepareDynamicBackground(totalFrames: number, timestamp: number): Promise<string> {
     const sourceBgPath = path.join(process.cwd(), '../2_Remotion_Video/public/backgrounds/source_minecraft.mp4');
     const outputBgName = `bg_temp_${timestamp}.mp4`;
@@ -264,26 +300,31 @@ export class ThreadsDramaService {
 
     if (onProgress) await onProgress('🤖 **Bước 2:** Đóng gói nguyên liệu gửi cho GPT phân tích...');
     
-    const batchPrompt = `Bạn là Đạo diễn Video TikTok. Chuẩn bị kịch bản hiển thị và kịch bản TTS.
+const batchPrompt = `Bạn là Đạo diễn Video TikTok. Chuẩn bị kịch bản hiển thị và kịch bản TTS.
 KHO ÂM THANH:\n${sfxDictString}\nKHO MEME:\n${memeDictString}\n
-YÊU CẦU CỰC KỲ NGHIÊM NGẶT: 
-1. "displayText": GIỮ NGUYÊN 100% câu chữ, văn phong, từ lóng của bản gốc. Chỉ được sửa lỗi chính tả vụn vặt và ngắt dòng.
-2. "ttsText": ĐÂY LÀ KỊCH BẢN ĐỂ MÁY ĐỌC. BẠN PHẢI TUÂN THỦ:
-   - Đọc ĐÚNG TỪNG CHỮ của bản gốc. TUYỆT ĐỐI KHÔNG tự ý diễn giải, thêm thắt, hay viết lại câu chữ thành câu khác.
-   - CHỈ dịch rõ các từ viết tắt theo đúng từ điển sau:
-     + "thg" -> "thằng", "nyc" -> "người yêu cũ", "k" hoặc "ko" -> "không", "mn" hoặc "mng" -> "mọi người", "đc" -> "được", "r" -> "rồi", "cx" -> "cũng", "đg" -> "đang", "j" -> "gì", "vs" -> "với".
-   - Chú ý đại từ: Dựa vào "role", nếu có thái độ gắt gỏng, chửi thề (như "Dm", "đm", "vkl") thì "t" -> "tao", "m" -> "mày". Nếu nói chuyện bình thường: "t" -> "tôi/tớ", "m" -> "cậu/mày".
-3. BẮT BUỘC trả về đầy đủ các id.
 
-DANH SÁCH:
+YÊU CẦU CỰC KỲ NGHIÊM NGẶT: 
+1. "isSpam": Phân tích "text" xem có mang tính chất rác, quảng cáo (PR, link bio, xem bói...) hay không. Trả về true nếu là quảng cáo. (Trừ id="post" gốc).
+2. "displayText": KỊCH BẢN MÀN HÌNH. GIỮ NGUYÊN 100% câu chữ, văn phong, lỗi chính tả, teencode của bản gốc.
+3. "ttsText": KỊCH BẢN ÂM THANH. Nhiệm vụ của bạn là "BỘ GIẢI MÃ":
+   - [LỆNH CẤM]: TUYỆT ĐỐI KHÔNG thêm thắt từ ngữ, KHÔNG làm cho câu văn lịch sự hay hoa mỹ hơn. Giữ nguyên 100% các từ ngữ bình thường, giữ nguyên thái độ cục súc hoặc trẩu tre của bản gốc.
+   - [GIẢI MÃ]: CHỈ dịch các từ viết tắt, teencode, tiếng lóng sang tiếng Việt hoàn chỉnh dựa trên ngữ cảnh của "BÀI VIẾT GỐC". 
+   - [ĐỌC SỐ]: Viết rõ các con số để máy đọc không vấp (VD: "20k" -> "hai mươi cành", "20tr" -> "hai mươi củ", "1m5" -> "một mét năm").
+   - [VÍ DỤ CHUẨN]: 
+     + Gốc: "chê nha, trg này dạy dở vl" -> ttsText: "chê nha, trường này dạy dở vãi lồi" (Giữ nguyên chữ 'chê nha', chỉ dịch 'trg' và 'vl').
+     + Gốc: "đm thg nyc kh báo j" -> ttsText: "đờ mờ thằng người yêu cũ không báo gì".
+4. "meme": Chọn 1 file từ KHO MEME. NẾU TRONG KHO KHÔNG CÓ CÁI NÀO PHÙ HỢP, hãy tự nghĩ ra 1 TỪ KHÓA TÌM KIẾM bằng Tiếng Anh (VD: "cat facepalm", "dog laughing", "sad crying") để hệ thống tự đi tìm. NẾU KHÔNG CẦN THÌ ĐỂ TRỐNG "".
+
+DANH SÁCH TEXT:
 ${textsToProcess.map(t => `{"id": "${t.id}", "role": "${t.role}", "text": "${t.text}"}`).join('\n')}
 
-TRẢ VỀ MẢNG JSON (CẤM LỜI BÌNH):
-[ { "id": "id", "displayText": "...", "ttsText": "...", "gender": "male", "sfx": "...", "meme": "..." } ]`;
+TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH):
+[ { "id": "id", "isSpam": false, "displayText": "...", "ttsText": "...", "gender": "male", "sfx": "...", "meme": "..." } ]`;
 
     let parsedBatch: any[] = [];
     try {
-        let batchRes = await this.aiService.askGroq(batchPrompt, true); 
+        // Nếu AI lộn xộn sếp có thể đổi askGroq thành askOpenAI nhé
+        let batchRes = await this.aiService.askOpenAI(batchPrompt); 
         const jsonMatch = batchRes.match(/\[\s*\{[\s\S]*\}\s*\]/);
         if (jsonMatch) parsedBatch = JSON.parse(jsonMatch[0]);
     } catch (e) { this.logger.error("❌ Batch AI thất bại."); }
@@ -294,24 +335,25 @@ TRẢ VỀ MẢNG JSON (CẤM LỜI BÌNH):
     const getAiData = (id: string, safeText: string) => {
         const data = aiMap.get(id) || {};
         return { 
+            isSpam: data.isSpam === true, 
             displayText: data.displayText || safeText,
             ttsText: data.ttsText || data.displayText || safeText, 
             gender: data.gender === 'female' ? 'female' : 'male', 
             sfx: this.validateMedia(data.sfx, sfxKeys), 
-            meme: this.validateMedia(data.meme, memeKeys) 
+            meme: data.meme || "" 
         };
     };
 
     let captionRaw = "Drama Threads quá cháy 🔥 #drama #giaitri #xuhuong #threads";
     const captionPrompt = `Viết 1 dòng Caption TikTok cực kỳ giật gân, tò mò (kèm 3 hashtag) dựa trên nội dung sau. TUYỆT ĐỐI KHÔNG CHÉP LẠI NỘI DUNG GỐC! Nội dung: "${rawData.post.text}"`;
     try {
-        let aiCaption = await this.aiService.askGroq(captionPrompt, true);
+        let aiCaption = await this.aiService.askGemini(captionPrompt);
         if (aiCaption) captionRaw = aiCaption.replace(/^["']|["']$/g, '').trim();
     } catch(e) {}
 
     if (onProgress) await onProgress('🎙️ **Bước 3:** Đang lồng tiếng và tải tài nguyên...');
     
-    const postSafeText = textsToProcess.find(t => t.id === 'post').text;
+    const postSafeText = textsToProcess.find(t => t.id === 'post')?.text || "";
     const postAi = getAiData('post', postSafeText);
     
     let postAudio;
@@ -324,13 +366,24 @@ TRẢ VỀ MẢNG JSON (CẤM LỜI BÌNH):
         throw new Error(`Tất cả API Giọng Đọc đều sập khi xử lý BÀI VIẾT GỐC. Bắt buộc hủy toàn bộ Video! (Chi tiết: ${error.message})`);
     }
 
+    // 🔥 GÁN MEME CHO BÀI GỐC
+    let postMeme = this.validateMedia(postAi.meme, memeKeys);
+    if (!postMeme && postAi.meme && postAi.meme.length > 2) {
+        postMeme = await this.fetchMemeFromAPI(postAi.meme, timestamp, 'post');
+    }
+    if (postMeme && postMeme.includes('api_meme')) trashFiles.push(postMeme);
+
     const postProps = {
       author: rawData.post.author, 
       text: postAi.displayText, 
       ttsText: postAi.ttsText,
       avatar: await this.downloadAvatar(rawData.post.avatar, `avatar_post_${timestamp}.jpg`, rawData.post.author),
       attachedImage: rawData.post.attachedImage ? await this.downloadAttachedImage(rawData.post.attachedImage, `img_post_${timestamp}.jpg`) : "",
-      gender: postAi.gender, sfx: postAi.sfx, memeMp4: postAi.meme, ...this.getStats(rawData.post), ...postAudio
+      gender: postAi.gender, 
+      sfx: postAi.sfx, 
+      memeMp4: postMeme, 
+      ...this.getStats(rawData.post), 
+      ...postAudio
     };
     trashFiles.push(postProps.avatar);
     if (postProps.attachedImage) trashFiles.push(postProps.attachedImage);
@@ -341,25 +394,42 @@ TRẢ VỀ MẢNG JSON (CẤM LỜI BÌNH):
     for (let i = 0; i < cmtHierarchy.length; i++) {
         const { cmt } = cmtHierarchy[i];
         try {
-            const cmtSafeText = textsToProcess.find(t => t.id === `cmt_${i}`).text;
+            const cmtSafeText = textsToProcess.find(t => t.id === `cmt_${i}`)?.text || "";
             const cmtAi = getAiData(`cmt_${i}`, cmtSafeText);
+
+            if (cmtAi.isSpam) {
+                this.logger.warn(`🗑️ AI đã loại bỏ COMMENT SỐ ${i + 1} vì phát hiện là Quảng cáo/Spam.`);
+                continue; 
+            }
+
             const cAudio = await this.ttsService.generateAudio(cmtAi.ttsText, `cmt_${timestamp}_${i}.mp3`, cmtAi.gender);
             trashFiles.push(cAudio.audioSrc);
+
+            // 🔥 GÁN MEME CHO BÌNH LUẬN
+            let cmtMeme = this.validateMedia(cmtAi.meme, memeKeys);
+            if (!cmtMeme && cmtAi.meme && cmtAi.meme.length > 2) {
+                cmtMeme = await this.fetchMemeFromAPI(cmtAi.meme, timestamp, i);
+            }
+            if (cmtMeme && cmtMeme.includes('api_meme')) trashFiles.push(cmtMeme);
 
             const cmtData = {
               author: cmt.author, 
               text: cmtAi.displayText, 
               avatar: await this.downloadAvatar(cmt.avatar, `ava_cmt_${timestamp}_${i}.jpg`, cmt.author),
               attachedImage: cmt.attachedImage ? await this.downloadAttachedImage(cmt.attachedImage, `img_cmt_${timestamp}_${i}.jpg`) : "",
-              sfx: cmtAi.sfx, memeMp4: cmtAi.meme, ...this.getStats(cmt), audioSrc: cAudio.audioSrc, parentAudioDuration: cAudio.durationInFrames
+              sfx: cmtAi.sfx, 
+              memeMp4: cmtMeme, 
+              ...this.getStats(cmt), 
+              audioSrc: cAudio.audioSrc, 
+              parentAudioDuration: cAudio.durationInFrames
             };
             trashFiles.push(cmtData.avatar);
             if (cmtData.attachedImage) trashFiles.push(cmtData.attachedImage);
 
-            let totalCmtDuration = cAudio.durationInFrames + 60; // Nghỉ 1 giây (60 frames) cho comment tiếp theo
+            let totalCmtDuration = cAudio.durationInFrames + 60;
 
             totalFramesCalculated += totalCmtDuration;
-            commentsProps.push({ ...cmtData, durationInFrames: totalCmtDuration, reply: null }); // Reply luôn là null
+            commentsProps.push({ ...cmtData, durationInFrames: totalCmtDuration, reply: null }); 
         } catch (e) { this.logger.warn(`✂️ BỎ QUA COMMENT SỐ ${i + 1}`); }
     }
 

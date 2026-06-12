@@ -84,10 +84,10 @@ export class TtsService {
 
     let voice = 'banmai'; 
     if (gender === 'female') {
-      const femaleVoices = ['banmai', 'thuminh', 'linhsan', 'lanngoc'];
+      const femaleVoices = ['banmai'];
       voice = femaleVoices[Math.floor(Math.random() * femaleVoices.length)];
     } else {
-      const maleVoices = ['leminh', 'minhquang', 'thanhlong'];
+      const maleVoices = ['leminh'];
       voice = maleVoices[Math.floor(Math.random() * maleVoices.length)];
     }
 

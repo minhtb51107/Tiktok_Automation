@@ -98,7 +98,7 @@ export class ThreadsSeriousService {
 
     let chunks: { text: string, keyword: string }[] = [];
     try {
-      let aiRes = await this.aiService.askOpenAI(chunkPrompt);
+      let aiRes = await this.aiService.askGemini(chunkPrompt);
       
       // 🔥 4. Gọt sạch rác Markdown của AI trước khi Parse
       aiRes = aiRes.replace(/```json/g, '').replace(/```/g, '').trim();

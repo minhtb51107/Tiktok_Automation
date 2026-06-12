@@ -2,12 +2,15 @@ import { Module } from '@nestjs/common';
 import { DiscordService } from './discord.service';
 import { ThreadsDramaModule } from '../../workflows/threads-drama/threads-drama.module';
 import { ThreadsSeriousModule } from '../../workflows/threads-serious/threads-serious.module';
+// 🔥 THÊM DÒNG NÀY: Import Module Tổng hợp
+import { ThreadsCompilationModule } from '../../workflows/threads-compilation/threads-compilation.module'; 
 import { TiktokUploadService } from '../uploader/tiktok-upload.service';
 
 @Module({
   imports: [
-    ThreadsDramaModule,   // Mượn xưởng Drama
-    ThreadsSeriousModule  // Mượn xưởng Serious
+    ThreadsDramaModule,   
+    ThreadsSeriousModule, 
+    ThreadsCompilationModule // <-- BẮT BUỘC THÊM DÒNG NÀY ĐỂ KẾT NỐI
   ],
   providers: [
     DiscordService,

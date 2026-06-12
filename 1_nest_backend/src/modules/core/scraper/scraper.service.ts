@@ -5,7 +5,8 @@ import puppeteer from 'puppeteer';
 export class ScraperService {
   private readonly logger = new Logger(ScraperService.name);
 
-  async scrapeThreadsUrl(url: string) {
+  // 🔥 Công tắc fetchComments được đưa vào đây
+  async scrapeThreadsUrl(url: string, fetchComments: boolean = true) {
     const targetUrl = url.replace('threads.com', 'threads.net');
     this.logger.log(`🔍 Bắt đầu cào URL chuẩn: ${targetUrl}`);
     
@@ -28,14 +29,18 @@ export class ScraperService {
       await page.waitForSelector('[data-pressable-container="true"]', { timeout: 10000 });
 
       // ========================================================
-      // 🔥 BẢN VÁ: ÉP BOT CUỘN TRANG ĐỂ LOAD THÊM BÌNH LUẬN ẨN
+      // 🔥 KIỂM TRA CÔNG TẮC: CHỈ CUỘN KHI CẦN LẤY COMMENT
       // ========================================================
-      this.logger.log(`⏳ Đang cuộn trang để móc thêm bình luận đang bị ẩn...`);
-      for (let i = 0; i < 4; i++) { // Cuộn 4 lần, sếp có thể tăng số 4 lên nếu muốn cào sâu hơn nữa
-        await page.evaluate(() => window.scrollBy(0, window.innerHeight * 2));
-        await new Promise(r => setTimeout(r, 1500)); // Nghỉ 1.5 giây chờ mạng load data mới
+      if (fetchComments) {
+        this.logger.log(`⏳ Đang cuộn trang để móc thêm bình luận đang bị ẩn...`);
+        for (let i = 0; i < 4; i++) { 
+          await page.evaluate(() => window.scrollBy(0, window.innerHeight * 2));
+          await new Promise(r => setTimeout(r, 1500)); 
+        }
+        this.logger.log(`✅ Đã cuộn xong, tiến hành thu hoạch bình luận!`);
+      } else {
+        this.logger.log(`⚡ Chế độ TỐC ĐỘ CAO (Chỉ lấy bài gốc, bỏ qua cuộn trang tìm bình luận)`);
       }
-      this.logger.log(`✅ Đã cuộn xong, tiến hành thu hoạch bình luận!`);
       // ========================================================
 
       const data = await page.evaluate(() => {
@@ -50,8 +55,16 @@ export class ScraperService {
           const lines = rawString.split('\n').map(s => s.trim()).filter(Boolean);
           
           let author = 'Anonymous';
-          const authorEl = el.querySelector('span[dir="auto"]');
-          if (authorEl) author = authorEl.textContent;
+          const spanNodes = Array.from(el.querySelectorAll('span[dir="auto"]')).map(n => n.textContent?.trim() || "");
+          const validSpans = spanNodes.filter(t => t.length > 0);
+          
+          let authorIndex = 0;
+          if (validSpans[0] === 'Đã ghim' || validSpans[0] === 'Pinned') {
+              authorIndex = 1;
+          }
+          if (validSpans.length > authorIndex) {
+              author = validSpans[authorIndex];
+          }
 
           let likeCount, commentsCount, repostCount;
           const numRegex = /^[\d,.]+([KkMmBb])?$/; 
@@ -79,7 +92,6 @@ export class ScraperService {
              }
           }
 
-          // 🔥 BẮT CHUẨN CẢ THỜI GIAN NGÀY/THÁNG/NĂM
           const timeMatch = rawString.match(/(?:\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d+\s*(?:giây|phút|giờ|ngày|tuần|tháng|năm)(?:\s*trước)?|\d+[mhd])/i);
           const timeAgo = timeMatch ? timeMatch[0] : "Vừa xong";
 
@@ -87,11 +99,10 @@ export class ScraperService {
           const textNodes = Array.from(el.querySelectorAll('span[dir="auto"]'));
           let text = textNodes
               .map(n => n.textContent?.trim() || "")
-              .filter(t => t.length > 0 && t !== author && t !== 'Tác giả' && t !== 'Author' && !numRegex.test(t) && !timeNodeRegex.test(t))
+              .filter(t => t.length > 0 && t !== author && t !== 'Tác giả' && t !== 'Author' && t !== 'Đã ghim' && t !== 'Pinned' && !numRegex.test(t) && !timeNodeRegex.test(t))
               .join('\n') 
               .trim();
 
-          // Cạo sạch những chữ thời gian dính lại
           if (timeMatch && timeMatch[0]) {
              text = text.replace(timeMatch[0], '');
           }
