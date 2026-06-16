@@ -2,9 +2,19 @@
 # 🤖 TikTok/Shorts Automation & Video Generation Pipeline
 
 ![NodeJS](https://img.shields.io/badge/Node.js-18.x-green)
+![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)
 ![NestJS](https://img.shields.io/badge/NestJS-E0234E?logo=nestjs&logoColor=white)
+![Prisma](https://img.shields.io/badge/Prisma-3982CE?logo=Prisma&logoColor=white)
+
+![OpenAI](https://img.shields.io/badge/OpenAI-412991?logo=openai&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini-8E75B2?logo=google-gemini&logoColor=white)
+![FFmpeg](https://img.shields.io/badge/FFmpeg-007808?logo=ffmpeg&logoColor=white)
+
+![React](https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB)
 ![Remotion](https://img.shields.io/badge/Remotion-Video-blue)
+![Tailwind](https://img.shields.io/badge/Tailwind_CSS-38B2AC?logo=tailwind-css&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?logo=docker&logoColor=white)
+![Discord](https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 ![Demo Video](./assets/demo_video.gif)
