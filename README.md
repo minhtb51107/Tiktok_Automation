@@ -1,18 +1,47 @@
-🤖 TikTok/Shorts Automation & Video Generation Pipeline
-📖 Overview
+# 🤖 TikTok/Shorts Automation & Video Generation Pipeline
+
+![NodeJS](https://img.shields.io/badge/Node.js-18.x-green)
+![NestJS](https://img.shields.io/badge/NestJS-E0234E?logo=nestjs&logoColor=white)
+![Remotion](https://img.shields.io/badge/Remotion-Video-blue)
+![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?logo=docker&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-yellow)
+
+![Demo Video](./assets/demo_video.gif)
+
+## 📖 Table of Contents
+- [Overview](#-overview)
+- [Architecture & Project Structure](#-architecture--project-structure)
+- [Detailed Features & Workflow Pipeline](#-detailed-features--workflow-pipeline)
+- [API Documentation](#-api-documentation)
+- [Getting Started](#-getting-started)
+  - [Standard Setup](#1-standard-setup)
+  - [Docker Setup](#2-docker-setup-recommended)
+- [Tech Stack](#-tech-stack)
+- [Contributing](#-contributing)
+- [Future Improvements](#-future-improvements)
+- [License](#-license)
+
+---
+
+## 📖 Overview
 This project is an advanced, fully automated pipeline designed for generating, rendering, and publishing short-form videos (TikToks, YouTube Shorts, Instagram Reels). It seamlessly integrates data scraping, AI-powered content curation (OpenAI, Gemini), Text-to-Speech (TTS), precise audio transcription (Whisper), and programmatic video rendering using Remotion.
 
 The system is built to operate hands-free: it hunts for trending topics, writes the scripts, generates the media, renders the video, and uploads it directly to social media platforms.
 
-🏗 Architecture & Project Structure
+---
+
+## 🏗 Architecture & Project Structure
+
+![Architecture Diagram](./assets/architecture.png)
+
 The project is structured as a monorepo containing three main components:
 
-1_nest_backend/ (The Brain): A robust NestJS backend that orchestrates the entire workflow. It manages cron jobs, web scraping, AI processing, database interactions (Prisma), file generation, and automated uploading.
-
-2_Remotion_Video/ (The Engine): A React-based Remotion project responsible for visually rendering the videos. It accepts parameterized inputs (audio tracks, word-level timestamps, JSON scripts, visual assets) from the backend and produces highly engaging, dynamic .mp4 files.
-
-3_Storage_Assets/ (The Cache): A dedicated storage directory for intermediate and temporary assets such as generated audio, background music, Whisper JSON transcripts, and output videos.
-
+```text
+├── 1_nest_backend/      # The Brain: NestJS API, Cron Jobs, Prisma, AI Logic & Automation
+├── 2_Remotion_Video/    # The Engine: React, Remotion templates, Tailwind CSS for video rendering
+├── 3_Storage_Assets/    # The Cache: Temp MP3s, Whisper JSONs, and final output videos (.mp4)
+├── .github/             # CI/CD Workflows & Issue Templates
+└── docker-compose.yml   # Deployment configuration
 ✨ Detailed Features & Workflow Pipeline
 The automation follows a strict, multi-step pipeline triggered by backend workers:
 
@@ -33,7 +62,6 @@ Passes the generated audio through Whisper (OpenAI) to extract highly accurate, 
 
 4. Programmatic Video Rendering (Remotion Runner)
 The backend triggers the Remotion CLI, injecting the generated audio, timestamps, and script data as React props.
-
 Dynamic Compositions Supported:
 
 Threads Format: Visualizes social media posts with typing/reading animations and meme pop-ups.
@@ -49,6 +77,16 @@ Utilizes automated browser scripts to handle the complex process of uploading th
 
 Sends real-time workflow logs, error reports, and success notifications to a designated Discord channel via Webhooks.
 
+📚 API Documentation
+This project includes a fully documented API using Swagger UI.
+Once the backend is running, navigate to:
+
+Plaintext
+
+
+http://localhost:3000/api/docs
+Here you can view all endpoints, test scraping workflows, and trigger manual video generation.
+
 🚀 Getting Started
 Prerequisites
 Node.js (v18 or v20 LTS recommended)
@@ -57,8 +95,10 @@ FFmpeg (Crucial: Must be installed and added to your system's PATH. Both Remotio
 
 Git
 
-1. Backend Setup (1_nest_backend)
-Navigate to the backend directory and install dependencies:
+Docker & Docker Compose (Optional but recommended for deployment)
+
+1. Standard Setup
+Backend Setup (1_nest_backend)
 
 Bash
 
@@ -87,20 +127,24 @@ Bash
 
 npx prisma db push
 npm run start:dev
-2. Video Renderer Setup (2_Remotion_Video)
-Open a new terminal window, navigate to the Remotion directory, and install dependencies:
+Video Renderer Setup (2_Remotion_Video)
+Open a new terminal window:
 
 Bash
 
 
 cd 2_Remotion_Video
 npm install
-To launch the Remotion Studio and preview your video templates in the browser:
+npm start # Launch Remotion Studio to preview templates
+2. Docker Setup (Recommended)
+To run the entire backend and database environment without installing dependencies locally:
 
 Bash
 
 
-npm start
+docker-compose up -d --build
+Note: FFmpeg is already pre-configured inside the Docker container.
+
 🛠 Tech Stack
 Core Backend: NestJS, TypeScript, Prisma ORM.
 
@@ -110,9 +154,31 @@ AI & ML: OpenAI API, Google Gemini, Groq, Whisper.
 
 Automation: Puppeteer / Playwright, FFmpeg.
 
+Deployment: Docker, GitHub Actions (CI/CD).
+
+🤝 Contributing
+Contributions, issues, and feature requests are welcome!
+
+Fork the repo.
+
+Create your feature branch (git checkout -b feature/AmazingFeature).
+
+Commit your changes (git commit -m 'Add some AmazingFeature').
+
+Push to the branch (git push origin feature/AmazingFeature).
+
+Open a Pull Request.
+
+Please make sure to update tests as appropriate.
+
 📝 Future Improvements (TODO)
 [ ] Build a frontend Dashboard to manage campaigns, templates, and view rendered videos manually.
 
 [ ] Expand auto-upload capabilities to YouTube Shorts and Instagram Reels APIs.
 
 [ ] Add multi-language generation support.
+
+[ ] Add Unit & E2E Testing coverage.
+
+📄 License
+This project is licensed under the MIT License - see the LICENSE file for details.
