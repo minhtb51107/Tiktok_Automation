@@ -1,0 +1,1047 @@
+{
+  "tiktok_caption": "Kinh nghiệm thực tế từ người đi trước #xuhuong #kienthuc #baihoc",
+  "bgm": "bgm/sneaky.mp3",
+  "postInfo": {
+    "author": "elisee.ph",
+    "avatar": "avatars/ava_serious_1781627547532.jpg",
+    "text": "sự nghiệp\nThật lòng xin một lời khuyên của người thu nhập trên 50M với ạ. Mn làm ngành gì, bao nhiêu job 1 lúc, mất bao lâu để đạt mức đó, mn sắp xếp thời gian và handle trách nhiệm công việc như thế nào vậy.\nMình bị mắc kẹt ở mức thu nhập 25-35M khoảng 3 năm nay. Áp lực gia tăng thu nhập, nợ nần, peer pressure và kỳ vọng của bản thân làm mình muốn khùng luôn.",
+    "timeAgo": "21/01/2026"
+  },
+  "chunks": [
+    {
+      "text": "Nhìn từ các chia sẻ trên, có thể thấy mức thu nhập trên 50 triệu thường không đến từ một yếu tố duy nhất. Có người đạt được nhờ nhiều nguồn thu nhập song song, có người nhờ lợi thế học tập và môi trường quốc tế, cũng có người nhờ quá trình liên tục nâng cấp năng lực bản thân. Điểm chung là thu nhập cao thường đi kèm với sự đánh đổi về thời gian, áp lực hoặc rủi ro. Nếu đang mắc kẹt ở một mức thu nhập nhất định, câu hỏi quan trọng không chỉ là làm nhiều hơn, mà là làm sao để tạo ra giá trị lớn hơn và khác biệt hơn trên thị trường.",
+      "caption": "",
+      "cardToShow": "none",
+      "commentInfo": null,
+      "gifImg": "gifs/gif_1781627547532_5.mp4",
+      "audioSrc": "threads_audio/serious_1781627547532_5.mp3",
+      "words": {
+        "text": " Nhìn từ các chia sẻ trên, có thể thấy mức thu nhập trên 50 triệu thường không đến từ một yếu tố duy nhất. Có người đạt được nhờ nhiều nguồn thu nhập xong xong, có người nhờ lợi thế học tập và môi trưởng quốc tế, cũng có người nhờ quá trình liên tục nâng cấp năng lực bản thân. Điểm chung là thu nhập cao thường đi kèm với sự đánh đổi về thời gian, áp lực hoặc dủ do. Nếu đang mất kẹt ở một mức thu nhập nhất định, câu hỏi quan trọng không chỉ là làm nhiều hơn, mà làm sao để tạo ra giá trị lớn hơn và khác biệt hơn trên thị trường.",
+        "segments": [
+          {
+            "id": 0,
+            "seek": 0,
+            "start": 0,
+            "end": 5.4,
+            "text": " Nhìn từ các chia sẻ trên, có thể thấy mức thu nhập trên 50 triệu thường không đến từ một yếu tố duy nhất.",
+            "tokens": [
+              50364,
+              26390,
+              41320,
+              26834,
+              13250,
+              45793,
+              262,
+              40956,
+              33187,
+              11,
+              6333,
+              24491,
+              27793,
+              275,
+              27138,
+              40295,
+              6245,
+              35148,
+              33187,
+              2625,
+              1376,
+              43562,
+              258,
+              24280,
+              11415,
+              26353,
+              26834,
+              15486,
+              288,
+              30568,
+              256,
+              7863,
+              37385,
+              41081,
+              13,
+              50655
+            ],
+            "temperature": 0,
+            "avg_logprob": -0.20856456036837595,
+            "compression_ratio": 1.6775700934579438,
+            "no_speech_prob": 0.01104583777487278,
+            "words": [
+              {
+                "word": " Nhìn",
+                "start": 0,
+                "end": 0.38,
+                "probability": 0.9214556813240051
+              },
+              {
+                "word": " từ",
+                "start": 0.38,
+                "end": 0.52,
+                "probability": 0.811561644077301
+              },
+              {
+                "word": " các",
+                "start": 0.52,
+                "end": 0.68,
+                "probability": 0.9267814755439758
+              },
+              {
+                "word": " chia",
+                "start": 0.68,
+                "end": 0.88,
+                "probability": 0.739378035068512
+              },
+              {
+                "word": " sẻ",
+                "start": 0.88,
+                "end": 1.12,
+                "probability": 0.9519943594932556
+              },
+              {
+                "word": " trên,",
+                "start": 1.12,
+                "end": 1.4,
+                "probability": 0.9493414759635925
+              },
+              {
+                "word": " có",
+                "start": 1.8,
+                "end": 1.88,
+                "probability": 0.9886459112167358
+              },
+              {
+                "word": " thể",
+                "start": 1.88,
+                "end": 2.02,
+                "probability": 0.9994275569915771
+              },
+              {
+                "word": " thấy",
+                "start": 2.02,
+                "end": 2.26,
+                "probability": 0.9778638482093811
+              },
+              {
+                "word": " mức",
+                "start": 2.26,
+                "end": 2.46,
+                "probability": 0.9265148341655731
+              },
+              {
+                "word": " thu",
+                "start": 2.46,
+                "end": 2.58,
+                "probability": 0.6104134917259216
+              },
+              {
+                "word": " nhập",
+                "start": 2.58,
+                "end": 2.78,
+                "probability": 0.9686115384101868
+              },
+              {
+                "word": " trên",
+                "start": 2.78,
+                "end": 2.96,
+                "probability": 0.9925554394721985
+              },
+              {
+                "word": " 50",
+                "start": 2.96,
+                "end": 3.2,
+                "probability": 0.9477596282958984
+              },
+              {
+                "word": " triệu",
+                "start": 3.2,
+                "end": 3.54,
+                "probability": 0.933251142501831
+              },
+              {
+                "word": " thường",
+                "start": 3.54,
+                "end": 3.74,
+                "probability": 0.6875081062316895
+              },
+              {
+                "word": " không",
+                "start": 3.74,
+                "end": 3.96,
+                "probability": 0.9839825630187988
+              },
+              {
+                "word": " đến",
+                "start": 3.96,
+                "end": 4.1,
+                "probability": 0.9939693212509155
+              },
+              {
+                "word": " từ",
+                "start": 4.1,
+                "end": 4.34,
+                "probability": 0.9890790581703186
+              },
+              {
+                "word": " một",
+                "start": 4.34,
+                "end": 4.54,
+                "probability": 0.7910237908363342
+              },
+              {
+                "word": " yếu",
+                "start": 4.54,
+                "end": 4.8,
+                "probability": 0.6100447773933411
+              },
+              {
+                "word": " tố",
+                "start": 4.8,
+                "end": 5.04,
+                "probability": 0.8181012272834778
+              },
+              {
+                "word": " duy",
+                "start": 5.04,
+                "end": 5.18,
+                "probability": 0.9522499442100525
+              },
+              {
+                "word": " nhất.",
+                "start": 5.18,
+                "end": 5.4,
+                "probability": 0.9997484087944031
+              }
+            ]
+          },
+          {
+            "id": 1,
+            "seek": 0,
+            "start": 6.02,
+            "end": 11,
+            "text": " Có người đạt được nhờ nhiều nguồn thu nhập xong xong, có người nhờ lợi thế học tập và môi trưởng quốc tế,",
+            "tokens": [
+              50655,
+              41306,
+              15898,
+              2934,
+              44664,
+              15832,
+              6245,
+              21270,
+              28272,
+              297,
+              2794,
+              11057,
+              77,
+              40295,
+              6245,
+              35148,
+              2031,
+              556,
+              2031,
+              556,
+              11,
+              6333,
+              15898,
+              6245,
+              21270,
+              287,
+              27836,
+              72,
+              27100,
+              46786,
+              256,
+              35148,
+              10274,
+              275,
+              12213,
+              504,
+              49301,
+              421,
+              24426,
+              256,
+              6115,
+              11,
+              50929
+            ],
+            "temperature": 0,
+            "avg_logprob": -0.20856456036837595,
+            "compression_ratio": 1.6775700934579438,
+            "no_speech_prob": 0.01104583777487278,
+            "words": [
+              {
+                "word": " Có",
+                "start": 6.02,
+                "end": 6.1,
+                "probability": 0.9168170094490051
+              },
+              {
+                "word": " người",
+                "start": 6.1,
+                "end": 6.28,
+                "probability": 0.9964297413825989
+              },
+              {
+                "word": " đạt",
+                "start": 6.28,
+                "end": 6.54,
+                "probability": 0.9367152452468872
+              },
+              {
+                "word": " được",
+                "start": 6.54,
+                "end": 6.66,
+                "probability": 0.992755115032196
+              },
+              {
+                "word": " nhờ",
+                "start": 6.66,
+                "end": 6.9,
+                "probability": 0.7337414622306824
+              },
+              {
+                "word": " nhiều",
+                "start": 6.9,
+                "end": 7.08,
+                "probability": 0.9798404574394226
+              },
+              {
+                "word": " nguồn",
+                "start": 7.08,
+                "end": 7.38,
+                "probability": 0.7071387097239494
+              },
+              {
+                "word": " thu",
+                "start": 7.38,
+                "end": 7.56,
+                "probability": 0.9804296493530273
+              },
+              {
+                "word": " nhập",
+                "start": 7.56,
+                "end": 7.76,
+                "probability": 0.9986957013607025
+              },
+              {
+                "word": " xong",
+                "start": 7.76,
+                "end": 7.98,
+                "probability": 0.8155208230018616
+              },
+              {
+                "word": " xong,",
+                "start": 7.98,
+                "end": 8.18,
+                "probability": 0.8296988904476166
+              },
+              {
+                "word": " có",
+                "start": 8.58,
+                "end": 8.72,
+                "probability": 0.9582607746124268
+              },
+              {
+                "word": " người",
+                "start": 8.72,
+                "end": 8.96,
+                "probability": 0.9967483282089233
+              },
+              {
+                "word": " nhờ",
+                "start": 8.96,
+                "end": 9.18,
+                "probability": 0.9602718949317932
+              },
+              {
+                "word": " lợi",
+                "start": 9.18,
+                "end": 9.4,
+                "probability": 0.9670507709185282
+              },
+              {
+                "word": " thế",
+                "start": 9.4,
+                "end": 9.56,
+                "probability": 0.6369217038154602
+              },
+              {
+                "word": " học",
+                "start": 9.56,
+                "end": 9.72,
+                "probability": 0.8379035592079163
+              },
+              {
+                "word": " tập",
+                "start": 9.72,
+                "end": 9.94,
+                "probability": 0.9888958930969238
+              },
+              {
+                "word": " và",
+                "start": 9.94,
+                "end": 10.12,
+                "probability": 0.9251530766487122
+              },
+              {
+                "word": " môi",
+                "start": 10.12,
+                "end": 10.3,
+                "probability": 0.9124196469783783
+              },
+              {
+                "word": " trưởng",
+                "start": 10.3,
+                "end": 10.52,
+                "probability": 0.6074704527854919
+              },
+              {
+                "word": " quốc",
+                "start": 10.52,
+                "end": 10.74,
+                "probability": 0.8731616139411926
+              },
+              {
+                "word": " tế,",
+                "start": 10.74,
+                "end": 11,
+                "probability": 0.9833957552909851
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "seek": 0,
+            "start": 11.4,
+            "end": 14.28,
+            "text": " cũng có người nhờ quá trình liên tục nâng cấp năng lực bản thân.",
+            "tokens": [
+              50929,
+              22747,
+              6333,
+              15898,
+              6245,
+              21270,
+              38338,
+              504,
+              10116,
+              375,
+              5050,
+              256,
+              37664,
+              297,
+              3201,
+              872,
+              269,
+              47176,
+              297,
+              34705,
+              287,
+              27951,
+              272,
+              31926,
+              258,
+              9667,
+              13,
+              51099
+            ],
+            "temperature": 0,
+            "avg_logprob": -0.20856456036837595,
+            "compression_ratio": 1.6775700934579438,
+            "no_speech_prob": 0.01104583777487278,
+            "words": [
+              {
+                "word": " cũng",
+                "start": 11.4,
+                "end": 11.5,
+                "probability": 0.8350923657417297
+              },
+              {
+                "word": " có",
+                "start": 11.5,
+                "end": 11.68,
+                "probability": 0.9917671084403992
+              },
+              {
+                "word": " người",
+                "start": 11.68,
+                "end": 11.9,
+                "probability": 0.9947688579559326
+              },
+              {
+                "word": " nhờ",
+                "start": 11.9,
+                "end": 12.16,
+                "probability": 0.9755756258964539
+              },
+              {
+                "word": " quá",
+                "start": 12.16,
+                "end": 12.34,
+                "probability": 0.8459875583648682
+              },
+              {
+                "word": " trình",
+                "start": 12.34,
+                "end": 12.6,
+                "probability": 0.8124357759952545
+              },
+              {
+                "word": " liên",
+                "start": 12.6,
+                "end": 12.78,
+                "probability": 0.9576579928398132
+              },
+              {
+                "word": " tục",
+                "start": 12.78,
+                "end": 13.02,
+                "probability": 0.9316863417625427
+              },
+              {
+                "word": " nâng",
+                "start": 13.02,
+                "end": 13.24,
+                "probability": 0.6454473833243052
+              },
+              {
+                "word": " cấp",
+                "start": 13.24,
+                "end": 13.38,
+                "probability": 0.9149581789970398
+              },
+              {
+                "word": " năng",
+                "start": 13.38,
+                "end": 13.64,
+                "probability": 0.9016317427158356
+              },
+              {
+                "word": " lực",
+                "start": 13.64,
+                "end": 13.8,
+                "probability": 0.9726888537406921
+              },
+              {
+                "word": " bản",
+                "start": 13.8,
+                "end": 14,
+                "probability": 0.8785865902900696
+              },
+              {
+                "word": " thân.",
+                "start": 14,
+                "end": 14.28,
+                "probability": 0.9406060874462128
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "seek": 0,
+            "start": 14.92,
+            "end": 19.74,
+            "text": " Điểm chung là thu nhập cao thường đi kèm với sự đánh đổi về thời gian, áp lực hoặc dủ do.",
+            "tokens": [
+              51099,
+              13055,
+              72,
+              47119,
+              417,
+              1063,
+              3684,
+              40295,
+              6245,
+              35148,
+              1335,
+              78,
+              258,
+              24280,
+              13264,
+              350,
+              1462,
+              76,
+              18916,
+              33602,
+              2934,
+              33434,
+              2934,
+              38704,
+              25652,
+              49506,
+              290,
+              952,
+              11,
+              7352,
+              79,
+              287,
+              27951,
+              1106,
+              38464,
+              274,
+              28903,
+              360,
+              13,
+              51377
+            ],
+            "temperature": 0,
+            "avg_logprob": -0.20856456036837595,
+            "compression_ratio": 1.6775700934579438,
+            "no_speech_prob": 0.01104583777487278,
+            "words": [
+              {
+                "word": " Điểm",
+                "start": 14.92,
+                "end": 15.14,
+                "probability": 0.8590304851531982
+              },
+              {
+                "word": " chung",
+                "start": 15.14,
+                "end": 15.36,
+                "probability": 0.818130373954773
+              },
+              {
+                "word": " là",
+                "start": 15.36,
+                "end": 15.56,
+                "probability": 0.9935635328292847
+              },
+              {
+                "word": " thu",
+                "start": 15.56,
+                "end": 15.72,
+                "probability": 0.9759390354156494
+              },
+              {
+                "word": " nhập",
+                "start": 15.72,
+                "end": 15.94,
+                "probability": 0.9983847737312317
+              },
+              {
+                "word": " cao",
+                "start": 15.94,
+                "end": 16.16,
+                "probability": 0.9160929024219513
+              },
+              {
+                "word": " thường",
+                "start": 16.16,
+                "end": 16.4,
+                "probability": 0.9407655000686646
+              },
+              {
+                "word": " đi",
+                "start": 16.4,
+                "end": 16.64,
+                "probability": 0.9635684490203857
+              },
+              {
+                "word": " kèm",
+                "start": 16.64,
+                "end": 16.92,
+                "probability": 0.689989854892095
+              },
+              {
+                "word": " với",
+                "start": 16.92,
+                "end": 17.02,
+                "probability": 0.9845635890960693
+              },
+              {
+                "word": " sự",
+                "start": 17.02,
+                "end": 17.18,
+                "probability": 0.9383051991462708
+              },
+              {
+                "word": " đánh",
+                "start": 17.18,
+                "end": 17.38,
+                "probability": 0.9521787464618683
+              },
+              {
+                "word": " đổi",
+                "start": 17.38,
+                "end": 17.58,
+                "probability": 0.8900567889213562
+              },
+              {
+                "word": " về",
+                "start": 17.58,
+                "end": 17.76,
+                "probability": 0.9932936429977417
+              },
+              {
+                "word": " thời",
+                "start": 17.76,
+                "end": 17.96,
+                "probability": 0.9942103624343872
+              },
+              {
+                "word": " gian,",
+                "start": 17.96,
+                "end": 18.28,
+                "probability": 0.9859074950218201
+              },
+              {
+                "word": " áp",
+                "start": 18.7,
+                "end": 18.86,
+                "probability": 0.6935829818248749
+              },
+              {
+                "word": " lực",
+                "start": 18.86,
+                "end": 19.06,
+                "probability": 0.9802537858486176
+              },
+              {
+                "word": " hoặc",
+                "start": 19.06,
+                "end": 19.3,
+                "probability": 0.8513014912605286
+              },
+              {
+                "word": " dủ",
+                "start": 19.3,
+                "end": 19.48,
+                "probability": 0.5758323669433594
+              },
+              {
+                "word": " do.",
+                "start": 19.48,
+                "end": 19.74,
+                "probability": 0.6824396848678589
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "seek": 0,
+            "start": 20.5,
+            "end": 24.74,
+            "text": " Nếu đang mất kẹt ở một mức thu nhập nhất định, câu hỏi quan trọng không chỉ là làm nhiều hơn,",
+            "tokens": [
+              51377,
+              426,
+              30568,
+              30723,
+              275,
+              12436,
+              350,
+              26965,
+              83,
+              19272,
+              15486,
+              275,
+              27138,
+              40295,
+              6245,
+              35148,
+              41081,
+              42063,
+              5728,
+              11,
+              19288,
+              84,
+              276,
+              46251,
+              19068,
+              504,
+              12935,
+              872,
+              11415,
+              33566,
+              3684,
+              22319,
+              28272,
+              34335,
+              11,
+              51613
+            ],
+            "temperature": 0,
+            "avg_logprob": -0.20856456036837595,
+            "compression_ratio": 1.6775700934579438,
+            "no_speech_prob": 0.01104583777487278,
+            "words": [
+              {
+                "word": " Nếu",
+                "start": 20.5,
+                "end": 20.66,
+                "probability": 0.9796355366706848
+              },
+              {
+                "word": " đang",
+                "start": 20.66,
+                "end": 20.84,
+                "probability": 0.9192090630531311
+              },
+              {
+                "word": " mất",
+                "start": 20.84,
+                "end": 21.06,
+                "probability": 0.7781221568584442
+              },
+              {
+                "word": " kẹt",
+                "start": 21.06,
+                "end": 21.3,
+                "probability": 0.8762887716293335
+              },
+              {
+                "word": " ở",
+                "start": 21.3,
+                "end": 21.38,
+                "probability": 0.9810875058174133
+              },
+              {
+                "word": " một",
+                "start": 21.38,
+                "end": 21.54,
+                "probability": 0.856370210647583
+              },
+              {
+                "word": " mức",
+                "start": 21.54,
+                "end": 21.78,
+                "probability": 0.9830287992954254
+              },
+              {
+                "word": " thu",
+                "start": 21.78,
+                "end": 21.92,
+                "probability": 0.967311680316925
+              },
+              {
+                "word": " nhập",
+                "start": 21.92,
+                "end": 22.16,
+                "probability": 0.9978956878185272
+              },
+              {
+                "word": " nhất",
+                "start": 22.16,
+                "end": 22.3,
+                "probability": 0.9685512781143188
+              },
+              {
+                "word": " định,",
+                "start": 22.3,
+                "end": 22.6,
+                "probability": 0.7630716264247894
+              },
+              {
+                "word": " câu",
+                "start": 22.86,
+                "end": 22.96,
+                "probability": 0.8548597693443298
+              },
+              {
+                "word": " hỏi",
+                "start": 22.96,
+                "end": 23.12,
+                "probability": 0.9792950451374054
+              },
+              {
+                "word": " quan",
+                "start": 23.12,
+                "end": 23.3,
+                "probability": 0.9225715398788452
+              },
+              {
+                "word": " trọng",
+                "start": 23.3,
+                "end": 23.56,
+                "probability": 0.971252957979838
+              },
+              {
+                "word": " không",
+                "start": 23.56,
+                "end": 23.76,
+                "probability": 0.9950685501098633
+              },
+              {
+                "word": " chỉ",
+                "start": 23.76,
+                "end": 23.92,
+                "probability": 0.9948474168777466
+              },
+              {
+                "word": " là",
+                "start": 23.92,
+                "end": 24.08,
+                "probability": 0.7394070029258728
+              },
+              {
+                "word": " làm",
+                "start": 24.08,
+                "end": 24.28,
+                "probability": 0.9867807030677795
+              },
+              {
+                "word": " nhiều",
+                "start": 24.28,
+                "end": 24.42,
+                "probability": 0.9647842645645142
+              },
+              {
+                "word": " hơn,",
+                "start": 24.42,
+                "end": 24.74,
+                "probability": 0.9950721859931946
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "seek": 0,
+            "start": 25.22,
+            "end": 28.98,
+            "text": " mà làm sao để tạo ra giá trị lớn hơn và khác biệt hơn trên thị trường.",
+            "tokens": [
+              51613,
+              13901,
+              22319,
+              33108,
+              20081,
+              256,
+              43789,
+              3342,
+              1735,
+              842,
+              504,
+              11708,
+              47864,
+              77,
+              34335,
+              10274,
+              43713,
+              3228,
+              21931,
+              34335,
+              33187,
+              258,
+              11708,
+              504,
+              24280,
+              13,
+              51851
+            ],
+            "temperature": 0,
+            "avg_logprob": -0.20856456036837595,
+            "compression_ratio": 1.6775700934579438,
+            "no_speech_prob": 0.01104583777487278,
+            "words": [
+              {
+                "word": " mà",
+                "start": 25.22,
+                "end": 25.32,
+                "probability": 0.9134412407875061
+              },
+              {
+                "word": " làm",
+                "start": 25.32,
+                "end": 25.66,
+                "probability": 0.6335572004318237
+              },
+              {
+                "word": " sao",
+                "start": 25.66,
+                "end": 26,
+                "probability": 0.9582595825195312
+              },
+              {
+                "word": " để",
+                "start": 26,
+                "end": 26.18,
+                "probability": 0.9979401230812073
+              },
+              {
+                "word": " tạo",
+                "start": 26.18,
+                "end": 26.42,
+                "probability": 0.9855362176895142
+              },
+              {
+                "word": " ra",
+                "start": 26.42,
+                "end": 26.56,
+                "probability": 0.9417133927345276
+              },
+              {
+                "word": " giá",
+                "start": 26.56,
+                "end": 26.84,
+                "probability": 0.8001901805400848
+              },
+              {
+                "word": " trị",
+                "start": 26.84,
+                "end": 27.02,
+                "probability": 0.7050863653421402
+              },
+              {
+                "word": " lớn",
+                "start": 27.02,
+                "end": 27.3,
+                "probability": 0.9800346791744232
+              },
+              {
+                "word": " hơn",
+                "start": 27.3,
+                "end": 27.48,
+                "probability": 0.9924803972244263
+              },
+              {
+                "word": " và",
+                "start": 27.48,
+                "end": 27.7,
+                "probability": 0.9693423509597778
+              },
+              {
+                "word": " khác",
+                "start": 27.7,
+                "end": 27.88,
+                "probability": 0.48906955122947693
+              },
+              {
+                "word": " biệt",
+                "start": 27.88,
+                "end": 28.12,
+                "probability": 0.9847281575202942
+              },
+              {
+                "word": " hơn",
+                "start": 28.12,
+                "end": 28.3,
+                "probability": 0.990601658821106
+              },
+              {
+                "word": " trên",
+                "start": 28.3,
+                "end": 28.5,
+                "probability": 0.9922590851783752
+              },
+              {
+                "word": " thị",
+                "start": 28.5,
+                "end": 28.7,
+                "probability": 0.7243548780679703
+              },
+              {
+                "word": " trường.",
+                "start": 28.7,
+                "end": 28.98,
+                "probability": 0.8535902798175812
+              }
+            ]
+          }
+        ],
+        "language": "vi"
+      },
+      "durationInFrames": 1774
+    }
+  ]
+}

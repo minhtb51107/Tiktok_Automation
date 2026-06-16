@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  backend:
+    build: 
+      context: ./1_nest_backend
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./1_nest_backend/.env
+    volumes:
+      - ./3_Storage_Assets:/app/3_Storage_Assets # Mount ổ cứng để lưu video

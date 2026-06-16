@@ -1,0 +1,46 @@
+name: CI Workflow
+
+# Kích hoạt workflow khi đẩy code hoặc tạo PR vào nhánh main
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Clone mã nguồn về máy chủ của GitHub
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2. Cài đặt Node.js môi trường
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18.x' # Sử dụng Node 18 theo yêu cầu của dự án
+          cache: 'npm'
+
+      # 3. Kiểm tra Backend (NestJS + Prisma)
+      - name: Install Backend Dependencies
+        working-directory: ./1_nest_backend
+        run: npm ci
+
+      - name: Generate Prisma Client
+        working-directory: ./1_nest_backend
+        run: npx prisma generate
+
+      - name: Build Backend
+        working-directory: ./1_nest_backend
+        run: npm run build
+
+      # 4. Kiểm tra Video Renderer (Remotion)
+      - name: Install Remotion Dependencies
+        working-directory: ./2_Remotion_Video
+        run: npm ci
+
+      - name: Build Remotion Project
+        working-directory: ./2_Remotion_Video
+        run: npm run build

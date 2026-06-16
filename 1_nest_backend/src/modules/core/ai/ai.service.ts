@@ -9,14 +9,14 @@ export class AiService {
 
   constructor(
     private readonly gemini: GeminiService, 
-    public readonly groq: GroqService,      
-    public readonly openai: OpenaiService,
+    private readonly groq: GroqService,      // FIX: Đổi về private cho đồng bộ
+    private readonly openai: OpenaiService,  // FIX: Đổi về private cho đồng bộ
   ) {}
 
   // Lệnh gọi API cụ thể (Dự phòng)
   async askGroq(prompt: string, isComplex: boolean = false): Promise<string> {
     const model = isComplex ? 'llama-3.3-70b-versatile' : 'llama-3.1-8b-instant';
-    return await this.groq.generateText(prompt, model);
+    return await this.groq.generateText(prompt, model); // Nếu BaseAiService của sếp dùng generateText
   }
 
   async askGemini(prompt: string): Promise<string> {
@@ -28,11 +28,11 @@ export class AiService {
     return await this.openai.generateCore(prompt);
   }
 
-  // 🔥 NÂNG CẤP: Ép định dạng JSON dùng 100% GPT
+  // 🔥 NÂNG CẤP: Ép định dạng JSON dùng 100% GPT-4o
   async generateJsonText(prompt: string): Promise<string> {
     try {
-      this.logger.log(`[1] Đang dùng não GPT-5 để chấm điểm và phân tích...`);
-      // Đổi luồng chính sang OpenAI thay vì Gemini
+      this.logger.log(`[1] Đang dùng não GPT-4o để chấm điểm và phân tích...`);
+      // Đổi luồng chính sang OpenAI
       return await this.openai.generateCore(prompt);
     } catch (e1: any) {
       this.logger.warn(`⚠️ GPT sập (${e1.message}). Gọi Llama 3 (Groq) cứu viện...`);
@@ -50,14 +50,28 @@ export class AiService {
     }
   }
 
-  // Chuyển việc làm video Lời bài hát sang ưu tiên OpenAI
+  // 🔥 FIX LỖI CHÍ MẠNG: Đổi sang gọi generateCore và truyền prompt
   async processMusicScript(whisperData: any, originalLyrics?: string): Promise<any> {
+    // Tạo prompt gộp từ dữ liệu truyền vào
+    const prompt = `Bạn là chuyên gia phân tích âm nhạc. 
+Xử lý dữ liệu Whisper sau và kết hợp với Lyrics gốc (nếu có). Trả về JSON hợp lệ.
+====== WHISPER DATA ======
+${JSON.stringify(whisperData)}
+====== LYRICS GỐC ======
+${originalLyrics || "Không có"}`;
+
     try {
       this.logger.log(`Đang dùng GPT tạo kịch bản âm nhạc...`);
-      return await this.openai.generateLyricScript(whisperData, originalLyrics);
+      return await this.openai.generateCore(prompt);
     } catch (e1: any) {
-      try { return await this.groq.generateLyricScript(whisperData, originalLyrics); } 
-      catch (e2: any) { return await this.gemini.generateLyricScript(whisperData, originalLyrics); }
+      try { 
+        this.logger.warn(`⚠️ GPT làm nhạc lỗi, chuyển sang Groq...`);
+        return await this.groq.generateCore(prompt); 
+      } 
+      catch (e2: any) { 
+        this.logger.warn(`⚠️ Groq lỗi, chuyển sang Gemini...`);
+        return await this.gemini.generateCore(prompt); 
+      }
     }
   }
 
@@ -66,9 +80,9 @@ export class AiService {
     return await this.openai.generateEmbedding(text);
   }
 
-  // 🔥 NÂNG CẤP: Chuyên gia được ủy quyền toàn quyền cho GPT-5 thay vì Groq
+  // 🔥 NÂNG CẤP: Chuyên gia được ủy quyền toàn quyền cho GPT-4o
   async askExpert(prompt: string): Promise<string> {
-    this.logger.log(`🧠 Gọi chuyên gia GPT-5 để xào nấu kịch bản...`);
+    this.logger.log(`🧠 Gọi chuyên gia GPT-4o để xào nấu kịch bản...`);
     return await this.openai.generateCore(prompt); 
   }
 

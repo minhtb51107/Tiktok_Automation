@@ -2,7 +2,6 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
 import { PrismaService } from '../../../prisma/prisma.service';
 
-// IMPORT CÁC XƯỞNG CHẾ TÁC:
 import { ThreadsDramaService } from '../../workflows/threads-drama/threads-drama.service';
 import { ThreadsSeriousService } from '../../workflows/threads-serious/threads-serious.service';
 import { ThreadsCompilationService } from '../../workflows/threads-compilation/threads-compilation.service'; 
@@ -19,6 +18,9 @@ export class DiscordService implements OnModuleInit {
   private readonly logger = new Logger(DiscordService.name);
   private client: Client;
   private channelId = process.env.DISCORD_CHANNEL_ID;
+  
+  // KHO CHỨA CẦU DAO CHO CÁC TIẾN TRÌNH
+  private activeJobs = new Map<string, AbortController>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -56,30 +58,37 @@ export class DiscordService implements OnModuleInit {
           return;
       }
 
-      // ====================================================================
-      // TÍNH NĂNG: TỔNG HỢP NHIỀU LINK THÀNH 1 VIDEO
-      // ====================================================================
       const msgTextLower = message.content.trim().toLowerCase();
+      const msgText = message.content.trim();
+
+      // ====================================================================
+      // 1. LỆNH TỔNG HỢP: !mix
+      // ====================================================================
       if (msgTextLower.startsWith('!mix') || msgTextLower.startsWith('mix!')) {
-        const msgText = message.content.trim();
-        
-        const urls = msgText
-            .replace(/^!mix\s*/i, '')
-            .replace(/^mix!\s*/i, '')
-            .split(/[\s\n]+/)
-            .filter(url => url.includes('threads.net') || url.includes('threads.com'));
+        const urls = msgText.replace(/^!mix\s*/i, '').replace(/^mix!\s*/i, '').split(/[\s\n]+/).filter(url => url.includes('threads.net') || url.includes('threads.com'));
         
         if (urls.length === 0) {
             await message.reply('❌ Sếp chưa đưa link Threads nào hợp lệ cả!');
             return;
         }
 
-        const reply = await message.reply(`⏳ **Đã nhận lệnh MIX!** Đang gộp ${urls.length} bài viết thành 1 video...`);
+        const jobId = `mix_${Date.now()}`;
+        const abortController = new AbortController();
+        this.activeJobs.set(jobId, abortController);
+
+        const cancelRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`cancel_${jobId}`).setLabel('🛑 DỪNG KHẨN CẤP').setStyle(ButtonStyle.Danger)
+        );
+
+        const reply = await message.reply({ 
+            content: `⏳ **Đã nhận lệnh MIX!** Đang gộp ${urls.length} bài viết thành 1 video...`,
+            components: [cancelRow]
+        });
         
         try {
             const res = await this.threadsCompilationService.processCompilationVideo(urls, async (status) => {
-                await reply.edit(status).catch(() => {});
-            });
+                await reply.edit({ content: status, components: [cancelRow] }).catch(() => {});
+            }, abortController.signal);
             
             const videoFilePath = res?.outputPath;
 
@@ -88,13 +97,13 @@ export class DiscordService implements OnModuleInit {
                  const fileSizeInMB = fileSizeInBytes / (1024 * 1024);
 
                  if (fileSizeInBytes <= 8 * 1024 * 1024) {
-                    await reply.edit('🚀 **BẮT ĐẦU XUẤT XƯỞNG!** Đang upload video lên Discord...');
+                    await reply.edit({ content: '🚀 **BẮT ĐẦU XUẤT XƯỞNG!** Đang upload video lên Discord...', components: [] });
                     await reply.edit({
                        content: `✅ **MIX THÀNH CÔNG!**\n🎥 Tên file: \`${res?.videoName}\` (Nặng ${fileSizeInMB.toFixed(1)}MB)\n✍️ Caption: \`${res?.caption}\``,
                        files: [videoFilePath]
                     });
                  } else {
-                     await reply.edit(`🔄 **Video đang xuất... (Đang nén thêm bản Preview cho Discord vì file gốc nặng tới ${fileSizeInMB.toFixed(1)}MB)**`);
+                     await reply.edit({ content: `🔄 **Video đang xuất... (Đang nén thêm bản Preview cho Discord vì file gốc nặng tới ${fileSizeInMB.toFixed(1)}MB)**`, components: [] });
                      const previewPath = await this.createDiscordPreview(videoFilePath);
                      if (previewPath) {
                         await reply.edit({
@@ -107,47 +116,175 @@ export class DiscordService implements OnModuleInit {
                     }
                  }
             } else {
-                 await reply.edit(`✅ **MIX THÀNH CÔNG!** Nhưng không tìm thấy file vật lý.`);
+                 await reply.edit({ content: `✅ **MIX THÀNH CÔNG!** Nhưng không tìm thấy file vật lý.`, components: [] });
             }
         } catch (err: any) {
-             await reply.edit(`❌ **LỖI TỔNG HỢP:** \`${err.message}\``);
+            if (err.message === 'ABORTED' || err.name === 'AbortError') {
+                await reply.edit({ content: `🛑 **ĐÃ HỦY TIẾN TRÌNH MIX!** Hệ thống đã an toàn.`, components: [] });
+            } else {
+                await reply.edit({ content: `❌ **LỖI TỔNG HỢP:** \`${err.message}\``, components: [] });
+            }
+        } finally {
+            this.activeJobs.delete(jobId);
         }
         return; 
       }
 
       // ====================================================================
-      // 1. TÍNH NĂNG TẠO VIDEO THỦ CÔNG: NHẬN LINK TRỰC TIẾP TỪ CHAT (1 VIDEO)
+      // 2. LỆNH TẠO PODCAST THỦ CÔNG: p hoặc !p (BẮT BUỘC CÓ LINK GỐC + KỊCH BẢN THẺ HOẶC FILE .TXT)
       // ====================================================================
-      const urlRegex = /(https?:\/\/(?:www\.)?threads\.(net|com)\/[^\s]+)/gi; // <-- Thêm flag 'g' để đếm số link
-      const matches = message.content.match(urlRegex);
+      if (msgTextLower.startsWith('p ') || msgTextLower.startsWith('!p ') || msgTextLower.startsWith('p\n')) {
+        // Tìm Link Threads gốc trong tin nhắn
+        const urlMatch = msgText.match(/(https?:\/\/(?:www\.)?threads\.(net|com)\/[^\s]+)/i);
+        if (!urlMatch) {
+            await message.reply('❌ Sếp quên dán Link Threads gốc vào rồi! Phải có link thì bot mới đi cào Avatar thật và Ảnh thật được!');
+            return;
+        }
+        
+        const primaryUrl = urlMatch[0].replace(/[\]\)',"\.]+$/, '');
+        // Tách lấy kịch bản từ text, bỏ đi chữ !p và bỏ đi cái Link
+        let scriptContent = msgText.replace(urlMatch[0], '').replace(/^(?:!p|p)\s*/i, '').trim();
+        
+        // 🔥 ĐỌC FILE .TXT NẾU SẾP ĐÍNH KÈM FILE (Khắc phục giới hạn 2000 ký tự)
+        if (message.attachments.size > 0) {
+            const attachment = message.attachments.first();
+            if (attachment && attachment.name.endsWith('.txt')) {
+                try {
+                    const response = await fetch(attachment.url);
+                    const fileText = await response.text();
+                    scriptContent += '\n' + fileText; // Gộp nội dung file vào kịch bản
+                } catch (err: any) {
+                    await message.reply(`❌ Lỗi khi đọc file đính kèm của sếp: ${err.message}`);
+                    return;
+                }
+            }
+        }
 
-      if (matches) {
-        // 🔥 CẦU CHÌ BẢO VỆ: Chặn ngay nếu gửi nhiều link mà quên lệnh !mix
-        if (matches.length > 1) {
-            await message.reply('❌ **BÁO ĐỘNG:** Sếp dán nhiều link mà quên ghi chữ `!mix` ở đầu kìa! Bot suýt nữa thì đem đi render từng cái một rồi. Sếp gõ lại lệnh `!mix <link1> <link2>...` để gộp video nhé!');
+        if (!scriptContent.includes('<CHUNK')) {
+            await message.reply('❌ Kịch bản thiếu thẻ `<CHUNK>`! (Sếp dán trực tiếp hoặc đính kèm file .txt chứa kịch bản nhé).');
             return;
         }
 
-        const url = matches[0].replace(/[\]\)',"\.]+$/, '');
-        
-        const isPodcast = msgTextLower.startsWith('p ') || msgTextLower.startsWith('!p ') || msgTextLower.startsWith('p\n');
-        
-        const reply = await message.reply(`⏳ **Đã tiếp nhận lệnh!** Đang đưa bài viết vào xưởng chế tác [**${isPodcast ? 'PODCAST NGHIÊM TÚC' : 'DRAMA'}**]...`);
+        const jobId = `podcast_${Date.now()}`;
+        const abortController = new AbortController();
+        this.activeJobs.set(jobId, abortController);
+
+        const cancelRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`cancel_${jobId}`).setLabel('🛑 DỪNG KHẨN CẤP').setStyle(ButtonStyle.Danger)
+        );
+
+        const reply = await message.reply({ 
+            content: `⏳ **Đã nhận Lệnh!** Đang đi cào dữ liệu gốc từ Link và khớp với Kịch bản (đã gộp file)...`,
+            components: [cancelRow]
+        });
         
         try {
-          const renderTask = isPodcast 
-            ? this.threadsSeriousService.processSeriousVideo(url, async (status) => { await reply.edit(status).catch(() => {}); })
-            : this.threadsDramaService.processDramaVideo(url, async (status) => { await reply.edit(status).catch(() => {}); });
+            // TRUYỀN CẢ URL LẪN KỊCH BẢN XUỐNG XƯỞNG
+            const res = await this.threadsSeriousService.processSeriousVideo(primaryUrl, scriptContent, async (status) => {
+                await reply.edit({ content: status, components: [cancelRow] }).catch(() => {});
+            }, abortController.signal);
             
-          const res = await renderTask;
-          
+            const videoFilePath = res?.outputPath;
+            if (videoFilePath && fs.existsSync(videoFilePath)) {
+                 const fileSizeInBytes = fs.statSync(videoFilePath).size;
+                 const fileSizeInMB = fileSizeInBytes / (1024 * 1024);
+
+                 const uniqueId = `manual_podcast_${Date.now()}`;
+                 const scriptData = res?.script as any;
+
+                 const savedPost = await this.prisma.threadPost.create({
+                    data: {
+                       threadId: uniqueId,
+                       author: scriptData?.postInfo?.author || 'Anonymous',
+                       avatarUrl: scriptData?.postInfo?.avatar || null,
+                       content: scriptData?.postInfo?.text || 'Video Podcast từ kịch bản',
+                       url: primaryUrl, 
+                       category: 'SERIOUS', 
+                       caption: res?.caption || 'Video tâm sự #xuhuong #threads',
+                       aiScore: 10, 
+                       isApproved: true,
+                       isRendered: true,
+                       isPublished: false
+                    }
+                 });
+
+                 const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                    new ButtonBuilder().setCustomId(`tiktok_instant_${savedPost.id}`).setLabel('🚀 ĐĂNG TIKTOK NGAY!').setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder().setCustomId(`tiktok_delete_${savedPost.id}_${res?.videoName}`).setLabel('🗑️ XÓA BỎ (RÁC)').setStyle(ButtonStyle.Secondary),
+                 );
+
+                 if (fileSizeInBytes <= 8 * 1024 * 1024) {
+                    await reply.edit({ content: '🚀 **BẮT ĐẦU XUẤT XƯỞNG!** Đang upload video lên Discord...', components: [] });
+                    await reply.edit({
+                       content: `✅ **SẢN XUẤT THÀNH CÔNG!**\n🎥 Tên file: \`${res?.videoName}\` (Nặng ${fileSizeInMB.toFixed(1)}MB)\n\nSếp kiểm tra thành phẩm và Đăng ngay nhé!`,
+                       files: [videoFilePath],
+                       components: [row]
+                    });
+                 } else {
+                     await reply.edit({ content: `🔄 **Video đang xuất... (Đang nén thêm bản Preview cho Discord vì file gốc nặng tới ${fileSizeInMB.toFixed(1)}MB)**`, components: [] });
+                     const previewPath = await this.createDiscordPreview(videoFilePath);
+                     if (previewPath) {
+                        await reply.edit({
+                            content: `✅ **SẢN XUẤT THÀNH CÔNG!** (Bản Preview xem trước)\n📂 Bản gốc lưu tại máy tính.\n`,
+                            files: [previewPath],
+                            components: [row]
+                        });
+                        setTimeout(() => { if(fs.existsSync(previewPath)) fs.unlinkSync(previewPath); }, 10000);
+                    } else {
+                        await reply.edit({ content: `✅ **SẢN XUẤT THÀNH CÔNG!** Video quá nặng: \`${res?.videoName}\``, components: [row] });
+                    }
+                 }
+            }
+        } catch (err: any) {
+            if (err.message === 'ABORTED' || err.name === 'AbortError') {
+                await reply.edit({ content: `🛑 **ĐÃ HỦY TIẾN TRÌNH SẢN XUẤT!** Hệ thống đã an toàn.`, components: [] });
+            } else {
+                await reply.edit({ content: `❌ **LỖI:** \`${err.message}\``, components: [] });
+            }
+        } finally {
+            this.activeJobs.delete(jobId);
+        }
+        return; 
+      }
+
+      // ====================================================================
+      // 3. LỆNH LẺ DRAMA (Tự động nhận diện URL Threads)
+      // ====================================================================
+      const urlRegex = /(https?:\/\/(?:www\.)?threads\.(net|com)\/[^\s]+)/gi;
+      const matches = message.content.match(urlRegex);
+
+      if (matches) {
+        if (matches.length > 1) {
+            await message.reply('❌ **BÁO ĐỘNG:** Sếp dán nhiều link mà quên ghi chữ `!mix` ở đầu kìa!');
+            return;
+        }
+
+        const primaryUrl = matches[0].replace(/[\]\)',"\.]+$/, '');
+        const jobId = `drama_${Date.now()}`;
+        const abortController = new AbortController();
+        this.activeJobs.set(jobId, abortController);
+
+        const cancelRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`cancel_${jobId}`).setLabel('🛑 DỪNG KHẨN CẤP').setStyle(ButtonStyle.Danger)
+        );
+
+        const reply = await message.reply({ 
+            content: `⏳ **Đã tiếp nhận lệnh!** Đang đưa bài viết vào xưởng chế tác DRAMA...`,
+            components: [cancelRow]
+        });
+        
+        try {
+          const res = await this.threadsDramaService.processDramaVideo(primaryUrl, async (status) => { 
+             await reply.edit({ content: status, components: [cancelRow] }).catch(() => {}); 
+          }, abortController.signal);
+            
           const videoFilePath = res?.outputPath; 
 
           if (videoFilePath && fs.existsSync(videoFilePath)) {
              const fileSizeInBytes = fs.statSync(videoFilePath).size;
              const fileSizeInMB = fileSizeInBytes / (1024 * 1024);
 
-             const cleanUrl = url.split('?')[0];
+             const cleanUrl = primaryUrl.split('?')[0];
              const uniqueId = `manual_${Date.now()}`;
              const scriptData = res?.script as any;
 
@@ -158,8 +295,8 @@ export class DiscordService implements OnModuleInit {
                    avatarUrl: scriptData?.postInfo?.avatar || scriptData?.post?.avatar || null,
                    content: scriptData?.post?.text || 'Video từ Link thủ công',
                    url: cleanUrl,
-                   category: isPodcast ? 'SERIOUS' : 'DRAMA', 
-                   caption: res?.caption || 'Video tâm sự #xuhuong #threads',
+                   category: 'DRAMA', 
+                   caption: res?.caption || 'Video drama #xuhuong #threads',
                    aiScore: 10, 
                    isApproved: true,
                    isRendered: true,
@@ -173,14 +310,14 @@ export class DiscordService implements OnModuleInit {
              );
 
              if (fileSizeInBytes <= 8 * 1024 * 1024) {
-                await reply.edit('🚀 **BẮT ĐẦU XUẤT XƯỞNG!** Đang upload video lên Discord...');
+                await reply.edit({ content: '🚀 **BẮT ĐẦU XUẤT XƯỞNG!** Đang upload video lên Discord...', components: [] });
                 await reply.edit({
-                   content: `✅ **XUẤT XƯỞNG VIDEO THÀNH CÔNG!**\n🎥 Tên file: \`${res?.videoName}\` (Nặng ${fileSizeInMB.toFixed(1)}MB)\n✍️ Caption AI: \`${res?.caption}\`\n\nSếp kiểm tra thành phẩm. Nếu ưng ý hãy bấm **ĐĂNG**, nếu video quá chán hãy bấm **XÓA BỎ**:`,
+                   content: `✅ **XUẤT XƯỞNG VIDEO THÀNH CÔNG!**\n🎥 Tên file: \`${res?.videoName}\` (Nặng ${fileSizeInMB.toFixed(1)}MB)\n✍️ Caption AI: \`${res?.caption}\`\n\nSếp kiểm tra thành phẩm.`,
                    files: [videoFilePath],
                    components: [row]
                 });
              } else {
-                 await reply.edit(`🔄 **Video đang xuất... (Đang nén thêm bản Preview cho Discord vì file gốc nặng tới ${fileSizeInMB.toFixed(1)}MB)**`);
+                 await reply.edit({ content: `🔄 **Video đang xuất... (Đang nén thêm bản Preview cho Discord vì file gốc nặng tới ${fileSizeInMB.toFixed(1)}MB)**`, components: [] });
                  const previewPath = await this.createDiscordPreview(videoFilePath);
                  if (previewPath) {
                     await reply.edit({
@@ -194,10 +331,16 @@ export class DiscordService implements OnModuleInit {
                 }
              }
           } else {
-             await reply.edit(`✅ **RENDER THÀNH CÔNG!** Nhưng không tìm thấy file vật lý.`);
+             await reply.edit({ content: `✅ **RENDER THÀNH CÔNG!** Nhưng không tìm thấy file vật lý.`, components: [] });
           }
         } catch (err: any) {
-          await reply.edit(`❌ **TIẾN TRÌNH THẤT BẠI!**\n🚨 **Lỗi:** \`${err.message}\``);
+          if (err.message === 'ABORTED' || err.name === 'AbortError') {
+              await reply.edit({ content: `🛑 **ĐÃ HỦY TIẾN TRÌNH DRAMA!** Máy chủ đã an toàn theo lệnh của sếp!`, components: [] });
+          } else {
+              await reply.edit({ content: `❌ **TIẾN TRÌNH THẤT BẠI!**\n🚨 **Lỗi:** \`${err.message}\``, components: [] });
+          }
+        } finally {
+          this.activeJobs.delete(jobId);
         }
       }
     });
@@ -205,6 +348,23 @@ export class DiscordService implements OnModuleInit {
     this.client.on('interactionCreate', async (interaction) => {
       if (!interaction.isButton()) return;
       const parts = interaction.customId.split('_');
+
+      // ====================================================================
+      // BẮT SỰ KIỆN NÚT DỪNG KHẨN CẤP
+      // ====================================================================
+      if (parts[0] === 'cancel') {
+        const jobId = parts.slice(1).join('_'); 
+        const controller = this.activeJobs.get(jobId);
+        
+        if (controller) {
+            await interaction.update({ content: '🛑 **Đang ra lệnh bóp cổ tiến trình...** Vui lòng đợi hệ thống dọn rác!', components: [] });
+            controller.abort(); 
+            this.activeJobs.delete(jobId);
+        } else {
+            await interaction.update({ content: '❌ Tiến trình này đã kết thúc từ trước hoặc không tồn tại.', components: [] });
+        }
+        return;
+      }
 
       if (parts[0] === 'tiktok' && parts[1] === 'instant') {
           const postId = parts[2];
@@ -228,7 +388,7 @@ export class DiscordService implements OnModuleInit {
               if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
               const previewPath = videoPath.replace('.mp4', '_preview.mp4');
               if (fs.existsSync(previewPath)) fs.unlinkSync(previewPath);
-              await interaction.editReply('✅ **ĐÃ XÓA SẠCH SẼ!** Giải phóng dung lượng ổ cứng thành công. Database không còn vết tích.');
+              await interaction.editReply('✅ **ĐÃ XÓA SẠCH SẼ!** Giải phóng dung lượng ổ cứng thành công.');
           } catch (err: any) {
               await interaction.editReply(`❌ **LỖI KHI XÓA RÁC:** ${err.message}`);
           }
@@ -246,14 +406,36 @@ export class DiscordService implements OnModuleInit {
         }
 
         if (action === 'approve') {
+          const jobId = `approve_${postId}`;
+          const abortController = new AbortController();
+          this.activeJobs.set(jobId, abortController);
+
+          const cancelRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder().setCustomId(`cancel_${jobId}`).setLabel('🛑 DỪNG KHẨN CẤP').setStyle(ButtonStyle.Danger)
+          );
+
           await interaction.update({ components: [] }); 
           const isSerious = (post as any).category === 'SERIOUS';
-          const msg = await interaction.followUp(`🎬 **ĐÃ DUYỆT!** Đang xả khói Render video [${isSerious ? 'PODCAST NGHIÊM TÚC' : 'DRAMA'}] cho bài của \`${post.author}\`...`);
+          const msg = await interaction.followUp({ 
+              content: `🎬 **ĐÃ DUYỆT!** Đang xả khói Render video [${isSerious ? 'PODCAST' : 'DRAMA'}] cho bài của \`${post.author}\`...`,
+              components: [cancelRow]
+          });
+          
           await this.prisma.threadPost.update({ where: { id: postId }, data: { isApproved: true } });
           
+          // Tự động đóng gói nội dung cào được thành thẻ CHUNK đơn giản để nhét vào xưởng Serious nếu là bài auto-hunter
           const renderTask = isSerious 
-            ? this.threadsSeriousService.processSeriousVideo(post.url, async (status) => { await msg.edit(status).catch(() => {}); })
-            : this.threadsDramaService.processDramaVideo(post.url, async (status) => { await msg.edit(status).catch(() => {}); });
+            ? this.threadsSeriousService.processSeriousVideo(
+                post.url, 
+                `<CHUNK type="post" author="${post.author}">\n${post.content}\n</CHUNK>\n<CHUNK type="analysis" keyword="thinking">\nĐó là một góc nhìn rất thú vị và thực tế.\n</CHUNK>`, 
+                async (status) => { await msg.edit({ content: status, components: [cancelRow] }).catch(() => {}); }, 
+                abortController.signal
+              )
+            : this.threadsDramaService.processDramaVideo(
+                post.url, 
+                async (status) => { await msg.edit({ content: status, components: [cancelRow] }).catch(() => {}); }, 
+                abortController.signal
+              );
 
           renderTask.then(async (res) => {
              const videoFilePath = res?.outputPath;
@@ -267,7 +449,7 @@ export class DiscordService implements OnModuleInit {
                  if (fileSizeInBytes <= 8 * 1024 * 1024) {
                     await msg.edit({ content: `✅ **RENDER THÀNH CÔNG!**\n✍️ Caption: \`${res?.caption || 'Video tâm sự #xuhuong'}\``, files: [videoFilePath], components: [uploadRow] });
                  } else {
-                    await msg.edit(`🔄 **Video đang xuất... (Đang nén thêm bản Preview cho Discord vì file gốc nặng tới ${(fileSizeInBytes/(1024*1024)).toFixed(1)}MB)**`);
+                    await msg.edit({ content: `🔄 **Video đang xuất... (Đang nén thêm bản Preview cho Discord)**`, components: [] });
                     const previewPath = await this.createDiscordPreview(videoFilePath);
                     if (previewPath) {
                         await msg.edit({ content: `✅ **RENDER THÀNH CÔNG!** (Bản Preview xem trước)\n📂 Bản gốc lưu tại máy tính.\n✍️ Caption: \`${res?.caption || 'Video tâm sự #xuhuong'}\``, files: [previewPath], components: [uploadRow] });
@@ -281,7 +463,15 @@ export class DiscordService implements OnModuleInit {
              }
              
              await this.prisma.threadPost.update({ where: { id: postId }, data: { isRendered: true, caption: res?.caption || post.caption } });
-          }).catch(async (err) => { await msg.edit(`❌ **RENDER THẤT BẠI:** ${err.message}`); });
+          }).catch(async (err) => { 
+             if (err.message === 'ABORTED' || err.name === 'AbortError') {
+                 await msg.edit({ content: `🛑 **ĐÃ HỦY DUYỆT BÀI!** Tiến trình đã dừng.`, components: [] });
+             } else {
+                 await msg.edit({ content: `❌ **RENDER THẤT BẠI:** ${err.message}`, components: [] }); 
+             }
+          }).finally(() => {
+             this.activeJobs.delete(jobId);
+          });
 
         } else if (action === 'reject') {
           await this.prisma.threadPost.delete({ where: { id: postId } });

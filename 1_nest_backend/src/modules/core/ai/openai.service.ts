@@ -12,32 +12,38 @@ export class OpenaiService extends BaseAiService {
     if (key) this.openaiClient = new OpenAI({ apiKey: key });
   }
 
-  // Hàm tạo text thông thường
   async generateCore(prompt: string): Promise<string> {
     if (!this.openaiClient) throw new Error("Chưa cấu hình OpenAI Key");
     
-    // Đã thay đổi cách gọi để tương thích với sức mạnh của GPT-5
+    const [systemPart, userPart] = prompt.split('---');
+
+    // 1. IN RAW REQUEST: Xem thực sự cái gì đang được nhét vào API
+    this.logger.debug(`[OPENAI RAW REQUEST]: Đang gọi Model GPT-4o-mini...`);
+
+    // KHÔNG try-catch bao che ở đây. Chết ở đâu văng lỗi đỏ ở đó!
     const response = await this.openaiClient.chat.completions.create({
-      model: 'gpt-5', // 🔥 LÊN HẲN BẢN TRÙM CUỐI THEO CHỈ ĐẠO CỦA SẾP
-      messages: [{ role: 'user', content: prompt }],
+      model: 'gpt-4o-mini', // Sếp đang cấu hình mini ở đây
+      messages: [
+        { role: 'system', content: systemPart ? systemPart.trim() : 'Bạn là trợ lý AI.' },
+        { role: 'user', content: userPart ? userPart.trim() : prompt }
+      ],
       response_format: { type: 'json_object' }
     });
     
-    return response.choices[0].message.content || '';
+    const rawOutput = response.choices[0].message.content || '';
+
+    // 2. IN RAW RESPONSE: Trả về cái gì in nguyên xi cái đó, không parse!
+    this.logger.warn(`\n========== [OPENAI RAW RESPONSE THỰC TẾ TỪ API] ==========\n${rawOutput}\n==========================================================\n`);
+
+    return rawOutput;
   }
 
-  // HÀM TẠO VECTOR (EMBEDDING)
   async generateEmbedding(text: string): Promise<number[]> {
     if (!this.openaiClient) throw new Error("Chưa cấu hình OpenAI Key");
-    try {
-      const response = await this.openaiClient.embeddings.create({
-        model: 'text-embedding-3-small',
-        input: text,
-      });
-      return response.data[0].embedding;
-    } catch (error: any) {
-      this.logger.error(`Lỗi tạo Embedding: ${error.message}`);
-      throw error;
-    }
+    const response = await this.openaiClient.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: text,
+    });
+    return response.data[0].embedding;
   }
 }

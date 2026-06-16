@@ -1,60 +1,64 @@
 import React from 'react';
-import { AbsoluteFill, Audio, Series, staticFile, useVideoConfig, interpolate, useCurrentFrame } from 'remotion';
-
-import { NeonBackground } from './NeonBackground';
+import { AbsoluteFill, Series, Audio, staticFile } from 'remotion';
+import { GridBackground } from './GridBackground';
+import { BigCaption } from './BigCaption';
+import { StoryCard } from './StoryCard';
+import { GifIllustration } from './GifIllustration'; 
+import { KaraokeSubtitle } from './KaraokeSubtitle'; 
 import { SeriousIntro } from './SeriousIntro';
-import { SeriousBroll } from './SeriousBroll';
-import { SeriousSubtitle } from './SeriousSubtitle'; // Đã import Subtitle siêu cấp
-import { SeriousOutro } from './SeriousOutro';
 
-export type SeriousProps = {
-  tiktok_caption: string;
-  bgm: string;
-  postInfo: { author: string; avatar: string };
-  chunks: Array<{ text: string; keyword: string; brollUrl: string; audioSrc: string; durationInFrames: number; }>;
-};
-
-// Component tiện ích để Fade (Mờ ảo) giữa các cảnh
-const FadeTransition: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const frame = useCurrentFrame();
-  const opacity = interpolate(frame, [0, 15], [0, 1], { extrapolateRight: 'clamp' });
-  return <AbsoluteFill style={{ opacity }}>{children}</AbsoluteFill>;
-};
-
-export const SeriousComposition: React.FC<SeriousProps> = ({ bgm, postInfo, chunks }) => {
-  const { fps } = useVideoConfig();
-  const INTRO_FRAMES = 3 * fps; 
-  const OUTRO_FRAMES = 5 * fps;
-
+export const SeriousComposition: React.FC<{ chunks: any, bgm: string, postInfo: any }> = ({ chunks, bgm, postInfo }) => {
   return (
-    <AbsoluteFill style={{ backgroundColor: '#020617' }}>
-      {/* Nền Grid lúc nào cũng chạy bên dưới */}
-      <NeonBackground />
-      {bgm && <Audio src={staticFile(bgm)} volume={0.15} loop />}
+    <AbsoluteFill style={{ backgroundColor: '#0e0e16' }}>
+      <GridBackground />
+      {bgm && <Audio src={bgm.startsWith('http') ? bgm : staticFile(bgm)} volume={0.15} loop />}
 
       <Series>
-        {/* INTRO */}
-        <Series.Sequence durationInFrames={INTRO_FRAMES}>
-           <SeriousIntro author={postInfo.author} avatar={postInfo.avatar} />
-        </Series.Sequence>
-
-        {/* CÁC ĐOẠN VIDEO B-ROLL */}
-        {chunks.map((chunk, index) => (
-          <Series.Sequence key={index} durationInFrames={chunk.durationInFrames}>
-            <FadeTransition>
-              <SeriousBroll brollUrl={chunk.brollUrl} />
-              <SeriousSubtitle text={chunk.text} />
+        {/* 🔥 FIX LỖI 5: Không tách Intro câm nữa, nhét Intro vào Chunk 0 để có giọng đọc! */}
+        {chunks.map((chunk: any, index: number) => (
+          <Series.Sequence key={index} durationInFrames={Math.max(chunk.durationInFrames, 30)}>
+            <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+              
+              {/* Giọng đọc AI */}
               {chunk.audioSrc && <Audio src={staticFile(chunk.audioSrc)} />}
-            </FadeTransition>
+
+              {/* Nếu là đoạn đầu tiên -> Mở Intro hoành tráng */}
+              {index === 0 ? (
+                <SeriousIntro 
+                  author={chunk.commentInfo?.author || postInfo.author} 
+                  avatar={chunk.commentInfo?.avatar || postInfo.avatar} 
+                  text={chunk.text} 
+                  postInfo={postInfo} 
+                  hookText={chunk.caption} // Chữ giật tít của AI
+                />
+              ) : (
+                /* Các đoạn sau -> Hiện Card, GIF và Karaoke bình thường */
+                <>
+                  <div style={{ zIndex: 10, position: 'absolute', inset: 0 }}>
+                    {chunk.caption && <BigCaption text={chunk.caption} />}
+                  </div>
+
+                  <div style={{ zIndex: 20, position: 'absolute', top: '35%' }}>
+                    {(chunk.cardToShow === 'post' || chunk.cardToShow === 'comment') && chunk.commentInfo && (
+                        <StoryCard info={chunk.commentInfo} />
+                    )}
+                  </div>
+
+                  {chunk.gifImg && (
+                    <div style={{ zIndex: 30, position: 'absolute', inset: 0 }}>
+                      <GifIllustration src={chunk.gifImg} />
+                    </div>
+                  )}
+
+                  {chunk.words && chunk.words.length > 0 && (
+                    <KaraokeSubtitle words={chunk.words} />
+                  )}
+                </>
+              )}
+
+            </AbsoluteFill>
           </Series.Sequence>
         ))}
-
-        {/* OUTRO */}
-        <Series.Sequence durationInFrames={OUTRO_FRAMES}>
-           <FadeTransition>
-             <SeriousOutro />
-           </FadeTransition>
-        </Series.Sequence>
       </Series>
     </AbsoluteFill>
   );

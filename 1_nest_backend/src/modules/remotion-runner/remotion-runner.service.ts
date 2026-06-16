@@ -8,7 +8,7 @@ export class RemotionRunnerService {
   private readonly logger = new Logger(RemotionRunnerService.name);
 
   // HÀM 1: RENDER VIDEO NHẠC
-  async renderVideo(durationInFrames: number, originalFileName: string, imageFiles: string[] = [], songTitle: string = "", artist: string = ""): Promise<void> {
+  async renderVideo(durationInFrames: number, originalFileName: string, imageFiles: string[] = [], songTitle: string = "", artist: string = "", signal?: AbortSignal): Promise<void> {
     this.logger.log(`🚀 Bắt đầu lệnh Render Video cho: ${originalFileName}`);
     
     return new Promise((resolve, reject) => {
@@ -42,12 +42,15 @@ export class RemotionRunnerService {
         '--log=verbose' 
       ];
 
-      const remotionProcess = spawn('npx', cliArgs, { cwd: remotionProjectDir, shell: true, stdio: 'inherit' });
+      // Đã gắn signal
+      const remotionProcess = spawn('npx', cliArgs, { cwd: remotionProjectDir, shell: true, stdio: 'inherit', signal });
 
       const cleanupTempFile = () => { if (fs.existsSync(tempPropsFilePath)) fs.unlinkSync(tempPropsFilePath); };
 
       remotionProcess.on('close', (code) => {
         cleanupTempFile();
+        if (signal?.aborted) return resolve(); // Tránh văng lỗi nếu bị kill
+        
         if (code === 0) {
           this.logger.log(`✅ THÀNH CÔNG! Đã xuất video tại: ${outputLocation}`);
           resolve();
@@ -57,8 +60,12 @@ export class RemotionRunnerService {
         }
       });
       
-      remotionProcess.on('error', (err) => {
+      remotionProcess.on('error', (err: any) => {
         cleanupTempFile();
+        if (err.name === 'AbortError') {
+          this.logger.warn('🛑 Tiến trình Render Nhạc đã bị hủy!');
+          return reject(new Error('ABORTED'));
+        }
         this.logger.error(`❌ Lỗi hệ thống: ${err.message}`);
         reject(err);
       });
@@ -68,7 +75,7 @@ export class RemotionRunnerService {
   // =======================================================================
   // HÀM 2: RENDER THREADS VÀ PODCAST (MỞ KHÓA CHỤP ẢNH BÌA)
   // =======================================================================
-  async renderThreadsVideo(compositionId: string, propsFilePath: string, outputFileName: string): Promise<void> {
+  async renderThreadsVideo(compositionId: string, propsFilePath: string, outputFileName: string, signal?: AbortSignal): Promise<void> {
     this.logger.log(`🚀 Bắt đầu lệnh Render Video Threads/Podcast: ${outputFileName}`);
     
     return new Promise((resolve, reject) => {
@@ -84,11 +91,13 @@ export class RemotionRunnerService {
         '--log=info' 
       ];
 
-      const remotionProcess = spawn('npx', cliArgs, { cwd: remotionProjectDir, shell: true, stdio: 'inherit' });
+      // Đã gắn signal
+      const remotionProcess = spawn('npx', cliArgs, { cwd: remotionProjectDir, shell: true, stdio: 'inherit', signal });
 
       remotionProcess.on('close', (code) => {
+        if (signal?.aborted) return resolve(); // Tránh văng lỗi nếu bị kill
+
         if (code === 0) {
-          // 🔥 ĐÃ MỞ KHÓA: Chụp Thumbnail tự động tại frame 60 cho mọi thể loại (Dùng làm bìa Intro)
           this.logger.log(`📸 Video xong! Đang chụp Thumbnail (Ảnh bìa) ở khung hình chuẩn nhất...`);
           
           const thumbFileName = outputFileName.replace('.mp4', '_thumbnail.jpg');
@@ -114,7 +123,11 @@ export class RemotionRunnerService {
         }
       });
       
-      remotionProcess.on('error', (err) => {
+      remotionProcess.on('error', (err: any) => {
+        if (err.name === 'AbortError') {
+          this.logger.warn('🛑 Tiến trình Render Threads đã bị hủy (Sếp ra lệnh)!');
+          return reject(new Error('ABORTED'));
+        }
         this.logger.error(`❌ Lỗi hệ thống: ${err.message}`);
         reject(err);
       });

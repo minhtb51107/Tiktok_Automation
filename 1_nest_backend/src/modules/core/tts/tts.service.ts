@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
-import ffmpeg from 'fluent-ffmpeg'; // 🔥 Dùng FFmpeg thần thánh thay cho get-mp3-duration
+import ffmpeg from 'fluent-ffmpeg'; 
 
 @Injectable()
 export class TtsService {
@@ -30,17 +30,48 @@ export class TtsService {
     return error.message;
   }
 
-  // 🧹 HÀM LÀM SẠCH VĂN BẢN TRƯỚC KHI ĐỌC (Cứu sập Viettel/Zalo)
   private cleanTextForTTS(text: string): string {
     if (!text) return "";
     return text
-      .replace(/(?:\r\n|\r|\n)/g, '. ') // Biến dấu xuống dòng thành dấu chấm để ngắt giọng
-      .replace(/["*#_~\[\]]/g, '')      // Bỏ các ký tự Markdown làm nghẹn họng AI
-      .replace(/(http|https):\/\/[^\s]+/g, 'link web') // Đổi link thành chữ "link web" cho dễ nghe
+      .replace(/(?:\r\n|\r|\n)/g, '. ') 
+      .replace(/["*#_~\[\]]/g, '')      
+      .replace(/(http|https):\/\/[^\s]+/g, 'link web') 
       .trim();
   }
 
-  // ⏱️ HÀM ĐO THỜI GIAN BẰNG FFPROBE CHUẨN 100%
+  // Thuật toán băm thông minh theo từng câu hoàn chỉnh
+  private smartChunkText(text: string): string[] {
+      const rawSentences = text.split(/([.?!:\n]+)/); 
+      const chunks: string[] = [];
+      let currentChunk = '';
+
+      for (let i = 0; i < rawSentences.length; i++) {
+          const part = rawSentences[i];
+          currentChunk += part;
+          
+          if (part.match(/[.?!:\n]+/) || currentChunk.length >= 150) {
+              const cleaned = currentChunk.trim();
+              if (cleaned.length > 2) chunks.push(cleaned);
+              currentChunk = '';
+          }
+      }
+      if (currentChunk.trim().length > 2) chunks.push(currentChunk.trim());
+      
+      const finalChunks: string[] = [];
+      for (const c of chunks) {
+          if (c.length > 200) {
+              const half = Math.floor(c.length / 2);
+              const spaceIndex = c.indexOf(' ', half);
+              const splitPoint = spaceIndex === -1 ? half : spaceIndex;
+              finalChunks.push(c.substring(0, splitPoint).trim());
+              finalChunks.push(c.substring(splitPoint).trim());
+          } else {
+              finalChunks.push(c);
+          }
+      }
+      return finalChunks;
+  }
+
   private getAudioDuration(filePath: string): Promise<number> {
     return new Promise((resolve) => {
       ffmpeg.ffprobe(filePath, (err, metadata) => {
@@ -48,53 +79,78 @@ export class TtsService {
           this.logger.warn(`⚠️ Lỗi đọc metadata file âm thanh. Set tạm 5 giây để tránh lỗi đè hình!`);
           resolve(5); 
         } else {
-          resolve(metadata.format.duration); // Trả về số giây chuẩn tới phần thập phân
+          resolve(metadata.format.duration); 
         }
       });
     });
   }
 
+  // =======================================================
+  // 🔥 TRỤC TỌA ĐỘ CHÍNH: KHÓA CHẶT 1 GIỌNG DUY NHẤT CHO VIDEO
+  // =======================================================
   async generateAudio(text: string, fileName: string, gender: string) {
-    // Tắm rửa sạch sẽ cho đoạn text trước khi đưa cho AI đọc
     const cleanText = this.cleanTextForTTS(text);
+    const chunks = this.smartChunkText(cleanText); 
+    const audioBuffers: Buffer[] = [];
 
-    try {
-      return await this.generateFptAudio(cleanText, fileName, gender);
-    } catch (fptError: any) {
-      this.logger.warn(`⚠️ FPT AI SẬP [${this.extractError(fptError)}]. Đẩy qua Viettel AI...`);
-      try {
-        return await this.generateViettelAudio(cleanText, fileName, gender);
-      } catch (viettelError: any) {
-        this.logger.warn(`⚠️ VIETTEL AI SẬP [${this.extractError(viettelError)}]. Gọi chốt chặn Zalo AI...`);
+    // 🔥 1. CHỐT CỨNG MÃ GIỌNG NGAY TỪ ĐẦU (Không có chuyện đổi giọng giữa chừng)
+    const fptVoice = gender === 'female' ? 'banmai' : 'leminh';
+    const viettelVoice = gender === 'female' ? 'hn-quynhanh' : 'sg-minhhoang';
+    const zaloVoiceId = gender === 'female' ? 1 : 3;
+
+    this.logger.log(`✂️ Đã băm thành ${chunks.length} câu. Bắt đầu ép FPT đọc bằng đúng 1 giọng nữ duy nhất...`);
+
+    for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        let buffer: Buffer | null = null;
+
         try {
-          return await this.generateZaloAudio(cleanText, fileName, gender);
-        } catch (zaloError: any) {
-          this.logger.error(`❌ ZALO AI CŨNG SẬP NỐT [${this.extractError(zaloError)}]! Ra lệnh cắt bỏ Card bình luận này!`);
-          throw new Error("Không thể tạo giọng đọc cho Card này."); 
+            // Gọi FPT với giọng đọc cố định đã chốt
+            buffer = await this.getFptBuffer(chunk, fptVoice, i + 1, chunks.length);
+        } catch (fptError: any) {
+            this.logger.warn(`⚠️ FPT kiệt sức hoàn toàn sau khi đã chờ hết mức ở câu ${i + 1}/${chunks.length}. Đẩy sang Viettel gánh vác...`);
+            try {
+                // Nếu ép buộc phải dùng phương án dự phòng, cũng ép nó dùng đúng giới tính giọng đã chốt
+                buffer = await this.getViettelBuffer(chunk, viettelVoice, i + 1, chunks.length);
+            } catch (viettelError: any) {
+                this.logger.warn(`⚠️ Viettel sập nốt. Gọi chốt chặn cuối cùng Zalo...`);
+                try {
+                    buffer = await this.getZaloBuffer(chunk, zaloVoiceId, i + 1, chunks.length);
+                } catch (zaloError: any) {
+                    this.logger.error(`❌ CHÍ MẠNG: Cả 3 nhà mạng đều từ chối đọc câu số ${i + 1}!`);
+                    throw new Error("Hệ thống TTS sập toàn diện.");
+                }
+            }
         }
-      }
+        
+        if (buffer) audioBuffers.push(buffer);
+
+        // Nghỉ 1.5 giây để tránh FPT quét spam API
+        if (i < chunks.length - 1) {
+            await new Promise(r => setTimeout(r, 1500));
+        }
     }
+
+    const finalBuffer = Buffer.concat(audioBuffers);
+    const filePath = path.join(this.publicDir, fileName);
+    fs.writeFileSync(filePath, finalBuffer);
+
+    this.logger.log(`🔗 Đã hàn thành công file ${fileName} đồng nhất 1 giọng nói!`);
+
+    const durationSeconds = await this.getAudioDuration(filePath);
+    const durationInFrames = Math.ceil(durationSeconds * 60);
+
+    return { audioSrc: `threads_audio/${fileName}`, durationInFrames };
   }
 
   // =======================================================
-  // 🎙️ TỔ ĐỌC 1: FPT AI
+  // 🎙️ TỔ ĐỌC FPT: LÌ LỢM ĐỨNG ĐỢI (CHỜ ĐẾN KHI ĐƯỢC MỚI THÔI)
   // =======================================================
-  private async generateFptAudio(text: string, fileName: string, gender: string) {
-    if (this.fptApiKeys.length === 0) throw new Error("Chưa điền FPT_AI_KEY vào file .env");
+  private async getFptBuffer(text: string, voice: string, part: number, total: number): Promise<Buffer> {
+    if (this.fptApiKeys.length === 0) throw new Error("Chưa điền FPT_AI_KEY");
 
-    let voice = 'banmai'; 
-    if (gender === 'female') {
-      const femaleVoices = ['banmai'];
-      voice = femaleVoices[Math.floor(Math.random() * femaleVoices.length)];
-    } else {
-      const maleVoices = ['leminh'];
-      voice = maleVoices[Math.floor(Math.random() * maleVoices.length)];
-    }
-
-    this.logger.log(`🎙️ [FPT] Đang dùng giọng ${gender === 'female' ? 'Nữ' : 'Nam'} (${voice}) đọc...`);
-
-    // 🔥 NÂNG CẤP: Kiên nhẫn chờ FPT tối đa 60 giây (24 lần x 2.5s) cho các bài siêu dài
-    let downloadRetries = 24; 
+    // 🔥 TĂNG KIÊN NHẪN: Cho phép đứng đợi 60 lần x 2 giây = Chờ hẳn 2 phút cho mỗi câu ngắn!
+    let downloadRetries = 60; 
     let attempt = 0;
     let lastErrorMsg = "";
 
@@ -109,82 +165,68 @@ export class TtsService {
         });
 
         const audioUrl = response.data.async;
-        if (!audioUrl) throw new Error("FPT gọi thành công nhưng không trả về link tải MP3");
-
-        const filePath = path.join(this.publicDir, fileName);
+        if (!audioUrl) throw new Error("FPT không trả về link");
         
+        const noCacheUrl = `${audioUrl}?t=${Date.now()}`;
+
+        // 🔥 VÒNG LẶP KIÊN TRÌ: Ép gõ cửa đòi file liên tục
         while (downloadRetries > 0) {
-          await new Promise(r => setTimeout(r, 2500)); 
+          await new Promise(r => setTimeout(r, 2000)); 
           try {
-            const audioRes = await axios({ url: audioUrl, method: 'GET', responseType: 'arraybuffer' });
+            const audioRes = await axios({ 
+                url: noCacheUrl, 
+                method: 'GET', 
+                responseType: 'arraybuffer',
+                headers: { 
+                    'User-Agent': 'Mozilla/5.0',
+                    'Cache-Control': 'no-cache, no-store, must-revalidate'
+                }
+            });
             
-            if (audioRes.data.byteLength > 1000) {
-              fs.writeFileSync(filePath, audioRes.data);
-              
-              // ĐO THỜI GIAN BẰNG FFPROBE
-              const durationSeconds = await this.getAudioDuration(filePath);
-              const durationInFrames = Math.ceil(durationSeconds * 60);
-              
-              return { audioSrc: `threads_audio/${fileName}`, durationInFrames };
+            const size = audioRes.data.length || audioRes.data.byteLength;
+            if (size > 1000) {
+              this.logger.debug(`[FPT THÀNH CÔNG] Lấy xong file câu ${part}/${total} sau ${61 - downloadRetries} lần thử.`);
+              return Buffer.from(audioRes.data);
             }
-          } catch (e) {}
+          } catch (e: any) {
+             // Nếu FPT nhả mã lỗi thực sự (khác 404), tức là Key bị lỗi, văng ra để đổi Key luôn
+             if (e.response && e.response.status !== 404) {
+                 throw new Error(`Lỗi S3: HTTP ${e.response.status}`);
+             }
+          }
           downloadRetries--;
         }
-        throw new Error("Có link tải từ FPT nhưng chờ 60 giây vẫn chưa xong (Bài quá dài)");
+        throw new Error("Đã kiên trì đợi FPT 2 phút nhưng nó vẫn không nhả file.");
       } catch (err: any) {
         lastErrorMsg = this.extractError(err);
-        this.logger.debug(`FPT Key [${apiKey.substring(0, 5)}***] lỗi: ${lastErrorMsg}`);
         this.currentFptKeyIndex = (this.currentFptKeyIndex + 1) % this.fptApiKeys.length;
         attempt++;
+        downloadRetries = 60; // Reset lại lòng kiên nhẫn cho Key tiếp theo
       }
     }
-    throw new Error(`Tất cả FPT Keys đều sập. Lỗi cuối: ${lastErrorMsg}`);
+    throw new Error(`FPT bế tắc: ${lastErrorMsg}`);
   }
 
-  // =======================================================
-  // 🪖 TỔ ĐỌC 2: VIETTEL AI
-  // =======================================================
-  private async generateViettelAudio(text: string, fileName: string, gender: string) {
+  private async getViettelBuffer(text: string, voice: string, part: number, total: number): Promise<Buffer> {
     const apiKey = process.env.VIETTEL_AI_KEY;
-    if (!apiKey) throw new Error("Chưa điền VIETTEL_AI_KEY vào file .env");
-
-    const voice = gender === 'female' 
-      ? (Math.random() > 0.5 ? 'hn-quynhanh' : 'sg-hoaimy') 
-      : (Math.random() > 0.5 ? 'hn-tienquan' : 'sg-minhhoang');
-
-    this.logger.log(`🪖 [VIETTEL] Đang dùng giọng ${voice} ứng cứu...`);
+    if (!apiKey) throw new Error("Chưa điền VIETTEL_AI_KEY");
 
     const response = await axios({
       method: 'POST',
       url: 'https://viettelai.vn/tts/speech_synthesis',
-      // Nhớ đảm bảo apiKey lấy từ tài khoản Viettel (Thường là một chuỗi ngẫu nhiên dài)
       headers: { 'accept': '*/*', 'Content-Type': 'application/json', 'token': apiKey.trim() },
       data: { text: text, voice: voice, speed: 1, tts_return_option: 3 },
       responseType: 'arraybuffer' 
     });
 
-    if (response.data.byteLength < 1000) throw new Error("Viettel trả về file rác/trống");
-
-    const filePath = path.join(this.publicDir, fileName);
-    fs.writeFileSync(filePath, response.data);
-    
-    // ĐO THỜI GIAN BẰNG FFPROBE
-    const durationSeconds = await this.getAudioDuration(filePath);
-    const durationInFrames = Math.ceil(durationSeconds * 60);
-    this.logger.log(`✅ [VIETTEL] Cứu thành công!`);
-    
-    return { audioSrc: `threads_audio/${fileName}`, durationInFrames };
+    if (response.data.byteLength < 1000) throw new Error("Viettel rỗng");
+    this.logger.debug(`🪖 [VIETTEL] Đã đọc xong câu ${part}/${total}`);
+    return Buffer.from(response.data);
   }
 
-  // =======================================================
-  // 🚑 TỔ ĐỌC 3: ZALO AI
-  // =======================================================
-  private async generateZaloAudio(text: string, fileName: string, gender: string) {
+  private async getZaloBuffer(text: string, speakerId: number, part: number, total: number): Promise<Buffer> {
     const apiKey = process.env.ZALO_AI_KEY;
-    if (!apiKey) throw new Error("Chưa điền ZALO_AI_KEY vào file .env");
-
-    const speakerId = gender === 'female' ? (Math.random() > 0.5 ? 1 : 2) : (Math.random() > 0.5 ? 3 : 4);
-    this.logger.log(`🚑 [ZALO] Đang dùng giọng ${gender === 'female' ? 'Nữ' : 'Nam'} đọc cứu viện cuối cùng...`);
+    if (!apiKey) throw new Error("Chưa điền ZALO_AI_KEY");
 
     const response = await axios({
       method: 'POST',
@@ -193,30 +235,21 @@ export class TtsService {
       data: `input=${encodeURIComponent(text)}&speaker_id=${speakerId}&speed=1.0`
     });
 
-    if (response.data.error_code !== 0) {
-        throw new Error(`Zalo từ chối (Thường do hết hạn mức Free hoặc bài quá dài): ${response.data.error_message}`);
-    }
+    if (response.data.error_code !== 0) throw new Error(`Zalo lỗi`);
 
     const audioUrl = response.data.data.url;
-    const filePath = path.join(this.publicDir, fileName);
-
     let downloadRetries = 4;
     while (downloadRetries > 0) {
       await new Promise(r => setTimeout(r, 2500));
       try {
         const audioRes = await axios({ url: audioUrl, method: 'GET', responseType: 'arraybuffer' });
         if (audioRes.data.byteLength > 1000) {
-          fs.writeFileSync(filePath, audioRes.data);
-          
-          // ĐO THỜI GIAN BẰNG FFPROBE
-          const durationSeconds = await this.getAudioDuration(filePath);
-          const durationInFrames = Math.ceil(durationSeconds * 60);
-          this.logger.log(`✅ [ZALO] Cứu thành công!`);
-          return { audioSrc: `threads_audio/${fileName}`, durationInFrames };
+          this.logger.debug(`🚑 [ZALO] Đã đọc xong câu ${part}/${total}`);
+          return Buffer.from(audioRes.data);
         }
       } catch (e) { }
       downloadRetries--;
     }
-    throw new Error("Lỗi tải file MP3 vật lý từ Server Zalo AI");
+    throw new Error("Lỗi tải MP3 Zalo");
   }
 }

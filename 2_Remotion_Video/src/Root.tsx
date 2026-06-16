@@ -2,6 +2,8 @@ import { Composition } from 'remotion';
 import { MyComposition } from './tiktok/TiktokComposition';
 import { ThreadsComposition } from './threads/ThreadsComposition';
 import { SeriousComposition } from './serious/SeriousComposition'; // BẮT BUỘC IMPORT
+import { VisualStoryComposition } from './visual-story/VisualStoryComposition';
+import { DUMMY_STORY_DATA } from './visual-story/dummyData';
 
 export const RemotionRoot: React.FC = () => {
   return (
@@ -21,7 +23,8 @@ export const RemotionRoot: React.FC = () => {
           if (!props.post) return { durationInFrames: 300 };
           const PADDING_FRAMES = 60; 
           let totalFrames = props.post.durationInFrames + PADDING_FRAMES;
-          totalFrames += props.comments.reduce((total, cmt) => total + cmt.durationInFrames + PADDING_FRAMES, 0);
+          // 🔥 Sửa lỗi type cho total và cmt
+          totalFrames += props.comments.reduce((total: number, cmt: any) => total + cmt.durationInFrames + PADDING_FRAMES, 0);
           return { durationInFrames: totalFrames };
         }}
         defaultProps={{
@@ -39,18 +42,30 @@ export const RemotionRoot: React.FC = () => {
         fps={60} width={1080} height={1920}
         calculateMetadata={({ props }) => {
           if (!props.chunks) return { durationInFrames: 600 };
-          let totalFrames = props.chunks.reduce((total, chunk) => total + chunk.durationInFrames, 0);
+          // 🔥 Sửa lỗi type cho total và chunk
+          let totalFrames = props.chunks.reduce((total: number, chunk: any) => total + chunk.durationInFrames, 0);
           totalFrames += 180 + 300; // Cộng Intro (3s) và Outro (5s)
           return { durationInFrames: totalFrames };
         }}
         defaultProps={{
-          tiktok_caption: "Test #podcast",
+          // 🔥 Đã xóa tiktok_caption thừa
           bgm: "bgm/sneaky.mp3",
-          postInfo: { author: "Góc Chữa Lành", avatar: "avatars/default_avatar.jpg" },
+          postInfo: { author: "Góc Chữa Lành", avatar: "avatars/default_avatar.jpg", text: "Test nội dung..." },
           chunks: [
-            { text: "Bạn sẽ cảm thấy vô cùng chênh vênh...", keyword: "sad alone", brollUrl: "", audioSrc: "", durationInFrames: 180 }
+            // Cập nhật lại format dummy cho khớp với giao diện Visual Story mới
+            { text: "Bạn sẽ cảm thấy vô cùng chênh vênh...", caption: "CHÊNH VÊNH", cardToShow: "post", gifImg: "", audioSrc: "", durationInFrames: 180 }
           ]
         }}
+      />
+
+      <Composition
+        id="VisualStoryNewsReel"
+        component={VisualStoryComposition}
+        durationInFrames={530} 
+        fps={60}
+        width={1080}
+        height={1920}
+        defaultProps={{ data: DUMMY_STORY_DATA }}
       />
     </>
   );

@@ -7,7 +7,9 @@ export class ScraperService {
 
   // 🔥 Công tắc fetchComments được đưa vào đây
   async scrapeThreadsUrl(url: string, fetchComments: boolean = true) {
-    const targetUrl = url.replace('threads.com', 'threads.net');
+    // 1. DỌN RÁC LINK: Cắt bỏ đoạn đuôi theo dõi (tracking) từ dấu '?'
+    const cleanUrl = url.split('?')[0];
+    const targetUrl = cleanUrl.replace('threads.com', 'threads.net');
     this.logger.log(`🔍 Bắt đầu cào URL chuẩn: ${targetUrl}`);
     
     const browser = await puppeteer.launch({ 
@@ -26,7 +28,8 @@ export class ScraperService {
           throw new Error("Bot bị Meta chặn hoặc bài viết này yêu cầu 18+ bắt đăng nhập!");
       }
 
-      await page.waitForSelector('[data-pressable-container="true"]', { timeout: 10000 });
+      // 2. TĂNG THỜI GIAN CHỜ LÊN 20 GIÂY
+      await page.waitForSelector('[data-pressable-container="true"]', { timeout: 20000 });
 
       // ========================================================
       // 🔥 KIỂM TRA CÔNG TẮC: CHỈ CUỘN KHI CẦN LẤY COMMENT

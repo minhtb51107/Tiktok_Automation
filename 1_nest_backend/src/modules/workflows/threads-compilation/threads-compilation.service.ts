@@ -151,11 +151,15 @@ export class ThreadsCompilationService {
     }
   }
 
-  async processCompilationVideo(threadUrls: string[], onProgress?: (status: string) => Promise<void>) {
+  // 🔥 NÂNG CẤP: Truyền thêm signal?: AbortSignal
+  async processCompilationVideo(threadUrls: string[], onProgress?: (status: string) => Promise<void>, signal?: AbortSignal) {
     const timestamp = Date.now();
     const trashFiles: string[] = [];
     const scriptName = `compilation_script_${timestamp}.json`;
     trashFiles.push(scriptName);
+
+    // 🛑 CHỐT CHẶN 1
+    if (signal?.aborted) throw new Error('ABORTED');
 
     this.logger.log(`\n======================================================`);
     this.logger.log(`🚀 BẮT ĐẦU XƯỞNG TỔNG HỢP: ${threadUrls.length} LINK THREADS`);
@@ -167,6 +171,9 @@ export class ThreadsCompilationService {
     const seenTexts = new Set(); 
 
     for (let i = 0; i < threadUrls.length; i++) {
+      // 🛑 CHỐT CHẶN 2 (Tránh cào tiếp nếu bị hủy)
+      if (signal?.aborted) throw new Error('ABORTED');
+
       const url = threadUrls[i];
       try {
         this.logger.log(`📥 Đang cào Link ${i + 1}/${threadUrls.length}...`);
@@ -195,7 +202,6 @@ export class ThreadsCompilationService {
 
     if (rawPosts.length === 0) throw new Error("Không cào được bài viết nào hợp lệ!");
 
-    // 🔥 NẠP KHO MEME VÀ SFX ĐỂ AI CHỌN LỰA
     let memeDictString = "", sfxDictString = "";
     let memeKeys: string[] = [], sfxKeys: string[] = [];
     try {
@@ -208,55 +214,58 @@ export class ThreadsCompilationService {
       sfxDictString = Object.entries(sfxObj).map(([k, v]) => `${k}: ${v}`).join('\n');
     } catch (err) {}
 
+    // 🛑 CHỐT CHẶN 3
+    if (signal?.aborted) throw new Error('ABORTED');
+
     this.logger.log(`🤖 Chuyển giao dữ liệu SẠCH cho AI dịch kịch bản & ghép Meme...`);
     if (onProgress) await onProgress('🤖 **Bước 2:** Đang dùng Gemini phân giải kịch bản & chèn Meme...');
 
     const batchPrompt = `
-      Nhiệm vụ: Dịch kịch bản âm thanh, chọn SFX và Meme cho video TỔNG HỢP.
-      
-      KHO ÂM THANH:\n${sfxDictString}\n
-      KHO MEME:\n${memeDictString}\n
+    Nhiệm vụ: Dịch kịch bản âm thanh, chọn SFX và Meme cho video TỔNG HỢP.
+    
+    KHO ÂM THANH:\n${sfxDictString}\n
+    KHO MEME:\n${memeDictString}\n
 
-      YÊU CẦU DÀNH CHO CÁC BÀI VIẾT:
-      1. "ttsText": CHỈ dịch toàn bộ từ viết tắt, tiếng lóng sang tiếng Việt chuẩn. Giữ nguyên 100% ý nghĩa và văn phong gốc.
-      2. "sfx": Chọn 1 file âm thanh từ KHO ÂM THANH sao cho hợp ngữ cảnh (hoặc để trống "").
-      3. "meme": Chọn 1 file từ KHO MEME hợp ngữ cảnh. NẾU KHÔNG CÓ CÁI NÀO PHÙ HỢP, tự nghĩ ra 1 TỪ KHÓA TÌM KIẾM bằng Tiếng Anh để tìm trên nền tảng Giphy. NẾU KHÔNG CẦN THÌ ĐỂ TRỐNG "".
-      
-      DANH SÁCH BÀI VIẾT:
-      ${rawPosts.map((p, i) => `{"id": "post_${i}", "text": "${p.text}"}`).join('\n')}
+    YÊU CẦU DÀNH CHO CÁC BÀI VIẾT:
+    1. "ttsText": CHỈ dịch toàn bộ từ viết tắt, tiếng lóng sang tiếng Việt chuẩn. Giữ nguyên 100% ý nghĩa và văn phong gốc.
+    2. "sfx": Chọn 1 file âm thanh từ KHO ÂM THANH sao cho hợp ngữ cảnh (hoặc để trống "").
+    3. "meme": Chọn 1 file từ KHO MEME hợp ngữ cảnh. NẾU KHÔNG CÓ CÁI NÀO PHÙ HỢP, tự nghĩ ra 1 TỪ KHÓA TÌM KIẾM bằng Tiếng Anh để tìm trên nền tảng Giphy. NẾU KHÔNG CẦN THÌ ĐỂ TRỐNG "".
+    
+    DANH SÁCH BÀI VIẾT:
+    ${rawPosts.map((p, i) => `{"id": "post_${i}", "text": "${p.text}"}`).join('\n')}
 
-      TRẢ VỀ DUY NHẤT 1 OBJECT JSON CÓ ĐỊNH DẠNG NHƯ SAU:
-      {
-        "data": [
-          { "id": "post_0", "ttsText": "...", "sfx": "...", "meme": "..." }
-        ]
-      }
+    TRẢ VỀ DUY NHẤT 1 OBJECT JSON CÓ ĐỊNH DẠNG NHƯ SAU:
+    {
+      "data": [
+        { "id": "post_0", "ttsText": "...", "sfx": "...", "meme": "..." }
+      ]
+    }
     `;
 
     let parsedBatch: any[] = [];
     try {
-        this.logger.log(`🧠 Đang gọi Gemini xử lý kịch bản (Thông minh + Miễn phí)...`);
-        
-        this.logger.log(`\n========== 📥 [GEMINI - INPUT PROMPT] ==========`);
-        this.logger.log(batchPrompt);
-        this.logger.log(`================================================\n`);
+      this.logger.log(`🧠 Đang gọi Gemini xử lý kịch bản (Thông minh + Miễn phí)...`);
+      
+      this.logger.log(`\n========== 📥 [GEMINI - INPUT PROMPT] ==========`);
+      this.logger.log(batchPrompt);
+      this.logger.log(`================================================\n`);
 
-        let aiRes = await this.aiService.askGemini(batchPrompt);
-        
-        this.logger.log(`\n========== 📤 [GEMINI - AI RESPONSE] ==========`);
-        this.logger.log(aiRes);
-        this.logger.log(`=================================================\n`);
+      let aiRes = await this.aiService.askGemini(batchPrompt);
+      
+      this.logger.log(`\n========== 📤 [GEMINI - AI RESPONSE] ==========`);
+      this.logger.log(aiRes);
+      this.logger.log(`=================================================\n`);
 
-        const cleanJson = aiRes.substring(aiRes.indexOf('{'), aiRes.lastIndexOf('}') + 1);
-        const parsedObj = JSON.parse(cleanJson);
-        
-        if (parsedObj.data) {
-           parsedBatch = parsedObj.data;
-           this.logger.log(`✅ Gemini dịch xong mĩ mãn!`);
-        }
+      const cleanJson = aiRes.substring(aiRes.indexOf('{'), aiRes.lastIndexOf('}') + 1);
+      const parsedObj = JSON.parse(cleanJson);
+      
+      if (parsedObj.data) {
+          parsedBatch = parsedObj.data;
+          this.logger.log(`✅ Gemini dịch xong mĩ mãn!`);
+      }
     } catch (e: any) {
-        this.logger.error(`❌ AI dịch bị lỗi (${e.message}), sẽ giữ nguyên văn bản gốc để đọc.`);
-        parsedBatch = rawPosts.map((p, i) => ({ id: `post_${i}`, ttsText: p.text }));
+      this.logger.error(`❌ AI dịch bị lỗi (${e.message}), sẽ giữ nguyên văn bản gốc để đọc.`);
+      parsedBatch = rawPosts.map((p, i) => ({ id: `post_${i}`, ttsText: p.text }));
     }
 
     const aiMap = new Map();
@@ -269,65 +278,69 @@ export class ThreadsCompilationService {
     const finalPostsProps = [];
 
     for (let i = 0; i < rawPosts.length; i++) {
-        try {
-            const p = rawPosts[i];
-            const aiData = aiMap.get(`post_${i}`) || {};
-            const ttsText = aiData.ttsText || p.text;
-            const gender = Math.random() > 0.5 ? 'male' : 'female';
-            
-            this.logger.log(`▶️ Đang tạo giọng đọc và tải ảnh cho bài số ${i + 1}...`);
-            const audioData = await this.ttsService.generateAudio(ttsText, `comp_${timestamp}_${i}.mp3`, gender);
-            trashFiles.push(audioData.audioSrc);
+      // 🛑 CHỐT CHẶN 4 (Tránh làm TTS tiếp nếu bị hủy)
+      if (signal?.aborted) throw new Error('ABORTED');
 
-            totalFramesCalculated += audioData.durationInFrames + 60;
+      try {
+        const p = rawPosts[i];
+        const aiData = aiMap.get(`post_${i}`) || {};
+        const ttsText = aiData.ttsText || p.text;
+        const gender = Math.random() > 0.5 ? 'male' : 'female';
+        
+        this.logger.log(`▶️ Đang tạo giọng đọc và tải ảnh cho bài số ${i + 1}...`);
+        const audioData = await this.ttsService.generateAudio(ttsText, `comp_${timestamp}_${i}.mp3`, gender);
+        trashFiles.push(audioData.audioSrc);
 
-            const avatarLocal = await this.downloadAvatar(p.avatar, `avatar_comp_${timestamp}_${i}.jpg`, p.author || 'Anonymous');
-            if (avatarLocal && !avatarLocal.includes('default_avatar')) trashFiles.push(avatarLocal);
+        totalFramesCalculated += audioData.durationInFrames + 60;
 
-            let attachedImgLocal = "";
-            if (p.attachedImage) {
-                const downloadedImg = await this.downloadAttachedImage(p.attachedImage, `img_comp_${timestamp}_${i}.jpg`);
-                if (downloadedImg) {
-                    attachedImgLocal = downloadedImg;
-                    trashFiles.push(attachedImgLocal);
-                }
+        const avatarLocal = await this.downloadAvatar(p.avatar, `avatar_comp_${timestamp}_${i}.jpg`, p.author || 'Anonymous');
+        if (avatarLocal && !avatarLocal.includes('default_avatar')) trashFiles.push(avatarLocal);
+
+        let attachedImgLocal = "";
+        if (p.attachedImage) {
+            const downloadedImg = await this.downloadAttachedImage(p.attachedImage, `img_comp_${timestamp}_${i}.jpg`);
+            if (downloadedImg) {
+                attachedImgLocal = downloadedImg;
+                trashFiles.push(attachedImgLocal);
             }
-
-            // 🔥 XỬ LÝ GẮN MEME
-            let postMeme = this.validateMedia(aiData.meme, memeKeys);
-            if (!postMeme && aiData.meme && aiData.meme.length > 2) {
-                postMeme = await this.fetchMemeFromAPI(aiData.meme, timestamp, `comp_${i}`);
-            }
-            if (postMeme && postMeme.includes('api_meme')) trashFiles.push(postMeme);
-
-            // 🔥 XỬ LÝ GẮN SFX
-            let postSfx = this.validateMedia(aiData.sfx, sfxKeys);
-
-            finalPostsProps.push({
-                author: p.author || 'Anonymous',
-                text: p.text,
-                ttsText: ttsText,
-                avatar: avatarLocal, 
-                attachedImage: attachedImgLocal, 
-                sfx: postSfx,           // Đã cấp quyền gắn SFX
-                memeMp4: postMeme,      // Đã cấp quyền gắn Meme
-                likes: p.likeCount || "10K",
-                comments: "100",
-                reposts: "50",
-                shares: "20",
-                timeAgo: p.timeAgo || "2 giờ trước",
-                audioSrc: audioData.audioSrc,
-                durationInFrames: audioData.durationInFrames + 60,
-                parentAudioDuration: audioData.durationInFrames
-            });
-        } catch (error: any) {
-            this.logger.warn(`✂️ BỎ QUA BÀI SỐ ${i + 1} vì lỗi: ${error.message}`);
         }
+
+        let postMeme = this.validateMedia(aiData.meme, memeKeys);
+        if (!postMeme && aiData.meme && aiData.meme.length > 2) {
+            postMeme = await this.fetchMemeFromAPI(aiData.meme, timestamp, `comp_${i}`);
+        }
+        if (postMeme && postMeme.includes('api_meme')) trashFiles.push(postMeme);
+
+        let postSfx = this.validateMedia(aiData.sfx, sfxKeys);
+
+        finalPostsProps.push({
+            author: p.author || 'Anonymous',
+            text: p.text,
+            ttsText: ttsText,
+            avatar: avatarLocal, 
+            attachedImage: attachedImgLocal, 
+            sfx: postSfx,
+            memeMp4: postMeme,
+            likes: p.likeCount || "10K",
+            comments: "100",
+            reposts: "50",
+            shares: "20",
+            timeAgo: p.timeAgo || "2 giờ trước",
+            audioSrc: audioData.audioSrc,
+            durationInFrames: audioData.durationInFrames + 60,
+            parentAudioDuration: audioData.durationInFrames
+        });
+      } catch (error: any) {
+        this.logger.warn(`✂️ BỎ QUA BÀI SỐ ${i + 1} vì lỗi: ${error.message}`);
+      }
     }
 
     if (finalPostsProps.length === 0) {
-        throw new Error("Toàn bộ các bài đều lỗi âm thanh, không thể tổng hợp thành video!");
+      throw new Error("Toàn bộ các bài đều lỗi âm thanh, không thể tổng hợp thành video!");
     }
+
+    // 🛑 CHỐT CHẶN 5
+    if (signal?.aborted) throw new Error('ABORTED');
 
     totalFramesCalculated += 120;
     const dynamicBackground = await this.prepareDynamicBackground(totalFramesCalculated, timestamp);
@@ -350,7 +363,8 @@ export class ThreadsCompilationService {
     this.logger.log(`🎬 Bàn giao Script cho Remotion Render...`);
     if (onProgress) await onProgress('🎬 **Bước 4:** Đang xả khói Render Video...');
     
-    await this.remotionRunnerService.renderThreadsVideo('ThreadsTopicVideo', scriptPath, outputFileName);
+    // 🛑 TRUYỀN SIGNAL XUỐNG REMOTION
+    await this.remotionRunnerService.renderThreadsVideo('ThreadsTopicVideo', scriptPath, outputFileName, signal);
 
     this.logger.log(`🧹 Đang dọn dẹp file nháp...`);
     trashFiles.forEach(file => {

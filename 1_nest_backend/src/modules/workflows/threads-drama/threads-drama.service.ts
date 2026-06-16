@@ -231,11 +231,15 @@ export class ThreadsDramaService {
     };
   }
 
-  async processDramaVideo(threadUrl: string, onProgress?: (status: string) => Promise<void>) {
+  // 🔥 NÂNG CẤP: Truyền thêm signal?: AbortSignal
+  async processDramaVideo(threadUrl: string, onProgress?: (status: string) => Promise<void>, signal?: AbortSignal) {
     const timestamp = Date.now();
     const trashFiles: string[] = [];
     const scriptName = `threads_script_${timestamp}.json`;
     trashFiles.push(scriptName);
+
+    // 🛑 CHỐT CHẶN 1
+    if (signal?.aborted) throw new Error('ABORTED');
 
     if (onProgress) await onProgress('🕷️ **Bước 1:** Đang cào dữ liệu Threads...');
     const rawData = await this.scraperService.scrapeThreadsUrl(threadUrl);
@@ -298,6 +302,9 @@ export class ThreadsDramaService {
     }
     this.logger.log('=========================================================\n');
 
+    // 🛑 CHỐT CHẶN 2
+    if (signal?.aborted) throw new Error('ABORTED');
+
     if (onProgress) await onProgress('🤖 **Bước 2:** Đóng gói nguyên liệu gửi cho GPT phân tích...');
     
 const batchPrompt = `Bạn là Đạo diễn Video TikTok. Chuẩn bị kịch bản hiển thị và kịch bản TTS.
@@ -323,7 +330,6 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
 
     let parsedBatch: any[] = [];
     try {
-        // Nếu AI lộn xộn sếp có thể đổi askGroq thành askOpenAI nhé
         let batchRes = await this.aiService.askOpenAI(batchPrompt); 
         const jsonMatch = batchRes.match(/\[\s*\{[\s\S]*\}\s*\]/);
         if (jsonMatch) parsedBatch = JSON.parse(jsonMatch[0]);
@@ -350,6 +356,9 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
         let aiCaption = await this.aiService.askGemini(captionPrompt);
         if (aiCaption) captionRaw = aiCaption.replace(/^["']|["']$/g, '').trim();
     } catch(e) {}
+
+    // 🛑 CHỐT CHẶN 3
+    if (signal?.aborted) throw new Error('ABORTED');
 
     if (onProgress) await onProgress('🎙️ **Bước 3:** Đang lồng tiếng và tải tài nguyên...');
     
@@ -392,6 +401,9 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
     const commentsProps = [];
 
     for (let i = 0; i < cmtHierarchy.length; i++) {
+        // 🛑 CHỐT CHẶN 4 (Tránh vòng lặp TTS nếu bị hủy)
+        if (signal?.aborted) throw new Error('ABORTED');
+
         const { cmt } = cmtHierarchy[i];
         try {
             const cmtSafeText = textsToProcess.find(t => t.id === `cmt_${i}`)?.text || "";
@@ -433,6 +445,9 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
         } catch (e) { this.logger.warn(`✂️ BỎ QUA COMMENT SỐ ${i + 1}`); }
     }
 
+    // 🛑 CHỐT CHẶN 5
+    if (signal?.aborted) throw new Error('ABORTED');
+
     totalFramesCalculated += 120; 
     const dynamicBackground = await this.prepareDynamicBackground(totalFramesCalculated, timestamp);
     trashFiles.push(dynamicBackground);
@@ -451,7 +466,9 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
     const outputPath = path.resolve(process.cwd(), '../3_Storage_Assets/output_ready', outputFileName);
     
     if (onProgress) await onProgress('🎬 **Bước 4:** Đang Render Remotion...');
-    await this.remotionRunnerService.renderThreadsVideo('ThreadsTopicVideo', scriptPath, outputFileName);
+
+    // 🛑 TRUYỀN SIGNAL XUỐNG REMOTION
+    await this.remotionRunnerService.renderThreadsVideo('ThreadsTopicVideo', scriptPath, outputFileName, signal);
     
     this.cleanupFiles(trashFiles);
     
