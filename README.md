@@ -36,7 +36,6 @@ The system is built to operate hands-free: it hunts for trending topics, writes 
 
 The project is structured as a monorepo containing three main components:
 
-```text
 ├── 1_nest_backend/      # The Brain: NestJS API, Cron Jobs, Prisma, AI Logic & Automation
 ├── 2_Remotion_Video/    # The Engine: React, Remotion templates, Tailwind CSS for video rendering
 ├── 3_Storage_Assets/    # The Cache: Temp MP3s, Whisper JSONs, and final output videos (.mp4)
