@@ -5,6 +5,9 @@ node_modules/
 dist/
 .env
 1_nest_backend/tiktok_profile/
+1_nest_backend/prisma/*.db
+1_nest_backend/prisma/*.db-journal
+1_nest_backend/*.tsbuildinfo
 
 # ==========================================
 # 2. BỎ QUA TÀI NGUYÊN TIKTOK LYRICS
