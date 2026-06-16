@@ -1,4 +1,4 @@
-```markdown
+
 # 🤖 TikTok/Shorts Automation & Video Generation Pipeline
 
 ![NodeJS](https://img.shields.io/badge/Node.js-18.x-green)
