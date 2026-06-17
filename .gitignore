@@ -19,11 +19,8 @@ dist/
 # ==========================================
 # 3. BỎ QUA TÀI NGUYÊN THREADS TOPIC
 # ==========================================
-3_Storage_Assets/2_Threads_Topic/inputs_text/*
-3_Storage_Assets/2_Threads_Topic/inputs_image/*
-3_Storage_Assets/2_Threads_Topic/output_ready/*
-3_Storage_Assets/temp_processing/*
-3_Storage_Assets/output_ready/*
+3_Storage_Assets/**/*
+!3_Storage_Assets/**/.gitkeep
 
 # ==========================================
 # 4. BỎ QUA TÀI NGUYÊN NẶNG CỦA REMOTION
