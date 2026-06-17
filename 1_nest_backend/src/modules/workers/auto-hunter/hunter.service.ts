@@ -1,13 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-// ĐÃ SỬA ĐƯỜNG DẪN:
 import { ScraperService } from '../../core/scraper/scraper.service';
 import { AiService } from '../../core/ai/ai.service';
 import { DiscordService } from '../../core/notification/discord.service';
 import { PrismaService } from '../../../prisma/prisma.service'; 
 import * as crypto from 'crypto';
 
-// ... (Giữ nguyên phần code bên dưới của sếp) ...
 
 @Injectable()
 export class HunterService {
@@ -20,8 +18,6 @@ export class HunterService {
     private readonly discordService: DiscordService,
   ) {}
 
-  // 🔥 Đã đổi thành EVERY_10_MINUTES (Cứ 10 phút chạy 1 lần)
-  // @Cron(CronExpression.EVERY_10_MINUTES) 
   async startHunting() {
     this.logger.log('🚀 BẮT ĐẦU CA TUẦN TRA KÉP (Kết hợp 2 Chiến thuật)...');
 
@@ -35,9 +31,6 @@ export class HunterService {
     this.logger.log('🏁 Kết thúc ca đi săn kép. Kho đã đầy thêm, đi ngủ đợi 10 phút sau!');
   }
 
-  // ====================================================================
-  // CHIẾN THUẬT 1: AI TỰ ĐẺ TỪ KHÓA (ĐỘT BIẾN GEN)
-  // ====================================================================
   private async huntWithAiKeywords() {
     this.logger.log('🧠 [Chiến thuật 1] Đang vắt óc nghĩ từ khóa bắt trend mới nhất...');
     let dynamicKeywords: string[] = [];
@@ -76,9 +69,6 @@ export class HunterService {
     }
   }
 
-  // ====================================================================
-  // CHIẾN THUẬT 2: KÝ SINH THUẬT TOÁN "FOR YOU"
-  // ====================================================================
   private async huntWithForYouFeed() {
     this.logger.log('\n🕷️ [Chiến thuật 2] Đang lướt ký sinh trang chủ "For You"...');
     try {
@@ -98,9 +88,6 @@ export class HunterService {
     }
   }
 
-  // ====================================================================
-  // HÀM DÙNG CHUNG: CHẤM ĐIỂM VÀ LƯU DATABASE
-  // ====================================================================
   private async processAndSavePost(postData: any, fallbackUrl: string) {
     try {
       const cleanUrl = postData.url ? postData.url.split('?')[0] : fallbackUrl; 
@@ -152,7 +139,6 @@ export class HunterService {
         `;
         this.logger.log(`✅ VIÊN KIM CƯƠNG ĐÃ ĐƯỢC LƯU VÀO KHO!`);
 
-        // 🔥 NÂNG CẤP: Gọi Bot Discord gửi tin nhắn kèm nút bấm cho Sếp duyệt
         const savedPost = await this.prisma.threadPost.findUnique({ where: { threadId: threadId } });
         if (savedPost) {
            await this.discordService.sendPostToReview(savedPost);

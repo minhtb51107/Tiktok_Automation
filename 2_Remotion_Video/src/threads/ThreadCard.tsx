@@ -13,11 +13,9 @@ export const ThreadCard: React.FC<{
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // Hiệu ứng Pop-up Card & Meme
   const scale = spring({ frame, fps, config: { damping: 14, mass: 0.8 } });
   const memeScale = spring({ frame: frame - 10, fps, config: { damping: 14, stiffness: 200 } });
 
-  // Hiệu ứng xuất hiện của Đứa Con (Trượt lên sau khi Cha đọc xong)
   const childDelay = parentAudioDuration + 15;
   const childOpacity = spring({ frame: frame - childDelay, fps, config: { damping: 20 }, from: 0, to: 1 });
   const childTranslate = spring({ frame: frame - childDelay, fps, config: { damping: 14 }, from: 30, to: 0 });

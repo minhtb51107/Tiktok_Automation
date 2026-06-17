@@ -5,7 +5,6 @@ export const BigCaption: React.FC<{ text: string }> = ({ text }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   
-  // Hiệu ứng mượt mà trượt lên kết hợp Blur sang Nét
   const translateY = spring({ frame, fps, config: { damping: 15 }, from: 80, to: 0 });
   const blur = interpolate(frame, [0, 12], [15, 0], { extrapolateRight: 'clamp' });
   const opacity = spring({ frame, fps, config: { damping: 20 }, from: 0, to: 1 });

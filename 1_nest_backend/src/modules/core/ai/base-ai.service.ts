@@ -8,12 +8,8 @@ export abstract class BaseAiService {
     this.logger = new Logger(serviceName);
   }
 
-  // Khai báo thêm taskType để luân chuyển mô hình
   abstract generateCore(prompt: string, taskType?: 'logic' | 'data'): Promise<string>;
 
-  // =====================================================================
-  // Logic Xử lý Tiktok (Dùng chung cho Gemini, Groq, OpenAI)
-  // =====================================================================
   async generateLyricScript(whisperData: any, originalLyrics?: string) {
     this.logger.log(`Đang phân tích kịch bản âm thanh...`);
     const rawSegments = whisperData.segments.map((seg: any) => ({
@@ -52,7 +48,6 @@ export abstract class BaseAiService {
     let retries = 3;
     while (retries > 0) {
       try {
-        // Truyền 'data' để báo cho AI Service chọn mô hình tiết kiệm
         let aiResponse = await this.generateCore(prompt, 'data');
         
         aiResponse = aiResponse.replace(/```json/g, '').replace(/```typescript/g, '').replace(/```/g, '').trim();

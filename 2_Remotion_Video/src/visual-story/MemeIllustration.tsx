@@ -5,7 +5,6 @@ export const MemeIllustration: React.FC<{ src: string }> = ({ src }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   
-  // Animation: Pop In
   const scale = spring({ frame, fps, config: { damping: 12, mass: 0.6 }, from: 0.5, to: 1 });
 
   return (

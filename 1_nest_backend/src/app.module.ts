@@ -8,7 +8,6 @@ import { GeminiModule } from './modules/core/ai/gemini.module';
 import { ScheduleModule } from '@nestjs/schedule'; 
 import { PrismaModule } from './prisma/prisma.module';
 
-// 🔥 IMPORT TRẠM TRUNG GIAN (Nó đã chứa sẵn Drama và Serious bên trong)
 import { DiscordModule } from './modules/core/notification/discord.module';
 
 @Module({

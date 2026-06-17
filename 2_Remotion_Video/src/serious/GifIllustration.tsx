@@ -5,12 +5,10 @@ export const GifIllustration: React.FC<{ src: string }> = ({ src }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   
-  // Hiệu ứng Pop-in nảy lên
   const scale = spring({ frame, fps, config: { damping: 12, mass: 0.6 }, from: 0.5, to: 1 });
 
   if (!src) return null;
 
-  // Xử lý an toàn: Nếu là link web thì dùng thẳng, nếu đã tải về máy thì bọc staticFile()
   const videoSrc = src.startsWith('http') ? src : staticFile(src);
 
   return (

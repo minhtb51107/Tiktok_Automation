@@ -39,7 +39,6 @@ export class TtsService {
       .trim();
   }
 
-  // Thuật toán băm thông minh theo từng câu hoàn chỉnh
   private smartChunkText(text: string): string[] {
       const rawSentences = text.split(/([.?!:\n]+)/); 
       const chunks: string[] = [];
@@ -85,15 +84,11 @@ export class TtsService {
     });
   }
 
-  // =======================================================
-  // 🔥 TRỤC TỌA ĐỘ CHÍNH: KHÓA CHẶT 1 GIỌNG DUY NHẤT CHO VIDEO
-  // =======================================================
   async generateAudio(text: string, fileName: string, gender: string) {
     const cleanText = this.cleanTextForTTS(text);
     const chunks = this.smartChunkText(cleanText); 
     const audioBuffers: Buffer[] = [];
 
-    // 🔥 1. CHỐT CỨNG MÃ GIỌNG NGAY TỪ ĐẦU (Không có chuyện đổi giọng giữa chừng)
     const fptVoice = gender === 'female' ? 'banmai' : 'leminh';
     const viettelVoice = gender === 'female' ? 'hn-quynhanh' : 'sg-minhhoang';
     const zaloVoiceId = gender === 'female' ? 1 : 3;
@@ -105,12 +100,10 @@ export class TtsService {
         let buffer: Buffer | null = null;
 
         try {
-            // Gọi FPT với giọng đọc cố định đã chốt
             buffer = await this.getFptBuffer(chunk, fptVoice, i + 1, chunks.length);
         } catch (fptError: any) {
             this.logger.warn(`⚠️ FPT kiệt sức hoàn toàn sau khi đã chờ hết mức ở câu ${i + 1}/${chunks.length}. Đẩy sang Viettel gánh vác...`);
             try {
-                // Nếu ép buộc phải dùng phương án dự phòng, cũng ép nó dùng đúng giới tính giọng đã chốt
                 buffer = await this.getViettelBuffer(chunk, viettelVoice, i + 1, chunks.length);
             } catch (viettelError: any) {
                 this.logger.warn(`⚠️ Viettel sập nốt. Gọi chốt chặn cuối cùng Zalo...`);
@@ -125,7 +118,6 @@ export class TtsService {
         
         if (buffer) audioBuffers.push(buffer);
 
-        // Nghỉ 1.5 giây để tránh FPT quét spam API
         if (i < chunks.length - 1) {
             await new Promise(r => setTimeout(r, 1500));
         }
@@ -143,13 +135,9 @@ export class TtsService {
     return { audioSrc: `threads_audio/${fileName}`, durationInFrames };
   }
 
-  // =======================================================
-  // 🎙️ TỔ ĐỌC FPT: LÌ LỢM ĐỨNG ĐỢI (CHỜ ĐẾN KHI ĐƯỢC MỚI THÔI)
-  // =======================================================
   private async getFptBuffer(text: string, voice: string, part: number, total: number): Promise<Buffer> {
     if (this.fptApiKeys.length === 0) throw new Error("Chưa điền FPT_AI_KEY");
 
-    // 🔥 TĂNG KIÊN NHẪN: Cho phép đứng đợi 60 lần x 2 giây = Chờ hẳn 2 phút cho mỗi câu ngắn!
     let downloadRetries = 60; 
     let attempt = 0;
     let lastErrorMsg = "";
@@ -169,7 +157,6 @@ export class TtsService {
         
         const noCacheUrl = `${audioUrl}?t=${Date.now()}`;
 
-        // 🔥 VÒNG LẶP KIÊN TRÌ: Ép gõ cửa đòi file liên tục
         while (downloadRetries > 0) {
           await new Promise(r => setTimeout(r, 2000)); 
           try {
@@ -189,7 +176,6 @@ export class TtsService {
               return Buffer.from(audioRes.data);
             }
           } catch (e: any) {
-             // Nếu FPT nhả mã lỗi thực sự (khác 404), tức là Key bị lỗi, văng ra để đổi Key luôn
              if (e.response && e.response.status !== 404) {
                  throw new Error(`Lỗi S3: HTTP ${e.response.status}`);
              }

@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, TextChannel } from 'discord.js';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 import { ThreadsDramaService } from '../../workflows/threads-drama/threads-drama.service';
@@ -19,7 +19,6 @@ export class DiscordService implements OnModuleInit {
   private client: Client;
   private channelId = process.env.DISCORD_CHANNEL_ID;
   
-  // KHO CHỨA CẦU DAO CHO CÁC TIẾN TRÌNH
   private activeJobs = new Map<string, AbortController>();
 
   constructor(
@@ -61,9 +60,6 @@ export class DiscordService implements OnModuleInit {
       const msgTextLower = message.content.trim().toLowerCase();
       const msgText = message.content.trim();
 
-      // ====================================================================
-      // 1. LỆNH TỔNG HỢP: !mix
-      // ====================================================================
       if (msgTextLower.startsWith('!mix') || msgTextLower.startsWith('mix!')) {
         const urls = msgText.replace(/^!mix\s*/i, '').replace(/^mix!\s*/i, '').split(/[\s\n]+/).filter(url => url.includes('threads.net') || url.includes('threads.com'));
         
@@ -130,11 +126,7 @@ export class DiscordService implements OnModuleInit {
         return; 
       }
 
-      // ====================================================================
-      // 2. LỆNH TẠO PODCAST THỦ CÔNG: p hoặc !p (BẮT BUỘC CÓ LINK GỐC + KỊCH BẢN THẺ HOẶC FILE .TXT)
-      // ====================================================================
       if (msgTextLower.startsWith('p ') || msgTextLower.startsWith('!p ') || msgTextLower.startsWith('p\n')) {
-        // Tìm Link Threads gốc trong tin nhắn
         const urlMatch = msgText.match(/(https?:\/\/(?:www\.)?threads\.(net|com)\/[^\s]+)/i);
         if (!urlMatch) {
             await message.reply('❌ Sếp quên dán Link Threads gốc vào rồi! Phải có link thì bot mới đi cào Avatar thật và Ảnh thật được!');
@@ -142,10 +134,8 @@ export class DiscordService implements OnModuleInit {
         }
         
         const primaryUrl = urlMatch[0].replace(/[\]\)',"\.]+$/, '');
-        // Tách lấy kịch bản từ text, bỏ đi chữ !p và bỏ đi cái Link
         let scriptContent = msgText.replace(urlMatch[0], '').replace(/^(?:!p|p)\s*/i, '').trim();
         
-        // 🔥 ĐỌC FILE .TXT NẾU SẾP ĐÍNH KÈM FILE (Khắc phục giới hạn 2000 ký tự)
         if (message.attachments.size > 0) {
             const attachment = message.attachments.first();
             if (attachment && attachment.name.endsWith('.txt')) {
@@ -179,7 +169,6 @@ export class DiscordService implements OnModuleInit {
         });
         
         try {
-            // TRUYỀN CẢ URL LẪN KỊCH BẢN XUỐNG XƯỞNG
             const res = await this.threadsSeriousService.processSeriousVideo(primaryUrl, scriptContent, async (status) => {
                 await reply.edit({ content: status, components: [cancelRow] }).catch(() => {});
             }, abortController.signal);
@@ -247,9 +236,6 @@ export class DiscordService implements OnModuleInit {
         return; 
       }
 
-      // ====================================================================
-      // 3. LỆNH LẺ DRAMA (Tự động nhận diện URL Threads)
-      // ====================================================================
       const urlRegex = /(https?:\/\/(?:www\.)?threads\.(net|com)\/[^\s]+)/gi;
       const matches = message.content.match(urlRegex);
 
@@ -349,9 +335,6 @@ export class DiscordService implements OnModuleInit {
       if (!interaction.isButton()) return;
       const parts = interaction.customId.split('_');
 
-      // ====================================================================
-      // BẮT SỰ KIỆN NÚT DỪNG KHẨN CẤP
-      // ====================================================================
       if (parts[0] === 'cancel') {
         const jobId = parts.slice(1).join('_'); 
         const controller = this.activeJobs.get(jobId);
@@ -423,7 +406,6 @@ export class DiscordService implements OnModuleInit {
           
           await this.prisma.threadPost.update({ where: { id: postId }, data: { isApproved: true } });
           
-          // Tự động đóng gói nội dung cào được thành thẻ CHUNK đơn giản để nhét vào xưởng Serious nếu là bài auto-hunter
           const renderTask = isSerious 
             ? this.threadsSeriousService.processSeriousVideo(
                 post.url, 
@@ -514,8 +496,7 @@ export class DiscordService implements OnModuleInit {
         new ButtonBuilder().setCustomId(`reject_${post.id}`).setLabel('🗑️ Vứt').setStyle(ButtonStyle.Danger),
       );
 
-      // @ts-ignore
-      await channel.send({ embeds: [embed], components: [row] });
+      await (channel as TextChannel).send({ embeds: [embed], components: [row] });
     } catch (error: any) { }
   }
 }

@@ -17,7 +17,6 @@ export class GeminiService extends BaseAiService {
     }
   }
 
-  // KHAI BÁO LẠI HÀM XOAY VÒNG KEY ĐỂ CẢ 2 HÀM BÊN DƯỚI DÙNG CHUNG
   private rotateKey() {
     if (this.apiKeys.length <= 1) return; // Nếu chỉ có 1 key thì không cần xoay
     this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
@@ -33,7 +32,6 @@ export class GeminiService extends BaseAiService {
     const maxRetries = this.apiKeys.length;
     let attempt = 0;
     
-    // Tách luồng mô hình đỉnh cao nhất
     const modelName = taskType === 'logic' ? 'gemini-3.5-flash' : 'gemini-3.1-flash-lite';
 
     while (attempt < maxRetries) {
@@ -48,7 +46,6 @@ export class GeminiService extends BaseAiService {
         
         if (attempt >= maxRetries) throw new Error(`GEMINI_CRASHED: ${error.message}`);
         
-        // GỌI HÀM XOAY KEY TẠI ĐÂY
         this.rotateKey();
         
         const waitTime = 5000 * Math.pow(3, attempt - 1);
@@ -58,7 +55,6 @@ export class GeminiService extends BaseAiService {
     return '';
   }
 
-  // HÀM TẠO VECTOR BẰNG GEMINI (0 ĐỒNG)
   async generateEmbedding(text: string): Promise<number[]> {
     if (!this.genAI) throw new Error("Chưa cấu hình Gemini Key");
     
@@ -74,7 +70,6 @@ export class GeminiService extends BaseAiService {
         
         if (attempt >= this.apiKeys.length) break;
         
-        // GỌI HÀM XOAY KEY TẠI ĐÂY
         this.rotateKey();
         
         await new Promise(r => setTimeout(r, 2000));

@@ -5,7 +5,6 @@ export const StoryCard: React.FC<{ info: any }> = ({ info }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // Hiệu ứng Pop-in nảy nhẹ từ tâm
   const scale = spring({ frame, fps, config: { damping: 14, mass: 0.8 }, from: 0.9, to: 1 });
   const opacity = spring({ frame, fps, config: { damping: 20 }, from: 0, to: 1 });
 

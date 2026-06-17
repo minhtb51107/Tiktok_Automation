@@ -17,7 +17,6 @@ export class HunterSeriousService {
     private readonly discordService: DiscordService,
   ) {}
 
-  // 🔥 Chạy mỗi 15 phút để tránh dẫm chân thằng Drama (10 phút)
   @Cron('0 */15 * * * *') 
   async startHunting() {
     this.logger.log('🚀 [SERIOUS] BẮT ĐẦU ĐI SĂN BÀI HỌC CUỘC SỐNG / SỰ NGHIỆP...');
@@ -94,7 +93,6 @@ export class HunterSeriousService {
       this.logger.log(`📊 [SERIOUS] AI chấm: ${aiEvaluation.score}/10 điểm - Vibe: ${aiEvaluation.vibe}`);
 
       if (aiEvaluation.score >= 7) {
-        // 🔥 NÂNG CẤP: GẮN MÁC "SERIOUS" CHO DATABASE
         await this.prisma.$executeRaw`
           INSERT INTO "ThreadPost" (
             "id", "threadId", "author", "avatarUrl", "content", 

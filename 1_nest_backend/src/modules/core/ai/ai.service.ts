@@ -13,7 +13,6 @@ export class AiService {
     private readonly openai: OpenaiService,  // FIX: Đổi về private cho đồng bộ
   ) {}
 
-  // Lệnh gọi API cụ thể (Dự phòng)
   async askGroq(prompt: string, isComplex: boolean = false): Promise<string> {
     const model = isComplex ? 'llama-3.3-70b-versatile' : 'llama-3.1-8b-instant';
     return await this.groq.generateText(prompt, model); // Nếu BaseAiService của sếp dùng generateText
@@ -23,16 +22,13 @@ export class AiService {
     return await this.gemini.generateText(prompt);
   }
 
-  // 🚀 Hàm Mới: Bổ sung lối gọi trực tiếp cho OpenAI
   async askOpenAI(prompt: string): Promise<string> {
     return await this.openai.generateCore(prompt);
   }
 
-  // 🔥 NÂNG CẤP: Ép định dạng JSON dùng 100% GPT-4o
   async generateJsonText(prompt: string): Promise<string> {
     try {
       this.logger.log(`[1] Đang dùng não GPT-4o để chấm điểm và phân tích...`);
-      // Đổi luồng chính sang OpenAI
       return await this.openai.generateCore(prompt);
     } catch (e1: any) {
       this.logger.warn(`⚠️ GPT sập (${e1.message}). Gọi Llama 3 (Groq) cứu viện...`);
@@ -50,9 +46,7 @@ export class AiService {
     }
   }
 
-  // 🔥 FIX LỖI CHÍ MẠNG: Đổi sang gọi generateCore và truyền prompt
   async processMusicScript(whisperData: any, originalLyrics?: string): Promise<any> {
-    // Tạo prompt gộp từ dữ liệu truyền vào
     const prompt = `Bạn là chuyên gia phân tích âm nhạc. 
 Xử lý dữ liệu Whisper sau và kết hợp với Lyrics gốc (nếu có). Trả về JSON hợp lệ.
 ====== WHISPER DATA ======
@@ -80,13 +74,11 @@ ${originalLyrics || "Không có"}`;
     return await this.openai.generateEmbedding(text);
   }
 
-  // 🔥 NÂNG CẤP: Chuyên gia được ủy quyền toàn quyền cho GPT-4o
   async askExpert(prompt: string): Promise<string> {
     this.logger.log(`🧠 Gọi chuyên gia GPT-4o để xào nấu kịch bản...`);
     return await this.openai.generateCore(prompt); 
   }
 
-  // 💰 CHIẾN THUẬT: Lính Trinh Sát (Siêu tiết kiệm, tốc độ bàn thờ)
   async generateScoutJson(prompt: string): Promise<string> {
     try {
       this.logger.log(`🕵️ Đang dùng Llama-3 (Groq) siêu rẻ làm Lính Trinh Sát...`);

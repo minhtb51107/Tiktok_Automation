@@ -14,7 +14,6 @@ export const LyricLine: React.FC<LyricProps> = ({ lineStartFrame, words, vietnam
 
   const blockOpacity = interpolate(frame, [0, 10], [0, 1], { extrapolateRight: 'clamp' });
 
-  // Khối phủ trượt từ trái sang phải
   const overlayScaleX = spring({
     frame,
     fps,
@@ -47,7 +46,6 @@ export const LyricLine: React.FC<LyricProps> = ({ lineStartFrame, words, vietnam
               const localWordStart = getTrueWordFrame(wordObj.start) - lineStartFrame;
               const isVisible = frame >= localWordStart;
 
-              // Tất cả các chữ cái tiếng Anh đều dùng chung một phong cách hiển thị
               return (
                 <span 
                   key={index}

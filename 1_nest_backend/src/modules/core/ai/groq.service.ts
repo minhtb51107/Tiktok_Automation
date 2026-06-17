@@ -10,13 +10,10 @@ export class GroqService extends BaseAiService {
     super(GroqService.name);
     const key = process.env.GROQ_API_KEY;
     if (key) {
-      // Vẫn dùng OpenAI library nhưng trỏ thẳng vào tim của Groq
       this.groqClient = new OpenAI({ apiKey: key, baseURL: 'https://api.groq.com/openai/v1' });
     }
   }
 
-  // HÀM MỚI: Trả text bình thường, hỗ trợ chọn model nhẹ/nặng
-  // Cập nhật model mặc định sang bản 3.1 mới nhất
   async generateText(prompt: string, model: string = 'llama-3.1-8b-instant'): Promise<string> {
     if (!this.groqClient) throw new Error("Thiếu cấu hình GROQ_API_KEY");
     
@@ -33,7 +30,6 @@ export class GroqService extends BaseAiService {
     }
   }
 
-  // Giữ lại hàm cũ của sếp lỡ có chỗ nào xài
   async generateCore(prompt: string, taskType: 'logic' | 'data' = 'logic'): Promise<string> {
     if (!this.groqClient) throw new Error("Thiếu cấu hình GROQ_API_KEY");
     const response = await this.groqClient.chat.completions.create({

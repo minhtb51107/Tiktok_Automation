@@ -10,7 +10,6 @@ const execAsync = promisify(exec);
 export class WhisperService {
   private readonly logger = new Logger(WhisperService.name);
 
-  // NÂNG CẤP: Nhận thêm signal từ tuyến trên
   async runWhisper(audioPath: string, fileName: string, signal?: AbortSignal) {
     this.logger.log(`🎧 Bắt đầu gọi Whisper nghe bài hát: ${fileName}...`);
 
@@ -19,7 +18,6 @@ export class WhisperService {
       fs.mkdirSync(outputDir, { recursive: true });
     }
     
-    // CHỐT CHẶN: Nếu đã bị hủy từ trước khi chạy lệnh thì văng lỗi luôn
     if (signal?.aborted) throw new Error('ABORTED');
     
     const absoluteAudioPath = path.resolve(audioPath);
@@ -27,7 +25,6 @@ export class WhisperService {
     const command = `whisper "${absoluteAudioPath}" --model base --language vi --output_format json --word_timestamps True --output_dir "${outputDir}"`;
 
     try {
-      // 🔥 TRUYỀN SIGNAL VÀO EXEC: Node.js sẽ tự động kill Python nếu có lệnh hủy
       const { stdout, stderr } = await execAsync(command, { 
           cwd: outputDir,
           env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
@@ -56,7 +53,6 @@ export class WhisperService {
       return whisperOutput;
 
     } catch (error: any) {
-      // XỬ LÝ LỖI HỦY BỎ
       if (error.name === 'AbortError' || signal?.aborted) {
          this.logger.warn(`🛑 Tiến trình Whisper đã bị BÓP CỔ CHẾT TỨC TƯỞI (Lệnh dừng khẩn cấp)!`);
          throw new Error('ABORTED');

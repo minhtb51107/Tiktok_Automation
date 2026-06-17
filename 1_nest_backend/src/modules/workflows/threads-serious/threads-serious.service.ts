@@ -18,7 +18,6 @@ export class ThreadsSeriousService {
     private readonly whisperService: WhisperService
   ) {}
 
-  // 🔥 NÂNG CẤP LỚN: KHÔNG LƯU ẢNH LỖI VÀO MÁY NỮA, TRUYỀN THẲNG LINK
   private async downloadAvatar(url: string, fileName: string, authorName: string): Promise<string> {
     const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(authorName || 'User')}&background=random&size=256&bold=true&format=png`;
 

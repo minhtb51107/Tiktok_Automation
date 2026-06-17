@@ -1,10 +1,13 @@
 import React from 'react';
 import { AbsoluteFill, Audio, Series, Sequence, staticFile, Video } from 'remotion'; 
 import { ThreadCard } from './ThreadCard';
+import { ThreadsIntro } from './ThreadsIntro';
 
 type ThreadProps = {
   backgroundVideo: string;
   bgm: string;
+  theme?: 'compilation' | 'drama'; // Luồng nội dung
+  hookText?: string;               // Tiêu đề động do AI tạo ra
   post: { 
     author: string; avatar: string; text: string; audioSrc: string; durationInFrames: number; 
     gender?: string; attachedImage?: string; sfx?: string; memeMp4?: string;
@@ -12,18 +15,26 @@ type ThreadProps = {
   };
   comments: Array<{ 
     author: string; avatar: string; text: string; audioSrc: string; durationInFrames: number; 
-    parentAudioDuration?: number; // Cần thiết để Canh thời gian cho Con đọc
+    parentAudioDuration?: number; 
     gender?: string; attachedImage?: string; sfx?: string; memeMp4?: string;
     likes?: string; comments?: string; reposts?: string; shares?: string; timeAgo?: string;
-    reply?: any; // Hứng dữ liệu bình luận Con
+    reply?: any; 
   }>;
 };
 
-export const ThreadsComposition: React.FC<ThreadProps> = ({ backgroundVideo, bgm, post, comments }) => {
+export const ThreadsComposition: React.FC<ThreadProps> = ({ 
+  backgroundVideo, 
+  bgm, 
+  post, 
+  comments,
+  theme = 'compilation',
+  hookText = 'BẠN NGHĨ SAO VỀ ĐIỀU NÀY?'
+}) => {
   if (!post) return null;
 
   // Thời gian Card nán lại trên màn hình sau khi đọc xong (60 frames = 1 giây)
   const PADDING_FRAMES = 60;
+  const INTRO_DURATION = 180; // Thời lượng phần Intro (3 giây ở mức 60fps)
 
   return (
     <AbsoluteFill style={{ backgroundColor: '#111' }}>
@@ -41,6 +52,18 @@ export const ThreadsComposition: React.FC<ThreadProps> = ({ backgroundVideo, bgm
 
       <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
         <Series>
+          
+          {/* TRẠM 0: INTRO ĐẦU VIDEO (3 GIÂY) */}
+          <Series.Sequence durationInFrames={INTRO_DURATION}>
+            <ThreadsIntro 
+              author={post.author}
+              avatar={post.avatar.startsWith('http') ? post.avatar : staticFile(post.avatar)}
+              text={post.text}
+              timeAgo={post.timeAgo}
+              hookText={hookText}
+              theme={theme}
+            />
+          </Series.Sequence>
           
           {/* TRẠM 1: BÀI VIẾT GỐC */}
           <Series.Sequence durationInFrames={post.durationInFrames + PADDING_FRAMES}>

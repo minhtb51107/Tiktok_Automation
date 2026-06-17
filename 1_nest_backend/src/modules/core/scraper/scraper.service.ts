@@ -5,9 +5,7 @@ import puppeteer from 'puppeteer';
 export class ScraperService {
   private readonly logger = new Logger(ScraperService.name);
 
-  // 🔥 Công tắc fetchComments được đưa vào đây
   async scrapeThreadsUrl(url: string, fetchComments: boolean = true) {
-    // 1. DỌN RÁC LINK: Cắt bỏ đoạn đuôi theo dõi (tracking) từ dấu '?'
     const cleanUrl = url.split('?')[0];
     const targetUrl = cleanUrl.replace('threads.com', 'threads.net');
     this.logger.log(`🔍 Bắt đầu cào URL chuẩn: ${targetUrl}`);
@@ -28,12 +26,8 @@ export class ScraperService {
           throw new Error("Bot bị Meta chặn hoặc bài viết này yêu cầu 18+ bắt đăng nhập!");
       }
 
-      // 2. TĂNG THỜI GIAN CHỜ LÊN 20 GIÂY
       await page.waitForSelector('[data-pressable-container="true"]', { timeout: 20000 });
 
-      // ========================================================
-      // 🔥 KIỂM TRA CÔNG TẮC: CHỈ CUỘN KHI CẦN LẤY COMMENT
-      // ========================================================
       if (fetchComments) {
         this.logger.log(`⏳ Đang cuộn trang để móc thêm bình luận đang bị ẩn...`);
         for (let i = 0; i < 4; i++) { 
@@ -44,7 +38,6 @@ export class ScraperService {
       } else {
         this.logger.log(`⚡ Chế độ TỐC ĐỘ CAO (Chỉ lấy bài gốc, bỏ qua cuộn trang tìm bình luận)`);
       }
-      // ========================================================
 
       const data = await page.evaluate(() => {
         const containers = Array.from(document.querySelectorAll('div[data-pressable-container="true"]'));

@@ -14,9 +14,6 @@ export class TiktokUploadService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  // ====================================================================
-  // HÀM TIỆN ÍCH: CHỌN ĐÚNG KÊNH TIKTOK DỰA VÀO THỂ LOẠI
-  // ====================================================================
   private getProfileFolder(category: string): string {
     if (category === 'SERIOUS') return 'tiktok_profile_serious';
     return 'tiktok_profile_drama'; // Mặc định là Drama
@@ -41,7 +38,6 @@ export class TiktokUploadService {
         return;
       }
 
-      // 🔥 NÂNG CẤP: Lấy đúng thư mục profile trình duyệt
       const category = (pendingPost as any).category || 'DRAMA';
       const profileFolder = this.getProfileFolder(category);
       this.logger.log(`Phát hiện video [${category}] cần đăng. Sử dụng kênh: ${profileFolder}`);
@@ -87,13 +83,11 @@ export class TiktokUploadService {
         const finalCaption = (pendingPost.caption || 'Video tâm sự Threads #xuhuong') + '   '; 
         this.logger.log(`✍️ Đang gõ Caption...`);
         
-        // 🔥 ĐÃ FIX: Chống lỗi giao diện mới của TikTok (Tách Title và Description)
         const editorSelector = '.public-DraftEditor-content, [contenteditable="true"]'; 
         await page.waitForSelector(editorSelector, { timeout: 15000 });
         
         const editors = await page.$$(editorSelector);
         if (editors.length > 0) {
-          // Lấy ô nhập liệu CUỐI CÙNG (Vì Title luôn nằm trên, Description nằm dưới)
           const targetEditor = editors[editors.length - 1];
           await targetEditor.click();
         }
@@ -239,7 +233,6 @@ export class TiktokUploadService {
     }
   }
 
-  // HÀM: KÍCH HOẠT ĐĂNG TIKTOK DÀNH CHO NÚT BẤM DISCORD
   async uploadPostById(postId: string) {
     if (this.isUploading) {
       throw new Error('Đang có một video khác đang được upload dở. Vui lòng đợi trong giây lát!');
@@ -251,7 +244,6 @@ export class TiktokUploadService {
       const pendingPost = await this.prisma.threadPost.findUnique({ where: { id: postId } });
       if (!pendingPost) throw new Error('Không tìm thấy bài viết này trong Database!');
 
-      // 🔥 NÂNG CẤP: Lấy đúng thư mục profile trình duyệt
       const category = (pendingPost as any).category || 'DRAMA';
       const profileFolder = this.getProfileFolder(category);
       
@@ -298,13 +290,11 @@ export class TiktokUploadService {
         const finalCaption = (pendingPost.caption || 'Video tâm sự Threads #xuhuong') + '   ';
         this.logger.log(`✍️ Điền mô tả video...`);
         
-        // 🔥 ĐÃ FIX: Chống lỗi giao diện mới của TikTok (Tách Title và Description)
         const editorSelector = '.public-DraftEditor-content, [contenteditable="true"]'; 
         await page.waitForSelector(editorSelector, { timeout: 15000 });
         
         const editors = await page.$$(editorSelector);
         if (editors.length > 0) {
-          // Lấy ô nhập liệu CUỐI CÙNG
           const targetEditor = editors[editors.length - 1];
           await targetEditor.click();
         }

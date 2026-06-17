@@ -8,10 +8,8 @@ import FormData = require('form-data');
 
 import { RemotionRunnerService } from '../../remotion-runner/remotion-runner.service';
 import { WhisperService } from '../../whisper/whisper.service';
-// ĐÃ SỬA ĐƯỜNG DẪN:
 import { GeminiService } from '../../core/ai/gemini.service';
 
-// ... (Giữ nguyên phần code bên dưới của sếp) ...
 
 @Injectable()
 export class TiktokLyricsService {
@@ -33,7 +31,6 @@ export class TiktokLyricsService {
       .trim();
   }
 
-  // Hàm này sẽ được Watcher gọi khi có file nhạc mới
   public checkAndProcess(musicDir: string, imageDir: string) {
     if (this.timer) clearTimeout(this.timer);
 
@@ -116,7 +113,6 @@ export class TiktokLyricsService {
         finalArtist = 'Tiktok Music'; 
       }
 
-      // CHÚ Ý: Chỗ này sau sẽ truyền compositionId là 'ProLyricVideo'
       await this.remotionRunner.renderVideo(900, fileName, imageFiles, finalTitle, finalArtist); 
       this.logger.log(`✨ [TIKTOK] HOÀN TẤT TOÀN BỘ QUY TRÌNH! ĐÃ CÓ VIDEO!`);
 

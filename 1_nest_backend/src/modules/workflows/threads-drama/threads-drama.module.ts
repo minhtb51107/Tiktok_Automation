@@ -13,7 +13,6 @@ import { ThreadsDramaService } from './threads-drama.service';
     ThreadsDramaService, 
     ScraperService, 
     TtsService 
-    // 🔥 ĐÃ XÓA: DiscordService, TiktokUploadService, HunterService ra khỏi đây!
   ],
   exports: [ThreadsDramaService] // Chỉ xuất xưởng Drama ra ngoài
 })

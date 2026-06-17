@@ -4,7 +4,6 @@ import { AbsoluteFill, useCurrentFrame, interpolate } from 'remotion';
 export const EconomicBackground: React.FC = () => {
   const frame = useCurrentFrame();
 
-  // Hiệu ứng lưới trôi chậm tạo chuyển động Motion Graphic sinh động
   const gridTranslateY = (frame * 0.8) % 100;
 
   return (

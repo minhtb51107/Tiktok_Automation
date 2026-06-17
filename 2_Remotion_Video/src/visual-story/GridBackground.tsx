@@ -5,7 +5,6 @@ export const GridBackground: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // Tạo ra 15 vì sao nhấp nháy tĩnh (dùng Math.sin để tính độ nhấp nháy theo frame)
   const stars = Array.from({ length: 15 }).map((_, i) => ({
     top: `${(Math.sin(i * 123) * 40) + 50}%`,
     left: `${(Math.cos(i * 321) * 40) + 50}%`,
@@ -15,7 +14,6 @@ export const GridBackground: React.FC = () => {
 
   return (
     <AbsoluteFill style={{ 
-      // Gradient dọc y hệt Landing Page Dark Mode
       background: 'linear-gradient(to bottom, #0e0e16, #1a1b41, #2e3192)',
       overflow: 'hidden',
       fontFamily: 'system-ui, sans-serif'

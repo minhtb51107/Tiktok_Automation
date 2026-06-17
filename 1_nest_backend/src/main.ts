@@ -5,7 +5,6 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Cấu hình Swagger
   const config = new DocumentBuilder()
     .setTitle('TikTok Automation API')
     .setDescription('The API orchestration for video generation')

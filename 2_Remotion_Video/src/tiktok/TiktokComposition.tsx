@@ -39,24 +39,17 @@ export const MyComposition = ({
     return durationVal < 20 ? Math.round(durationVal * 30) : Math.round(durationVal);
   };
 
-  // ==========================================
-  // THUẬT TOÁN INTRO ĐỘNG (THÔNG MINH NHẤT)
-  // ==========================================
   const MIN_INTRO_SECONDS = 3; // Intro yêu cầu phải dài ít nhất 3 giây
 
-  // 1. Quét tìm index của câu hát đầu tiên xuất hiện SAU 3 giây
   const firstValidLyricIndex = LYRIC_SCRIPT.findIndex(line => line.start >= MIN_INTRO_SECONDS);
 
-  // 2. Tính số Frame kết thúc Intro (Kéo giãn Intro để khớp hoàn hảo với câu hát mới)
   const introEndFrame = firstValidLyricIndex !== -1 
     ? getTrueStartFrame(LYRIC_SCRIPT[firstValidLyricIndex].start) 
     : MIN_INTRO_SECONDS * 30;
 
-  // 3. Lọc bỏ toàn bộ các câu hát diễn ra trong lúc Intro đang chiếu (Bỏ lời thừa)
   const visibleLyrics = firstValidLyricIndex !== -1 
     ? LYRIC_SCRIPT.slice(firstValidLyricIndex) 
     : [];
-  // ==========================================
 
   const climaxFrame = 815; 
 
@@ -67,7 +60,6 @@ export const MyComposition = ({
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
   );
 
-  // Intro tự động mờ đi trong 15 frame (nửa giây) trước khi kết thúc
   const titleOpacity = interpolate(frame, [introEndFrame - 15, introEndFrame], [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
   const titleFloat = Math.sin(frame / 12) * 10; 
   
@@ -143,10 +135,8 @@ export const MyComposition = ({
         {visibleLyrics.map((line, index) => {
           const startFrame = getTrueStartFrame(line.start);
           
-          // Outro fix: Lấy đúng thời lượng AI báo cáo, cộng thêm 15 frame (0.5s) cho chữ đỡ biến mất quá gắt
           let duration = getTrueDurationFrame(line.duration) + 15;
 
-          // Chống đè lên câu tiếp theo: Nếu thời gian hiện câu này chạm vào câu tiếp theo thì rút ngắn lại ngay lập tức
           if (visibleLyrics[index + 1]) {
             const nextStart = getTrueStartFrame(visibleLyrics[index + 1].start);
             if (startFrame + duration > nextStart) {

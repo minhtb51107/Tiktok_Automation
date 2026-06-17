@@ -98,7 +98,6 @@ export class ThreadsDramaService {
     return null;
   }
 
-  // 🔥 TÍNH NĂNG MỚI: TỰ ĐỘNG FETCH MEME MP4 TỪ GIPHY API (Thay thế Tenor)
   private async fetchMemeFromAPI(keyword: string, timestamp: number, id: string | number): Promise<string> {
     try {
         const apiKey = process.env.GIPHY_API_KEY;
@@ -106,11 +105,9 @@ export class ThreadsDramaService {
 
         this.logger.log(`🔎 Kho thiếu Meme! Đang gọi Giphy API tìm: [${keyword}]...`);
         
-        // Gọi Giphy API
         const url = `https://api.giphy.com/v1/gifs/search?api_key=${apiKey}&q=${encodeURIComponent(keyword)}&limit=1`;
         const res = await axios.get(url, { timeout: 10000 });
         
-        // Bóc tách cấu trúc dữ liệu của Giphy để lấy link MP4
         if (res.data.data && res.data.data.length > 0) {
             const mp4Url = res.data.data[0].images.original_mp4.mp4;
             
@@ -231,14 +228,12 @@ export class ThreadsDramaService {
     };
   }
 
-  // 🔥 NÂNG CẤP: Truyền thêm signal?: AbortSignal
   async processDramaVideo(threadUrl: string, onProgress?: (status: string) => Promise<void>, signal?: AbortSignal) {
     const timestamp = Date.now();
     const trashFiles: string[] = [];
     const scriptName = `threads_script_${timestamp}.json`;
     trashFiles.push(scriptName);
 
-    // 🛑 CHỐT CHẶN 1
     if (signal?.aborted) throw new Error('ABORTED');
 
     if (onProgress) await onProgress('🕷️ **Bước 1:** Đang cào dữ liệu Threads...');
@@ -266,7 +261,6 @@ export class ThreadsDramaService {
         return this.parseInteractionNumber(b.likeCount || b.likes) - this.parseInteractionNumber(a.likeCount || a.likes);
     });
 
-    // ÉP LẤY NHIỀU COMMENT ĐỂ VIDEO DÀI RA
     this.logger.log('🧠 Tự động nhặt comment CHỈ LẤY CHA từ trên xuống để đảm bảo video dài...');
     let totalWords = (rawData.post.text || '').split(/\s+/).length;
     let topComments = [];
@@ -302,7 +296,6 @@ export class ThreadsDramaService {
     }
     this.logger.log('=========================================================\n');
 
-    // 🛑 CHỐT CHẶN 2
     if (signal?.aborted) throw new Error('ABORTED');
 
     if (onProgress) await onProgress('🤖 **Bước 2:** Đóng gói nguyên liệu gửi cho GPT phân tích...');
@@ -357,7 +350,6 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
         if (aiCaption) captionRaw = aiCaption.replace(/^["']|["']$/g, '').trim();
     } catch(e) {}
 
-    // 🛑 CHỐT CHẶN 3
     if (signal?.aborted) throw new Error('ABORTED');
 
     if (onProgress) await onProgress('🎙️ **Bước 3:** Đang lồng tiếng và tải tài nguyên...');
@@ -375,7 +367,6 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
         throw new Error(`Tất cả API Giọng Đọc đều sập khi xử lý BÀI VIẾT GỐC. Bắt buộc hủy toàn bộ Video! (Chi tiết: ${error.message})`);
     }
 
-    // 🔥 GÁN MEME CHO BÀI GỐC
     let postMeme = this.validateMedia(postAi.meme, memeKeys);
     if (!postMeme && postAi.meme && postAi.meme.length > 2) {
         postMeme = await this.fetchMemeFromAPI(postAi.meme, timestamp, 'post');
@@ -401,7 +392,6 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
     const commentsProps = [];
 
     for (let i = 0; i < cmtHierarchy.length; i++) {
-        // 🛑 CHỐT CHẶN 4 (Tránh vòng lặp TTS nếu bị hủy)
         if (signal?.aborted) throw new Error('ABORTED');
 
         const { cmt } = cmtHierarchy[i];
@@ -417,7 +407,6 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
             const cAudio = await this.ttsService.generateAudio(cmtAi.ttsText, `cmt_${timestamp}_${i}.mp3`, cmtAi.gender);
             trashFiles.push(cAudio.audioSrc);
 
-            // 🔥 GÁN MEME CHO BÌNH LUẬN
             let cmtMeme = this.validateMedia(cmtAi.meme, memeKeys);
             if (!cmtMeme && cmtAi.meme && cmtAi.meme.length > 2) {
                 cmtMeme = await this.fetchMemeFromAPI(cmtAi.meme, timestamp, i);
@@ -445,7 +434,6 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
         } catch (e) { this.logger.warn(`✂️ BỎ QUA COMMENT SỐ ${i + 1}`); }
     }
 
-    // 🛑 CHỐT CHẶN 5
     if (signal?.aborted) throw new Error('ABORTED');
 
     totalFramesCalculated += 120; 
@@ -467,7 +455,6 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
     
     if (onProgress) await onProgress('🎬 **Bước 4:** Đang Render Remotion...');
 
-    // 🛑 TRUYỀN SIGNAL XUỐNG REMOTION
     await this.remotionRunnerService.renderThreadsVideo('ThreadsTopicVideo', scriptPath, outputFileName, signal);
     
     this.cleanupFiles(trashFiles);

@@ -15,14 +15,11 @@ export const KaraokeSubtitle: React.FC<{ words: any[] }> = ({ words }) => {
       flexWrap: 'wrap', gap: '12px', padding: '0 60px', zIndex: 40
     }}>
       {words.map((w, i) => {
-        // Kiểm tra xem chữ này có đang được đọc tại giây hiện tại không?
         const isActive = currentTime >= w.start && currentTime <= w.end;
         const isPast = currentTime > w.end;
         
-        // Chữ chưa đọc thì mờ, chữ đang đọc/đã đọc thì sáng
         const opacity = currentTime >= w.start ? 1 : 0.4;
         
-        // Đổi màu chữ đang đọc sang Indigo (Màu chuẩn của MindRevol)
         const color = isActive ? '#5865F2' : '#ffffff'; 
 
         return (

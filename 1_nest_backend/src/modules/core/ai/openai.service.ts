@@ -17,10 +17,8 @@ export class OpenaiService extends BaseAiService {
     
     const [systemPart, userPart] = prompt.split('---');
 
-    // 1. IN RAW REQUEST: Xem thực sự cái gì đang được nhét vào API
     this.logger.debug(`[OPENAI RAW REQUEST]: Đang gọi Model GPT-4o-mini...`);
 
-    // KHÔNG try-catch bao che ở đây. Chết ở đâu văng lỗi đỏ ở đó!
     const response = await this.openaiClient.chat.completions.create({
       model: 'gpt-4o-mini', // Sếp đang cấu hình mini ở đây
       messages: [
@@ -32,7 +30,6 @@ export class OpenaiService extends BaseAiService {
     
     const rawOutput = response.choices[0].message.content || '';
 
-    // 2. IN RAW RESPONSE: Trả về cái gì in nguyên xi cái đó, không parse!
     this.logger.warn(`\n========== [OPENAI RAW RESPONSE THỰC TẾ TỪ API] ==========\n${rawOutput}\n==========================================================\n`);
 
     return rawOutput;

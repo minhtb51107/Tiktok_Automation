@@ -9,11 +9,9 @@ import FormData = require('form-data');
 
 import { RemotionRunnerService } from '../remotion-runner/remotion-runner.service';
 import { WhisperService } from '../whisper/whisper.service';
-// ĐÃ SỬA ĐƯỜNG DẪN:
 import { GeminiService } from '../core/ai/gemini.service';
 import { ThreadsDramaService } from '../workflows/threads-drama/threads-drama.service';
 
-// ... (Giữ nguyên phần code bên dưới của sếp) ...
 
 @Injectable()
 export class WatcherService implements OnModuleInit {
@@ -25,7 +23,6 @@ export class WatcherService implements OnModuleInit {
     private readonly remotionRunner: RemotionRunnerService,
     private readonly whisperService: WhisperService,
     private readonly geminiService: GeminiService,
-    // THÊM DÒNG NÀY
     private readonly threadsTopicService: ThreadsDramaService, 
   ) {}
 
@@ -65,13 +62,11 @@ export class WatcherService implements OnModuleInit {
       const ext = path.extname(filePath).toLowerCase();
       const fileName = path.basename(filePath);
 
-      // Luồng Nhạc
       if (['.mp3', '.wav', '.jpg', '.jpeg', '.png'].includes(ext) && !filePath.includes('threads_inputs')) {
         this.logger.log(`📥 Phát hiện file nhạc/ảnh mới: ${fileName}`);
         this.checkAndProcess(musicDir, imageDir);
       }
       
-      // Luồng Threads
       if (ext === '.txt' && filePath.includes('threads_inputs')) {
         this.logger.log(`📥 Phát hiện file yêu cầu Threads mới: ${fileName}`);
         this.checkAndProcessThreads(threadsDir);
@@ -79,7 +74,6 @@ export class WatcherService implements OnModuleInit {
     });
   }
 
-  // HÀM XỬ LÝ NHẠC CŨ (Giữ nguyên của bạn)
   private checkAndProcess(musicDir: string, imageDir: string) {
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(async () => {
@@ -99,7 +93,6 @@ export class WatcherService implements OnModuleInit {
     }, 3000); 
   }
 
-  // --- THÊM HÀM XỬ LÝ THREADS ---
   private checkAndProcessThreads(threadsDir: string) {
     if (this.timer) clearTimeout(this.timer);
 
@@ -128,8 +121,6 @@ export class WatcherService implements OnModuleInit {
     }, 2000); 
   }
 
-  // ... (Hàm processNewMusic cũ của bạn giữ nguyên từ dòng 86 trở đi) ...
   private async processNewMusic(filePath: string, fileName: string, imageDir: string, imageFiles: string[]) {
-      // Dán nội dung cũ của bạn vào đây
   }
 }

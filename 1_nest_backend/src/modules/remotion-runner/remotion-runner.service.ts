@@ -7,7 +7,6 @@ import * as fs from 'fs';
 export class RemotionRunnerService {
   private readonly logger = new Logger(RemotionRunnerService.name);
 
-  // HÀM 1: RENDER VIDEO NHẠC
   async renderVideo(durationInFrames: number, originalFileName: string, imageFiles: string[] = [], songTitle: string = "", artist: string = "", signal?: AbortSignal): Promise<void> {
     this.logger.log(`🚀 Bắt đầu lệnh Render Video cho: ${originalFileName}`);
     
@@ -42,7 +41,6 @@ export class RemotionRunnerService {
         '--log=verbose' 
       ];
 
-      // Đã gắn signal
       const remotionProcess = spawn('npx', cliArgs, { cwd: remotionProjectDir, shell: true, stdio: 'inherit', signal });
 
       const cleanupTempFile = () => { if (fs.existsSync(tempPropsFilePath)) fs.unlinkSync(tempPropsFilePath); };
@@ -72,9 +70,6 @@ export class RemotionRunnerService {
     });
   }
 
-  // =======================================================================
-  // HÀM 2: RENDER THREADS VÀ PODCAST (MỞ KHÓA CHỤP ẢNH BÌA)
-  // =======================================================================
   async renderThreadsVideo(compositionId: string, propsFilePath: string, outputFileName: string, signal?: AbortSignal): Promise<void> {
     this.logger.log(`🚀 Bắt đầu lệnh Render Video Threads/Podcast: ${outputFileName}`);
     
@@ -91,7 +86,6 @@ export class RemotionRunnerService {
         '--log=info' 
       ];
 
-      // Đã gắn signal
       const remotionProcess = spawn('npx', cliArgs, { cwd: remotionProjectDir, shell: true, stdio: 'inherit', signal });
 
       remotionProcess.on('close', (code) => {

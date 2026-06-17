@@ -22,9 +22,6 @@ export class ThreadsCompilationService {
     private readonly remotionRunnerService: RemotionRunnerService,
   ) {}
 
-  // ====================================================================
-  // 🔥 CÁC HÀM XỬ LÝ MEDIA (AVATAR, ẢNH, SFX, MEME TỪ GIPHY)
-  // ====================================================================
   private async downloadAvatar(url: string, fileName: string, authorName: string): Promise<string> {
     const avatarsDir = path.join(process.cwd(), '../2_Remotion_Video/public/avatars');
     if (!fs.existsSync(avatarsDir)) fs.mkdirSync(avatarsDir, { recursive: true });
@@ -151,14 +148,12 @@ export class ThreadsCompilationService {
     }
   }
 
-  // 🔥 NÂNG CẤP: Truyền thêm signal?: AbortSignal
   async processCompilationVideo(threadUrls: string[], onProgress?: (status: string) => Promise<void>, signal?: AbortSignal) {
     const timestamp = Date.now();
     const trashFiles: string[] = [];
     const scriptName = `compilation_script_${timestamp}.json`;
     trashFiles.push(scriptName);
 
-    // 🛑 CHỐT CHẶN 1
     if (signal?.aborted) throw new Error('ABORTED');
 
     this.logger.log(`\n======================================================`);
@@ -171,7 +166,6 @@ export class ThreadsCompilationService {
     const seenTexts = new Set(); 
 
     for (let i = 0; i < threadUrls.length; i++) {
-      // 🛑 CHỐT CHẶN 2 (Tránh cào tiếp nếu bị hủy)
       if (signal?.aborted) throw new Error('ABORTED');
 
       const url = threadUrls[i];
@@ -214,7 +208,6 @@ export class ThreadsCompilationService {
       sfxDictString = Object.entries(sfxObj).map(([k, v]) => `${k}: ${v}`).join('\n');
     } catch (err) {}
 
-    // 🛑 CHỐT CHẶN 3
     if (signal?.aborted) throw new Error('ABORTED');
 
     this.logger.log(`🤖 Chuyển giao dữ liệu SẠCH cho AI dịch kịch bản & ghép Meme...`);
@@ -278,7 +271,6 @@ export class ThreadsCompilationService {
     const finalPostsProps = [];
 
     for (let i = 0; i < rawPosts.length; i++) {
-      // 🛑 CHỐT CHẶN 4 (Tránh làm TTS tiếp nếu bị hủy)
       if (signal?.aborted) throw new Error('ABORTED');
 
       try {
@@ -339,7 +331,6 @@ export class ThreadsCompilationService {
       throw new Error("Toàn bộ các bài đều lỗi âm thanh, không thể tổng hợp thành video!");
     }
 
-    // 🛑 CHỐT CHẶN 5
     if (signal?.aborted) throw new Error('ABORTED');
 
     totalFramesCalculated += 120;
@@ -363,7 +354,6 @@ export class ThreadsCompilationService {
     this.logger.log(`🎬 Bàn giao Script cho Remotion Render...`);
     if (onProgress) await onProgress('🎬 **Bước 4:** Đang xả khói Render Video...');
     
-    // 🛑 TRUYỀN SIGNAL XUỐNG REMOTION
     await this.remotionRunnerService.renderThreadsVideo('ThreadsTopicVideo', scriptPath, outputFileName, signal);
 
     this.logger.log(`🧹 Đang dọn dẹp file nháp...`);
