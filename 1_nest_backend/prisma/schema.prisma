@@ -39,3 +39,17 @@ model ThreadPost {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
+
+// Thêm đoạn này vào cuối file schema.prisma của bạn
+
+model AiAuditLog {
+  id           String   @id @default(uuid())
+  provider     String   // Lưu tên Service (VD: GeminiService, OpenaiService)
+  taskType     String?  // logic, data...
+  prompt       String   @db.Text
+  response     String?  @db.Text
+  durationMs   Int      // Thời gian chờ API (để theo dõi độ trễ)
+  isSuccess    Boolean  @default(true)
+  errorMessage String?  @db.Text
+  createdAt    DateTime @default(now())
+}

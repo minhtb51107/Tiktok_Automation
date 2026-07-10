@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { BaseAiService } from './base-ai.service';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { PrismaService } from '../../../prisma/prisma.service';
 
 @Injectable()
 export class GeminiService extends BaseAiService {
@@ -8,8 +9,8 @@ export class GeminiService extends BaseAiService {
   private currentKeyIndex = 0;
   private genAI: GoogleGenerativeAI;
 
-  constructor() {
-    super(GeminiService.name);
+  constructor(protected readonly prisma: PrismaService) {
+    super(GeminiService.name, prisma);
     const envKeys = process.env.GEMINI_API_KEY;
     if (envKeys) {
       this.apiKeys = envKeys.split(',').map(k => k.trim()).filter(Boolean);
@@ -18,13 +19,13 @@ export class GeminiService extends BaseAiService {
   }
 
   private rotateKey() {
-    if (this.apiKeys.length <= 1) return; // Nếu chỉ có 1 key thì không cần xoay
+    if (this.apiKeys.length <= 1) return; 
     this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
     this.genAI = new GoogleGenerativeAI(this.apiKeys[this.currentKeyIndex]);
     this.logger.warn(`🔄 Đã chuyển sang API Key Gemini số ${this.currentKeyIndex + 1}`);
   }
 
-  async generateCore(prompt: string, taskType: 'logic' | 'data' = 'logic'): Promise<string> {
+  protected async generateCore(prompt: string, taskType: 'logic' | 'data' = 'logic'): Promise<string> {
     if (this.apiKeys.length === 0) {
       throw new Error("Thiếu cấu hình GEMINI_API_KEY. Vui lòng kiểm tra file .env");
     }
@@ -32,13 +33,21 @@ export class GeminiService extends BaseAiService {
     const maxRetries = this.apiKeys.length;
     let attempt = 0;
     
-    const modelName = taskType === 'logic' ? 'gemini-3.5-flash' : 'gemini-3.1-flash-lite';
+    // Cập nhật model name (Google đã dùng gemini-1.5-flash)
+    const modelName = taskType === 'logic' ? 'gemini-1.5-flash' : 'gemini-1.5-flash-8b';
 
     while (attempt < maxRetries) {
       try {
-        this.logger.log(`🤖 Đang điều phối cho Gemini chạy model: [${modelName}]`);
+        this.logger.log(`[GEMINI API]: Đang gọi Model ${modelName}`);
         const model = this.genAI.getGenerativeModel({ model: modelName });
-        const res = await model.generateContent(prompt);
+        
+        // Cấu hình ép xuất JSON (Hỗ trợ từ Gemini 1.5)
+        const config = taskType === 'data' ? { generationConfig: { responseMimeType: "application/json" } } : {};
+
+        const res = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          ...config
+        });
         return res.response.text();
       } catch (error: any) {
         attempt++;
@@ -71,7 +80,6 @@ export class GeminiService extends BaseAiService {
         if (attempt >= this.apiKeys.length) break;
         
         this.rotateKey();
-        
         await new Promise(r => setTimeout(r, 2000));
       }
     }

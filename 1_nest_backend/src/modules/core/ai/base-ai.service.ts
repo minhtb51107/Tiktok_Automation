@@ -1,15 +1,69 @@
 import { Logger } from '@nestjs/common';
 import * as path from 'path';
 import * as fs from 'fs';
+import { PrismaService } from '../../../prisma/prisma.service';
 
 export abstract class BaseAiService {
   protected readonly logger: Logger;
-  constructor(serviceName: string) {
+  
+  constructor(
+    serviceName: string,
+    protected readonly prisma: PrismaService // Inject CSDL vào class cha
+  ) {
     this.logger = new Logger(serviceName);
   }
 
-  abstract generateCore(prompt: string, taskType?: 'logic' | 'data'): Promise<string>;
+  // CÁC CLASS CON BẮT BUỘC PHẢI IMPLEMENT HÀM NÀY BẰNG TỪ KHÓA 'protected'
+  protected abstract generateCore(prompt: string, taskType?: 'logic' | 'data'): Promise<string>;
 
+  // PHỄU GIÁM SÁT TOÀN BỘ HỆ THỐNG
+  public async generateText(prompt: string, taskType: 'logic' | 'data' = 'logic'): Promise<string> {
+    const startTime = Date.now();
+    
+    // Log console thu gọn (chỉ hiện 500 ký tự đầu để đỡ rác terminal)
+    this.logger.debug(`📥 AI INPUT [${taskType}]: ${prompt.substring(0, 500)}...`);
+
+    try {
+      // Đẩy việc gọi API thực tế cho class con (OpenAI, Groq...)
+      const result = await this.generateCore(prompt, taskType);
+      const duration = Date.now() - startTime;
+      
+      this.logger.debug(`📤 AI OUTPUT (${duration}ms)`);
+
+      // Lưu thành công vào CSDL (Chạy ngầm không dùng await để không làm chậm luồng chính)
+      this.prisma.aiAuditLog.create({
+        data: {
+          provider: this.constructor.name,
+          taskType,
+          prompt,
+          response: result,
+          durationMs: duration,
+          isSuccess: true,
+        }
+      }).catch(err => this.logger.error('Lỗi khi lưu log AI', err));
+
+      return result;
+    } catch (error: any) {
+      const duration = Date.now() - startTime;
+      this.logger.error(`❌ AI ERROR (${duration}ms): ${error.message}`);
+      
+      // Lưu lỗi vào CSDL
+      this.prisma.aiAuditLog.create({
+        data: {
+          provider: this.constructor.name,
+          taskType,
+          prompt,
+          durationMs: duration,
+          isSuccess: false,
+          errorMessage: error.message,
+        }
+      }).catch(err => this.logger.error('Lỗi khi lưu log AI', err));
+
+      throw error;
+    }
+  }
+
+  // Giữ nguyên hàm logic âm nhạc của sếp, nhưng sửa chỗ gọi AI thành this.generateText
   async generateLyricScript(whisperData: any, originalLyrics?: string) {
     this.logger.log(`Đang phân tích kịch bản âm thanh...`);
     const rawSegments = whisperData.segments.map((seg: any) => ({
@@ -48,7 +102,8 @@ export abstract class BaseAiService {
     let retries = 3;
     while (retries > 0) {
       try {
-        let aiResponse = await this.generateCore(prompt, 'data');
+        // QUAN TRỌNG: Đổi từ generateCore sang generateText để luồng nhạc cũng được ghi log
+        let aiResponse = await this.generateText(prompt, 'data'); 
         
         aiResponse = aiResponse.replace(/```json/g, '').replace(/```typescript/g, '').replace(/```/g, '').trim();
         const jsonStart = aiResponse.indexOf('{');
@@ -72,9 +127,5 @@ export abstract class BaseAiService {
         await new Promise(resolve => setTimeout(resolve, 3000));
       }
     }
-  }
-
-  async generateText(prompt: string, taskType: 'logic' | 'data' = 'logic'): Promise<string> {
-    return this.generateCore(prompt, taskType);
   }
 }

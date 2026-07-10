@@ -3,6 +3,7 @@ import { RemotionRunnerService } from '../../remotion-runner/remotion-runner.ser
 import { ScraperService } from '../../core/scraper/scraper.service';
 import { TtsService } from '../../core/tts/tts.service';
 import { WhisperService } from '../../whisper/whisper.service';
+import { AiService } from '../../core/ai/ai.service'; // Import AiService điều phối
 import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
@@ -15,7 +16,8 @@ export class ThreadsSeriousService {
     private readonly remotionRunnerService: RemotionRunnerService,
     private readonly scraperService: ScraperService,
     private readonly ttsService: TtsService,
-    private readonly whisperService: WhisperService
+    private readonly whisperService: WhisperService,
+    private readonly aiService: AiService // Inject AiService vào trạm quản lý quy trình
   ) {}
 
   private async downloadAvatar(url: string, fileName: string, authorName: string): Promise<string> {
@@ -67,7 +69,7 @@ export class ThreadsSeriousService {
       }
     }
     
-    return fallbackUrl; // Nếu cố tải 3 lần không được thì dùng luôn link web
+    return fallbackUrl;
   }
 
   private async getGifFromGiphy(keyword: string, timestamp: number, index: number): Promise<string> {
@@ -93,7 +95,7 @@ export class ThreadsSeriousService {
     return "";
   }
 
-  async processSeriousVideo(threadUrl: string, rawScript: string, onProgress?: (status: string) => Promise<void>, signal?: AbortSignal) {
+  async processSeriousVideo(threadUrl: string, rawScript?: string, onProgress?: (status: string) => Promise<void>, signal?: AbortSignal) {
     const timestamp = Date.now();
     const trashFiles: string[] = [];
     const scriptName = `serious_script_${timestamp}.json`;
@@ -108,6 +110,35 @@ export class ThreadsSeriousService {
     const realComments = rawData.comments || [];
 
     if (signal?.aborted) throw new Error('ABORTED');
+
+    // TỰ ĐỘNG DÙNG HUGGING FACE ĐỂ BIÊN SOẠN KỊCH BẢN NẾU ĐẦU VÀO TRỐNG
+    if (!rawScript || rawScript.trim() === "") {
+      if (onProgress) await onProgress(`🧠 **[HUGGING FACE]** Đang sử dụng mô hình mã nguồn mở biên tập nội dung truyện Serious...`);
+      
+      const prompt = `Bạn là một biên kịch xuất sắc chuyên viết kịch bản nội dung dạng "Serious Advice" / "Lời khuyên thâm thúy" cho nền tảng mạng xã hội TikTok.
+Hãy phân tích bài viết bài viết gốc trên Threads và các bình luận đi kèm dưới đây để tạo ra một câu chuyện liền mạch, sâu sắc, cuốn hút người nghe.
+
+QUY ĐỊNH ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
+Bạn phải bọc nội dung câu chuyện lại trong các thẻ khối <CHUNK type="..." author="..." keyword="...">Nội dung văn bản lồng tiếng</CHUNK> một cách chính xác. Không viết thêm lời chào hay giải thích gì bên ngoài các thẻ này.
+
+Ý nghĩa của các thuộc tính trong thẻ CHUNK:
+1. type: Chỉ được chọn một trong ba giá trị sau:
+   - "post": Sử dụng khi đoạn văn bản đó là nội dung chính của bài đăng gốc.
+   - "comment": Sử dụng khi đoạn văn bản đó trích dẫn hoặc phản hồi dựa trên một bình luận của người dùng.
+   - "narration": Sử dụng cho lời dẫn chuyện, kết luận thâm thúy, hoặc câu chuyển tiếp mượt mà giữa các đoạn.
+2. author: Điền chính xác tên (username) người viết (ví dụ bài gốc thì điền tên tác giả bài gốc, bình luận thì điền tên người bình luận). Nếu type là "narration", hãy bỏ qua thuộc tính này.
+3. keyword: Điền một từ khóa bằng tiếng Anh duy nhất miêu tả cảm xúc hoặc bối cảnh của câu đó để làm công cụ tìm kiếm ảnh động minh họa (ví dụ: 'depressed', 'thinking', 'regret', 'financial', 'success').
+
+DỮ LIỆU THREADS CÀO ĐƯỢC THỰC TẾ:
+- Tác giả bài đăng chính: ${realPost.author}
+- Nội dung bài đăng chính: ${realPost.text}
+- Danh sách bình luận đi kèm:
+${realComments.map((c: any) => `  + Người bình luận [${c.author}]: ${c.text}`).join('\n')}
+
+Hãy biên soạn kịch bản kịch tính và ý nghĩa ngay bây giờ:`;
+
+      rawScript = await this.aiService.askHuggingFace(prompt);
+    }
 
     if (onProgress) await onProgress(`🎙️ **[XƯỞNG PODCAST]** Đang ráp kịch bản AI với thông tin gốc...`);
 
@@ -132,7 +163,7 @@ export class ThreadsSeriousService {
         }
     }
 
-    if (chunks.length === 0) throw new Error("Không tìm thấy thẻ <CHUNK> nào! Sếp kiểm tra lại định dạng ChatGPT trả về nhé.");
+    if (chunks.length === 0) throw new Error("Không tìm thấy thẻ <CHUNK> nào! Sếp kiểm tra lại định dạng kịch bản sinh ra nhé.");
 
     if (onProgress) await onProgress('🎙️ **[XƯỞNG PODCAST]** 🎞️ Đang gọi TTS lồng tiếng và nhặt hình minh họa...');
 

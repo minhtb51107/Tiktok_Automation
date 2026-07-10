@@ -7,7 +7,11 @@ import { TtsService } from '../../core/tts/tts.service';
 import { WhisperModule } from '../../whisper/whisper.module';
 
 @Module({
-  imports: [AiModule, RemotionRunnerModule, WhisperModule],
+  imports: [
+    AiModule, // Đã có sẵn AiModule để cung cấp AiService
+    RemotionRunnerModule, 
+    WhisperModule
+  ],
   providers: [ThreadsSeriousService, ScraperService, TtsService],
   exports: [ThreadsSeriousService]
 })

@@ -346,7 +346,7 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
     let captionRaw = "Drama Threads quá cháy 🔥 #drama #giaitri #xuhuong #threads";
     const captionPrompt = `Viết 1 dòng Caption TikTok cực kỳ giật gân, tò mò (kèm 3 hashtag) dựa trên nội dung sau. TUYỆT ĐỐI KHÔNG CHÉP LẠI NỘI DUNG GỐC! Nội dung: "${rawData.post.text}"`;
     try {
-        let aiCaption = await this.aiService.askGemini(captionPrompt);
+        let aiCaption = await this.aiService.askOpenAI(captionPrompt);
         if (aiCaption) captionRaw = aiCaption.replace(/^["']|["']$/g, '').trim();
     } catch(e) {}
 

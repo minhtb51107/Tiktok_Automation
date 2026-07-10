@@ -1,40 +1,41 @@
 import { Injectable } from '@nestjs/common';
 import { BaseAiService } from './base-ai.service';
 import OpenAI from 'openai';
+import { PrismaService } from '../../../prisma/prisma.service';
 
 @Injectable()
 export class OpenaiService extends BaseAiService {
   private openaiClient: OpenAI;
 
-  constructor() {
-    super(OpenaiService.name);
+  constructor(protected readonly prisma: PrismaService) {
+    super(OpenaiService.name, prisma);
     const key = process.env.OPENAI_API_KEY;
     if (key) this.openaiClient = new OpenAI({ apiKey: key });
   }
 
-  async generateCore(prompt: string): Promise<string> {
+  protected async generateCore(prompt: string, taskType?: 'logic' | 'data'): Promise<string> {
     if (!this.openaiClient) throw new Error("Chưa cấu hình OpenAI Key");
     
     const [systemPart, userPart] = prompt.split('---');
+    const isData = taskType === 'data';
 
-    this.logger.debug(`[OPENAI RAW REQUEST]: Đang gọi Model GPT-4o-mini...`);
+    this.logger.debug(`[OPENAI API]: Đang gọi Model gpt-4o-mini (Task: ${taskType || 'logic'})...`);
 
     const response = await this.openaiClient.chat.completions.create({
-      model: 'gpt-4o-mini', // Sếp đang cấu hình mini ở đây
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPart ? systemPart.trim() : 'Bạn là trợ lý AI.' },
         { role: 'user', content: userPart ? userPart.trim() : prompt }
       ],
-      response_format: { type: 'json_object' }
+      // Nếu là data, tự động ép định dạng JSON chuẩn
+      response_format: isData ? { type: 'json_object' } : undefined,
+      temperature: isData ? 0.2 : 0.7,
     });
     
-    const rawOutput = response.choices[0].message.content || '';
-
-    this.logger.warn(`\n========== [OPENAI RAW RESPONSE THỰC TẾ TỪ API] ==========\n${rawOutput}\n==========================================================\n`);
-
-    return rawOutput;
+    return response.choices[0].message.content || (isData ? '{}' : '');
   }
 
+  // Hàm nhúng Vector giữ nguyên (không cần đưa vào phễu giám sát vì không trả về text)
   async generateEmbedding(text: string): Promise<number[]> {
     if (!this.openaiClient) throw new Error("Chưa cấu hình OpenAI Key");
     const response = await this.openaiClient.embeddings.create({

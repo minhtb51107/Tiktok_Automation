@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { GeminiService } from './gemini.service';
 import { GroqService } from './groq.service'; 
 import { OpenaiService } from './openai.service';
+import { HuggingFaceService } from './huggingface.service';
 
 @Injectable()
 export class AiService {
@@ -9,38 +10,49 @@ export class AiService {
 
   constructor(
     private readonly gemini: GeminiService, 
-    private readonly groq: GroqService,      // FIX: Đổi về private cho đồng bộ
-    private readonly openai: OpenaiService,  // FIX: Đổi về private cho đồng bộ
+    private readonly groq: GroqService,      
+    private readonly openai: OpenaiService,  
+    private readonly huggingface: HuggingFaceService,
   ) {}
 
+  async askHuggingFace(prompt: string): Promise<string> {
+    return await this.huggingface.generateText(prompt, 'logic');
+  }
+
+  // FIX LỖI TS2345: Đổi model thành 'data' hoặc 'logic'
   async askGroq(prompt: string, isComplex: boolean = false): Promise<string> {
-    const model = isComplex ? 'llama-3.3-70b-versatile' : 'llama-3.1-8b-instant';
-    return await this.groq.generateText(prompt, model); // Nếu BaseAiService của sếp dùng generateText
+    return await this.groq.generateText(prompt, isComplex ? 'data' : 'logic'); 
   }
 
   async askGemini(prompt: string): Promise<string> {
-    return await this.gemini.generateText(prompt);
+    return await this.gemini.generateText(prompt, 'logic');
   }
 
+  // FIX LỖI TS2445: generateCore -> generateText
   async askOpenAI(prompt: string): Promise<string> {
-    return await this.openai.generateCore(prompt);
+    return await this.openai.generateText(prompt, 'logic');
   }
 
   async generateJsonText(prompt: string): Promise<string> {
     try {
       this.logger.log(`[1] Đang dùng não GPT-4o để chấm điểm và phân tích...`);
-      return await this.openai.generateCore(prompt);
+      return await this.openai.generateText(prompt, 'data');
     } catch (e1: any) {
       this.logger.warn(`⚠️ GPT sập (${e1.message}). Gọi Llama 3 (Groq) cứu viện...`);
       try {
-        return await this.groq.generateCore(prompt);
+        return await this.groq.generateText(prompt, 'data');
       } catch (e2: any) {
-        this.logger.warn(`⚠️ Groq cũng sập (${e2.message}). Gọi Gemini cứu viện...`);
+        this.logger.warn(`⚠️ Groq sập (${e2.message}). Điều động Hugging Face Hub ứng cứu...`);
         try {
-          return await this.gemini.generateCore(prompt);
-        } catch (e3: any) {
-          this.logger.error(`❌ Toàn bộ API AI đều báo lỗi!`);
-          throw e3; 
+          return await this.huggingface.generateText(prompt, 'data');
+        } catch (eHf: any) {
+          this.logger.warn(`⚠️ Hugging Face cũng lỗi (${eHf.message}). Chuyển sang Gemini cứu viện cuối cùng...`);
+          try {
+            return await this.gemini.generateText(prompt, 'data');
+          } catch (e3: any) {
+            this.logger.error(`❌ Toàn bộ API AI bao gồm cả Hugging Face đều báo lỗi!`);
+            throw e3; 
+          }
         }
       }
     }
@@ -55,16 +67,16 @@ ${JSON.stringify(whisperData)}
 ${originalLyrics || "Không có"}`;
 
     try {
-      this.logger.log(`Đang dùng GPT tạo kịch bản âm nhạc...`);
-      return await this.openai.generateCore(prompt);
+      this.logger.log(`Đang dùng Hugging Face tạo kịch bản âm nhạc...`);
+      return await this.huggingface.generateText(prompt, 'data');
     } catch (e1: any) {
       try { 
-        this.logger.warn(`⚠️ GPT làm nhạc lỗi, chuyển sang Groq...`);
-        return await this.groq.generateCore(prompt); 
+        this.logger.warn(`⚠️ Hugging Face lỗi, chuyển sang GPT dự phòng...`);
+        return await this.openai.generateText(prompt, 'data'); 
       } 
       catch (e2: any) { 
-        this.logger.warn(`⚠️ Groq lỗi, chuyển sang Gemini...`);
-        return await this.gemini.generateCore(prompt); 
+        this.logger.warn(`⚠️ GPT lỗi, chuyển sang Gemini...`);
+        return await this.gemini.generateText(prompt, 'data'); 
       }
     }
   }
@@ -75,17 +87,17 @@ ${originalLyrics || "Không có"}`;
   }
 
   async askExpert(prompt: string): Promise<string> {
-    this.logger.log(`🧠 Gọi chuyên gia GPT-4o để xào nấu kịch bản...`);
-    return await this.openai.generateCore(prompt); 
+    this.logger.log(`🧠 Gọi chuyên gia Hugging Face để xào nấu kịch bản...`);
+    return await this.huggingface.generateText(prompt, 'logic'); 
   }
 
   async generateScoutJson(prompt: string): Promise<string> {
     try {
-      this.logger.log(`🕵️ Đang dùng Llama-3 (Groq) siêu rẻ làm Lính Trinh Sát...`);
-      return await this.groq.generateCore(prompt);
+      this.logger.log(`🕵️ Đang dùng Hugging Face làm Lính Trinh Sát...`);
+      return await this.huggingface.generateText(prompt, 'data');
     } catch (e1: any) {
-      this.logger.warn(`⚠️ Groq bận. Điều động Gemini (Free) đi săn thay thế...`);
-      return await this.gemini.generateCore(prompt);
+      this.logger.warn(`⚠️ Hugging Face bận. Điều động Gemini (Free) đi săn thay thế...`);
+      return await this.gemini.generateText(prompt, 'data');
     }
   }
 }
