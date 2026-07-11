@@ -3,7 +3,7 @@ import { RemotionRunnerService } from '../../remotion-runner/remotion-runner.ser
 import { ScraperService } from '../../core/scraper/scraper.service';
 import { TtsService } from '../../core/tts/tts.service';
 import { WhisperService } from '../../whisper/whisper.service';
-import { AiService } from '../../core/ai/ai.service'; // Import AiService điều phối
+import { AiService } from '../../core/ai/ai.service';
 import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
@@ -17,7 +17,7 @@ export class ThreadsSeriousService {
     private readonly scraperService: ScraperService,
     private readonly ttsService: TtsService,
     private readonly whisperService: WhisperService,
-    private readonly aiService: AiService // Inject AiService vào trạm quản lý quy trình
+    private readonly aiService: AiService
   ) {}
 
   private async downloadAvatar(url: string, fileName: string, authorName: string): Promise<string> {
@@ -95,7 +95,7 @@ export class ThreadsSeriousService {
     return "";
   }
 
-  async processSeriousVideo(threadUrl: string, rawScript?: string, onProgress?: (status: string) => Promise<void>, signal?: AbortSignal) {
+  async processSeriousVideo(threadUrls: string[], rawScript?: string, onProgress?: (status: string) => Promise<void>, signal?: AbortSignal) {
     const timestamp = Date.now();
     const trashFiles: string[] = [];
     const scriptName = `serious_script_${timestamp}.json`;
@@ -103,108 +103,196 @@ export class ThreadsSeriousService {
 
     if (signal?.aborted) throw new Error('ABORTED');
 
-    if (onProgress) await onProgress(`🎙️ **[XƯỞNG PODCAST]** Đang đi cào bài viết gốc để lấy Avatar thật...`);
-    const rawData = await this.scraperService.scrapeThreadsUrl(threadUrl);
+    if (onProgress) await onProgress(`🎙️ **[XƯỞNG PODCAST]** Đang tiến hành cào dữ liệu hàng loạt từ danh sách các URL bài viết...`);
     
-    const realPost = rawData.post;
-    const realComments = rawData.comments || [];
+    const scrapedResults = await Promise.all(
+      threadUrls.map(async (url) => {
+        try {
+          return await this.scraperService.scrapeThreadsUrl(url);
+        } catch (err: any) {
+          return null;
+        }
+      })
+    );
+
+    const validData = scrapedResults.filter((item): item is NonNullable<typeof item> => !!item);
+    if (validData.length === 0) throw new Error("Không cào được dữ liệu từ bất kỳ URL Threads nào sếp cung cấp.");
+
+    const realPost = validData[0].post;
+    const realComments = validData.flatMap(data => data.comments || []);
 
     if (signal?.aborted) throw new Error('ABORTED');
 
-    // TỰ ĐỘNG DÙNG HUGGING FACE ĐỂ BIÊN SOẠN KỊCH BẢN NẾU ĐẦU VÀO TRỐNG
     if (!rawScript || rawScript.trim() === "") {
-      if (onProgress) await onProgress(`🧠 **[HUGGING FACE]** Đang sử dụng mô hình mã nguồn mở biên tập nội dung truyện Serious...`);
+      if (onProgress) await onProgress('🧠 **[KOKORO OFFLINE]** Đang áp dụng Prompt biên kịch đan xen phân vai Podcast từ tư liệu sạch...');
       
-      const prompt = `Bạn là một biên kịch xuất sắc chuyên viết kịch bản nội dung dạng "Serious Advice" / "Lời khuyên thâm thúy" cho nền tảng mạng xã hội TikTok.
-Hãy phân tích bài viết bài viết gốc trên Threads và các bình luận đi kèm dưới đây để tạo ra một câu chuyện liền mạch, sâu sắc, cuốn hút người nghe.
+      const seenPostTexts = new Set<string>();
+      let aiInputContext = `DƯỚI ĐÂY LÀ NỘI DUNG CÁC BÀI VIẾT GỐC VÀ BÌNH LUẬN CHÍNH XÁC (ĐÃ LỌC TRÙNG LẶP):\n\n`;
+      let uniqueIndex = 1;
 
-QUY ĐỊNH ĐỊNH DẠNG ĐẦU RA BẮT BUỘC:
-Bạn phải bọc nội dung câu chuyện lại trong các thẻ khối <CHUNK type="..." author="..." keyword="...">Nội dung văn bản lồng tiếng</CHUNK> một cách chính xác. Không viết thêm lời chào hay giải thích gì bên ngoài các thẻ này.
+      validData.forEach((data, idx) => {
+        const currentUrl = threadUrls[idx];
+        const urlAuthorMatch = currentUrl.match(/@([a-zA-Z0-9._-]+)/);
+        const urlAuthor = urlAuthorMatch ? urlAuthorMatch[1] : '';
 
-Ý nghĩa của các thuộc tính trong thẻ CHUNK:
-1. type: Chỉ được chọn một trong ba giá trị sau:
-   - "post": Sử dụng khi đoạn văn bản đó là nội dung chính của bài đăng gốc.
-   - "comment": Sử dụng khi đoạn văn bản đó trích dẫn hoặc phản hồi dựa trên một bình luận của người dùng.
-   - "narration": Sử dụng cho lời dẫn chuyện, kết luận thâm thúy, hoặc câu chuyển tiếp mượt mà giữa các đoạn.
-2. author: Điền chính xác tên (username) người viết (ví dụ bài gốc thì điền tên tác giả bài gốc, bình luận thì điền tên người bình luận). Nếu type là "narration", hãy bỏ qua thuộc tính này.
-3. keyword: Điền một từ khóa bằng tiếng Anh duy nhất miêu tả cảm xúc hoặc bối cảnh của câu đó để làm công cụ tìm kiếm ảnh động minh họa (ví dụ: 'depressed', 'thinking', 'regret', 'financial', 'success').
+        if (data.post && data.post.author === urlAuthor) {
+          const text = data.post.text?.trim();
+          if (text && !seenPostTexts.has(text)) {
+            seenPostTexts.add(text);
+            aiInputContext += `[TƯ LIỆU SỐ ${uniqueIndex}] (Bài Gốc) [${data.post.author}]: "${data.post.text}"\n\n`;
+            uniqueIndex++;
+          }
+        } else if (data.comments && data.comments.length > 0) {
+          const targetComment = data.comments.find((cmt: any) => cmt.author === urlAuthor);
+          if (targetComment && targetComment.text) {
+            const text = targetComment.text.trim();
+            if (!seenPostTexts.has(text)) {
+              seenPostTexts.add(text);
+              aiInputContext += `[TƯ LIỆU SỐ ${uniqueIndex}] (Bình Luận) [${targetComment.author}]: "${targetComment.text}"\n\n`;
+              uniqueIndex++;
+            }
+          }
+        }
+      });
 
-DỮ LIỆU THREADS CÀO ĐƯỢC THỰC TẾ:
-- Tác giả bài đăng chính: ${realPost.author}
-- Nội dung bài đăng chính: ${realPost.text}
-- Danh sách bình luận đi kèm:
-${realComments.map((c: any) => `  + Người bình luận [${c.author}]: ${c.text}`).join('\n')}
+      const promptInstructions = `
+Bạn là một đạo diễn kiêm biên kịch xuất sắc cho kênh TikTok "Góc Nhìn Sự Nghiệp" (thể loại Podcast/Serious Advice sâu sắc).
+Nhiệm vụ của bạn là biến danh sách các tư liệu thô ở trên thành một kịch bản video hoàn chỉnh thông qua các thẻ khối <CHUNK>.
 
-Hãy biên soạn kịch bản kịch tính và ý nghĩa ngay bây giờ:`;
+⚠️ QUY TẮC PHÂN VAI VÀ GIỮ NGUYÊN VĂN PHONG (BẮT BUỘC):
+1. TUYỆT ĐỐI KHÔNG nhắc đến các tên nick, ID cá nhân (elisee.ph, austindox...) trong lời thoại lồng tiếng. Hãy dùng từ thay thế tự nhiên như "Một bạn trẻ tâm sự", "Có góc nhìn cho rằng",...
+2. Đối với các thẻ type="post" và type="comment" (Đại diện cho Card hiển thị trên màn hình): Bạn BẮT BUỘC phải giữ nguyên văn phong NGÔI THỨ NHẤT ("Mình", "Tôi", "Anh", "Chị") y hệt như tư liệu gốc. Hãy cô đọng, gọt giũa lại cho súc tích, thâm thúy nhưng phải là lời tự sự TRỰC TIẾP của nhân vật đó, không được viết kiểu tóm tắt hay kể hộ ở ngôi thứ ba.
+3. Đối với các thẻ type="narration" (Lời của người dẫn chuyện/Biên kịch): Đây MỚI LÀ NƠI bạn dùng giọng ngôi thứ ba để dẫn dắt, kết nối hoặc phân tích chuyên sâu (Ví dụ: "Hãy xem lời tâm sự của một bạn trẻ...", "Rõ ràng bài học ở đây là...").
 
-      rawScript = await this.aiService.askHuggingFace(prompt);
+CẤU TRÚC ĐAN XEN THEO TIẾN TRÌNH KỂ CHUYỆN:
+- Đoạn 1 (type="narration"): Đặt vấn đề bằng một câu Hook nhức nhối để giữ chân người xem (Không hiện Card).
+- Đoạn 2 (type="narration"): Câu dẫn dắt giới thiệu câu chuyện.
+- Đoạn 3 (type="post"): Lời tự sự trực tiếp của bài gốc (Xưng "Mit", "Tôi").
+- Đoạn 4 (type="narration"): Lời bình luận ngắn của biên kịch để chuyển mạch sang cụm giải pháp tài chính.
+- Đoạn 5 & 6 (Liên tiếp các thẻ type="comment"): Các góc nhìn thực tế từ các bình luận (Giữ văn phong NGÔI THỨ NHẤT "Mình", "Tôi").
+- Đoạn 7 (type="narration"): PHÂN TÍCH CHUYÊN SÂU cụm giải pháp trên bằng góc nhìn của người dẫn chuyện để đúc kết bản chất vấn đề.
+- Đoạn 8 & 9 (Liên tiếp các thẻ type="comment"): Các tư duy đường dài tiếp theo (Vẫn giữ văn phong NGÔI THỨ NHẤT "Mình", "Tôi").
+- Đoạn 10 (type="narration"): PHÂN TÍCH CHUYÊN SÂU cụm tư duy này, lồng ghép thực tế về áp lực/stress để tạo tính phản biện.
+- Đoạn 11 (type="narration"): KẾT BÀI bằng một lời khuyên triết lý, đúc kết tư duy đắt giá làm thông suốt tư tưởng người nghe.
+
+QUY ĐỊNH THUỘC TÍNH THẺ CHUNK Y HỆT TRƯỚC ĐÓ:
+<CHUNK type="post|comment|narration" author="Tên tác giả nếu có" keyword="Từ khóa tiếng Anh tìm video nền">Nội dung lời thoại</CHUNK>
+
+Hãy xuất kịch bản đỉnh cao ngay bây giờ:`;
+
+      const fullPrompt = `${aiInputContext}\n===\n${promptInstructions}`;
+      rawScript = await this.aiService.askHuggingFace(fullPrompt);
     }
 
-    if (onProgress) await onProgress(`🎙️ **[XƯỞNG PODCAST]** Đang ráp kịch bản AI với thông tin gốc...`);
+    if (onProgress) await onProgress('🎙行业 Đang chạy bộ Parser thích ứng để trích xuất cấu trúc kịch bản...');
 
     const chunks: any[] = [];
-    const regex = /<CHUNK\s+type="(.*?)"(?:\s+author="(.*?)")?(?:\s+keyword="(.*?)")?>([\s\S]*?)<\/CHUNK>/g;
-    let match;
+    const cleanScript = rawScript.replace(/```json|```xml|```/g, '').trim();
 
-    while ((match = regex.exec(rawScript)) !== null) {
-        const type = match[1];
-        const author = match[2] || "Người kể chuyện";
-        const keyword = match[3] || "none";
-        const textContent = match[4].trim();
+    if (cleanScript.startsWith('[') || cleanScript.startsWith('{')) {
+        try {
+            const jsonChunks = cleanScript.startsWith('{') ? JSON.parse(cleanScript).chunks : JSON.parse(cleanScript);
+            for (const item of jsonChunks) {
+                const type = item.type || 'narration';
+                const author = item.author || (type === 'post' ? realPost.author : "Người kể chuyện");
+                const keyword = item.keyword || "none";
+                const textContent = (item.content || item.text || "").trim();
 
-        if (textContent.length > 5) {
-            chunks.push({
-                text: textContent,      
-                caption: "",
-                cardToShow: (type === 'post' || type === 'comment') ? type : "none",
-                authorName: author,
-                gifKeyword: keyword
-            });
+                if (textContent.length > 5) {
+                    chunks.push({
+                        text: textContent,      
+                        type: type,
+                        authorName: author,
+                        gifKeyword: keyword
+                    });
+                }
+            }
+        } catch (e: any) {
+            this.logger.error("Lỗi parse kịch bản dạng JSON: " + (e?.message || e));
+        }
+    } 
+
+    if (chunks.length === 0) {
+        const regex = /<CHUNK\s+type="(.*?)"(?:\s+author="(.*?)")?(?:\s+keyword="(.*?)")?>([\s\S]*?)<\/CHUNK>/g;
+        let match;
+        while ((match = regex.exec(rawScript)) !== null) {
+            const type = match[1];
+            const author = match[2] || "Người kể chuyện";
+            const keyword = match[3] || "none";
+            const textContent = match[4].trim();
+
+            if (textContent.length > 5) {
+                chunks.push({
+                    text: textContent,      
+                    type: type,
+                    authorName: author,
+                    gifKeyword: keyword
+                });
+            }
         }
     }
 
-    if (chunks.length === 0) throw new Error("Không tìm thấy thẻ <CHUNK> nào! Sếp kiểm tra lại định dạng kịch bản sinh ra nhé.");
+    if (chunks.length === 0) throw new Error("Không thể bóc tách kịch bản! AI trả về sai cấu trúc kịch bản nghiêm trọng.");
 
-    if (onProgress) await onProgress('🎙️ **[XƯỞNG PODCAST]** 🎞️ Đang gọi TTS lồng tiếng và nhặt hình minh họa...');
+    if (onProgress) await onProgress('🎙️ **[KOKORO OFFLINE]** 🎞️ Đang tiến hành lồng tiếng và tạo sub Karaoke...');
 
     const localAvatar = await this.downloadAvatar(realPost.avatar, `ava_serious_${timestamp}.jpg`, realPost.author);
-    if (localAvatar.startsWith('avatars/')) trashFiles.push(localAvatar);
 
+    // BƯỚC 1: ÉP TOÀN BỘ KOKORO PYTHON SINH AUDIO SONG SONG BẰNG GPU (CỰC NHANH)
+    const audioGenerationResults = await Promise.all(
+        chunks.map(async (chunk, i) => {
+            if (signal?.aborted) return null;
+            try {
+                const voiceType = chunk.type === 'narration' ? 'female' : 'female'; 
+                const audioData = await this.ttsService.generateAudio(chunk.text, `serious_${timestamp}_${i}.mp3`, voiceType);
+                return { chunk, audioData, index: i };
+            } catch (e: any) {
+                this.logger.error(`Lỗi sinh audio đoạn ${i}: ${e?.message || e}`);
+                return null;
+            }
+        })
+    );
+
+    const validAudioResults = audioGenerationResults.filter(r => r !== null) as any[];
+
+    // BƯỚC 2: CHẠY WHISPER TUẦN TỰ TỪNG CÂU TRÊN CPU (MODEL TINY SIÊU NHẸ)
     const processedChunks = [];
-    for (let i = 0; i < chunks.length; i++) {
+    
+    for (const item of validAudioResults) {
         if (signal?.aborted) throw new Error('ABORTED');
-
-        const chunk = chunks[i];
+        
+        const { chunk, audioData, index } = item;
         try {
-            const audioData = await this.ttsService.generateAudio(chunk.text, `serious_${timestamp}_${i}.mp3`, 'male');
-            trashFiles.push(audioData.audioSrc);
+            if (audioData.audioSrc) trashFiles.push(audioData.audioSrc);
             const audioFullPath = path.join(process.cwd(), '../2_Remotion_Video/public', audioData.audioSrc);
 
             let whisperWords = [];
             try {
-               const fileName = path.basename(audioFullPath);
-               const whisperOutput = await this.whisperService.runWhisper(audioFullPath, fileName, signal); 
-               whisperWords = whisperOutput.words || whisperOutput; 
+                const fileName = path.basename(audioFullPath);
+                const whisperOutput = await this.whisperService.runWhisper(audioFullPath, fileName, signal); 
+                whisperWords = whisperOutput.words || whisperOutput; 
             } catch (wErr: any) {
-               if (wErr.message === 'ABORTED') throw wErr;
-               this.logger.warn(`Lỗi Whisper đoạn ${i}: Bỏ qua Karaoke.`);
+                if (wErr.message === 'ABORTED') throw wErr;
+                this.logger.warn(`Lỗi Whisper đoạn ${index}: Bỏ qua Karaoke.`);
             }
 
-            const gifUrl = await this.getGifFromGiphy(chunk.gifKeyword, timestamp, i);
+            const gifUrl = await this.getGifFromGiphy(chunk.gifKeyword, timestamp, index);
             if (gifUrl) trashFiles.push(gifUrl);
 
             let commentInfo = null;
-            if (chunk.cardToShow === 'post') {
+            const cardToShow = (chunk.type === 'post' || chunk.type === 'comment') ? chunk.type : 'none';
+
+            if (cardToShow === 'post') {
                 commentInfo = {
                     author: realPost.author,
                     avatar: localAvatar, 
                     text: realPost.text, 
                     timeAgo: realPost.timeAgo || "Vừa xong"
                 };
-            } else if (chunk.cardToShow === 'comment') {
+            } else if (cardToShow === 'comment') {
                 const realCmt = realComments.find((c: any) => c.author === chunk.authorName);
                 if (realCmt) {
-                    const cmtAvatar = await this.downloadAvatar(realCmt.avatar, `ava_temp_${Date.now()}_${i}.jpg`, realCmt.author);
+                    const cmtAvatar = await this.downloadAvatar(realCmt.avatar, `ava_temp_${timestamp}_${index}.jpg`, realCmt.author);
                     if (cmtAvatar.startsWith('avatars/')) trashFiles.push(cmtAvatar);
                     
                     commentInfo = {
@@ -214,17 +302,13 @@ Hãy biên soạn kịch bản kịch tính và ý nghĩa ngay bây giờ:`;
                         timeAgo: realCmt.timeAgo || "Vừa xong"
                     };
                 } else {
-                    const fallbackAvatar = await this.downloadAvatar('', `ava_temp_${Date.now()}_${i}.jpg`, chunk.authorName);
+                    const fallbackAvatar = await this.downloadAvatar('', `ava_temp_${timestamp}_${index}.jpg`, chunk.authorName);
                     if (fallbackAvatar.startsWith('avatars/')) trashFiles.push(fallbackAvatar);
-                    
-                    let displayText = chunk.text;
-                    const matchIntro = chunk.text.match(/^.*?[:"”]/);
-                    if (matchIntro) displayText = chunk.text.replace(matchIntro[0], '').replace(/["”]/g, '').trim();
 
                     commentInfo = {
                         author: chunk.authorName,
                         avatar: fallbackAvatar,
-                        text: displayText,
+                        text: chunk.text,
                         timeAgo: "Vừa xong"
                     };
                 }
@@ -232,16 +316,17 @@ Hãy biên soạn kịch bản kịch tính và ý nghĩa ngay bây giờ:`;
 
             processedChunks.push({
                 text: chunk.text, 
-                caption: chunk.caption,
-                cardToShow: chunk.cardToShow,
+                caption: "",
+                cardToShow: cardToShow,
                 commentInfo: commentInfo, 
                 gifImg: gifUrl,
                 audioSrc: audioData.audioSrc,
                 words: whisperWords,
                 durationInFrames: audioData.durationInFrames + 15
             });
-        } catch (e: any) { 
-            if (e.message === 'ABORTED') throw e; 
+
+        } catch (e: any) {
+            this.logger.error(`Lỗi xử lý hậu kỳ đoạn ${index}: ${e?.message || e}`);
         }
     }
 
@@ -250,7 +335,7 @@ Hãy biên soạn kịch bản kịch tính và ý nghĩa ngay bây giờ:`;
     const fallbackBgm = fs.existsSync(path.join(process.cwd(), '../2_Remotion_Video/public/bgm/sneaky.mp3')) ? "bgm/sneaky.mp3" : "bgm/lofi.mp3";
 
     const scriptData = {
-      tiktok_caption: "Kinh nghiệm thực tế từ người đi trước #xuhuong #kienthuc #baihoc", 
+      tiktok_caption: "Bài học đắt giá về tư duy tài chính và sự nghiệp. #xuhuong #phatbientuduy #baihoccuocsong", 
       bgm: fallbackBgm, 
       postInfo: { 
          author: realPost.author, 
@@ -268,10 +353,11 @@ Hãy biên soạn kịch bản kịch tính và ý nghĩa ngay bây giờ:`;
     const outputPath = path.resolve(process.cwd(), '../3_Storage_Assets/output_ready', outputFileName);
     
     try {
-        if (onProgress) await onProgress('🎙️ **[XƯỞNG PODCAST]** 🎬 Đã tải xong tài nguyên. Đang nung chảy GPU để Render...');
+        if (onProgress) await onProgress('🎙️ **[XƯỞNG PODCAST]** 🎬 Đã chuẩn bị xong toàn bộ tài nguyên. Tiến hành render video...');
         await this.remotionRunnerService.renderThreadsVideo('SeriousAdviceVideo', scriptPath, outputFileName, signal);
         return { success: true, videoName: outputFileName, outputPath: outputPath, caption: scriptData.tiktok_caption, script: scriptData };
     } finally {
+        if (localAvatar.startsWith('avatars/')) trashFiles.push(localAvatar);
         this.cleanupFiles(trashFiles);
     }
   }
@@ -279,6 +365,10 @@ Hãy biên soạn kịch bản kịch tính và ý nghĩa ngay bây giờ:`;
   private cleanupFiles(files: string[]) {
     files.forEach(file => {
       try {
+        if (file.includes('avatars/') || file.includes('ava_serious_')) {
+          return; 
+        }
+
         const fullPath = path.join(process.cwd(), '../2_Remotion_Video/public', file);
         if (fs.existsSync(fullPath) && !file.includes('default_avatar') && !file.includes('source_minecraft') && !file.includes('minecraft_parkour')) {
           fs.unlinkSync(fullPath);

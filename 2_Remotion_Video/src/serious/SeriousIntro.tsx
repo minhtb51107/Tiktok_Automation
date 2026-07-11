@@ -1,5 +1,5 @@
 import React from 'react';
-import { AbsoluteFill, Img, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, Img, spring, useCurrentFrame, useVideoConfig, staticFile } from 'remotion';
 
 export const SeriousIntro: React.FC<{ author: string, avatar: string, text: string, postInfo: any, hookText: string }> = ({ 
   author, avatar, text, postInfo, hookText 
@@ -12,6 +12,11 @@ export const SeriousIntro: React.FC<{ author: string, avatar: string, text: stri
   const cardOpacity = spring({ frame: frame - 5, fps, config: { damping: 20 }, from: 0, to: 1 });
   const boxScale = spring({ frame: frame - 12, fps, config: { damping: 12 }, from: 0.8, to: 1 });
   const boxOpacity = spring({ frame: frame - 12, fps, config: { damping: 20 }, from: 0, to: 1 });
+
+  // Xử lý an toàn: Nếu là link ngoài thì giữ nguyên, nếu là file local thì dùng staticFile
+  const safeAvatar = avatar?.startsWith('http') || avatar?.startsWith('data:') 
+    ? avatar 
+    : staticFile(avatar || 'avatars/default_avatar.jpg');
 
   return (
     <AbsoluteFill style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', padding: '100px 0 80px 0', fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
@@ -33,7 +38,8 @@ export const SeriousIntro: React.FC<{ author: string, avatar: string, text: stri
         boxShadow: '0 30px 60px rgba(0,0,0,0.6), 0 4px 12px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', gap: '20px', zIndex: 20
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-          <Img src={avatar} style={{ width: '80px', height: '80px', borderRadius: '50%', objectFit: 'cover' }} />
+          {/* ĐÃ CẬP NHẬT: Dùng safeAvatar */}
+          <Img src={safeAvatar} style={{ width: '80px', height: '80px', borderRadius: '50%', objectFit: 'cover' }} />
           <div>
             <div style={{ fontSize: '32px', fontWeight: '800', color: '#000000' }}>{author}</div>
             <div style={{ fontSize: '24px', color: '#71717a', marginTop: '4px' }}>{postInfo?.timeAgo || 'Vừa xong'}</div>

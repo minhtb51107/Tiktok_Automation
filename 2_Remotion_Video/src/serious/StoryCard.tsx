@@ -1,5 +1,5 @@
 import React from 'react';
-import { Img, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { Img, spring, useCurrentFrame, useVideoConfig, staticFile } from 'remotion';
 
 export const StoryCard: React.FC<{ info: any }> = ({ info }) => {
   const frame = useCurrentFrame();
@@ -9,6 +9,11 @@ export const StoryCard: React.FC<{ info: any }> = ({ info }) => {
   const opacity = spring({ frame, fps, config: { damping: 20 }, from: 0, to: 1 });
 
   if (!info) return null;
+
+  // Xử lý an toàn: Nếu là link ngoài thì giữ nguyên, nếu là file local thì dùng staticFile
+  const safeAvatar = info.avatar?.startsWith('http') || info.avatar?.startsWith('data:') 
+    ? info.avatar 
+    : staticFile(info.avatar || 'avatars/default_avatar.jpg');
 
   return (
     <div style={{
@@ -24,7 +29,8 @@ export const StoryCard: React.FC<{ info: any }> = ({ info }) => {
     }}>
       {/* Header tác giả */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '25px' }}>
-        <Img src={info.avatar} style={{ width: '80px', height: '80px', borderRadius: '50%', objectFit: 'cover' }} />
+        {/* ĐÃ CẬP NHẬT: Dùng safeAvatar */}
+        <Img src={safeAvatar} style={{ width: '80px', height: '80px', borderRadius: '50%', objectFit: 'cover' }} />
         <div>
           <div style={{ fontSize: '32px', fontWeight: '800', color: '#000000' }}>{info.author}</div>
           <div style={{ fontSize: '24px', color: '#71717a', marginTop: '4px' }}>{info.timeAgo || 'Vừa xong'}</div>

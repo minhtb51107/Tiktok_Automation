@@ -107,9 +107,9 @@ export class DiscordService implements OnModuleInit {
                             files: [previewPath]
                         });
                         setTimeout(() => { if(fs.existsSync(previewPath)) fs.unlinkSync(previewPath); }, 10000);
-                    } else {
+                     } else {
                         await reply.edit(`✅ **MIX THÀNH CÔNG!** Video quá nặng để ném lên Discord: \`${res?.videoName}\``);
-                    }
+                     }
                  }
             } else {
                  await reply.edit({ content: `✅ **MIX THÀNH CÔNG!** Nhưng không tìm thấy file vật lý.`, components: [] });
@@ -127,14 +127,21 @@ export class DiscordService implements OnModuleInit {
       }
 
       if (msgTextLower.startsWith('p ') || msgTextLower.startsWith('!p ') || msgTextLower.startsWith('p\n')) {
-        const urlMatch = msgText.match(/(https?:\/\/(?:www\.)?threads\.(net|com)\/[^\s]+)/i);
-        if (!urlMatch) {
-            await message.reply('❌ Sếp quên dán Link Threads gốc vào rồi! Phải có link thì bot mới đi cào Avatar thật và Ảnh thật được!');
+        // Tự động bóc tách và gom toàn bộ danh sách các link Threads được bom vào nội dung tin nhắn
+        const urlRegex = /(https?:\/\/(?:www\.)?threads\.(net|com)\/[^\s]+)/gi;
+        const urls = msgText.match(urlRegex)?.map(url => url.replace(/[\]\)',"\.]+$/, '')) || [];
+
+        if (urls.length === 0) {
+            await message.reply('❌ Sếp quên dán danh sách Link Threads gốc vào rồi!');
             return;
         }
         
-        const primaryUrl = urlMatch[0].replace(/[\]\)',"\.]+$/, '');
-        let scriptContent = msgText.replace(urlMatch[0], '').replace(/^(?:!p|p)\s*/i, '').trim();
+        const primaryUrl = urls[0];
+        let scriptContent = msgText;
+        
+        // Loại bỏ các URL khỏi nội dung text kịch bản để tránh AI bị hiểu nhầm dữ liệu
+        urls.forEach(u => { scriptContent = scriptContent.replace(u, ''); });
+        scriptContent = scriptContent.replace(/^(?:!p|p)\s*/i, '').trim();
         
         if (message.attachments.size > 0) {
             const attachment = message.attachments.first();
@@ -142,7 +149,7 @@ export class DiscordService implements OnModuleInit {
                 try {
                     const response = await fetch(attachment.url);
                     const fileText = await response.text();
-                    scriptContent += '\n' + fileText; // Gộp nội dung file vào kịch bản
+                    scriptContent += '\n' + fileText; 
                 } catch (err: any) {
                     await message.reply(`❌ Lỗi khi đọc file đính kèm của sếp: ${err.message}`);
                     return;
@@ -150,10 +157,7 @@ export class DiscordService implements OnModuleInit {
             }
         }
 
-        if (!scriptContent.includes('<CHUNK')) {
-            await message.reply('❌ Kịch bản thiếu thẻ `<CHUNK>`! (Sếp dán trực tiếp hoặc đính kèm file .txt chứa kịch bản nhé).');
-            return;
-        }
+        // ĐÃ GỠ BỎ ĐOẠN CHECK THIẾU THẺ <CHUNK> THEO YÊU CẦU CỦA SẾP ĐỂ THOẢI MÁI CHẠY LUỒNG TỰ ĐỘNG
 
         const jobId = `podcast_${Date.now()}`;
         const abortController = new AbortController();
@@ -164,12 +168,13 @@ export class DiscordService implements OnModuleInit {
         );
 
         const reply = await message.reply({ 
-            content: `⏳ **Đã nhận Lệnh!** Đang đi cào dữ liệu gốc từ Link và khớp với Kịch bản (đã gộp file)...`,
+            content: `⏳ **Đã nhận Lệnh Podcast hàng loạt!** Đang cào dữ liệu ${urls.length} bài và đẩy qua Xưởng để biên kịch kịch bản thâm thúy...`,
             components: [cancelRow]
         });
         
         try {
-            const res = await this.threadsSeriousService.processSeriousVideo(primaryUrl, scriptContent, async (status) => {
+            // ĐỒNG BỘ: Truyền toàn bộ mảng urls sạch cào được sang cho ThreadsSeriousService xử lý
+            const res = await this.threadsSeriousService.processSeriousVideo(urls, scriptContent, async (status) => {
                 await reply.edit({ content: status, components: [cancelRow] }).catch(() => {});
             }, abortController.signal);
             
@@ -186,7 +191,7 @@ export class DiscordService implements OnModuleInit {
                        threadId: uniqueId,
                        author: scriptData?.postInfo?.author || 'Anonymous',
                        avatarUrl: scriptData?.postInfo?.avatar || null,
-                       content: scriptData?.postInfo?.text || 'Video Podcast từ kịch bản',
+                       content: scriptData?.postInfo?.text || 'Video Podcast từ kịch bản tuyển tập',
                        url: primaryUrl, 
                        category: 'SERIOUS', 
                        caption: res?.caption || 'Video tâm sự #xuhuong #threads',
@@ -219,9 +224,9 @@ export class DiscordService implements OnModuleInit {
                             components: [row]
                         });
                         setTimeout(() => { if(fs.existsSync(previewPath)) fs.unlinkSync(previewPath); }, 10000);
-                    } else {
+                     } else {
                         await reply.edit({ content: `✅ **SẢN XUẤT THÀNH CÔNG!** Video quá nặng: \`${res?.videoName}\``, components: [row] });
-                    }
+                     }
                  }
             }
         } catch (err: any) {
@@ -312,9 +317,9 @@ export class DiscordService implements OnModuleInit {
                         components: [row]
                     });
                     setTimeout(() => { if(fs.existsSync(previewPath)) fs.unlinkSync(previewPath); }, 10000);
-                } else {
+                 } else {
                     await reply.edit({ content: `✅ **RENDER THÀNH CÔNG!** Video quá nặng: \`${res?.videoName}\``, components: [row] });
-                }
+                 }
              }
           } else {
              await reply.edit({ content: `✅ **RENDER THÀNH CÔNG!** Nhưng không tìm thấy file vật lý.`, components: [] });
@@ -340,7 +345,7 @@ export class DiscordService implements OnModuleInit {
         const controller = this.activeJobs.get(jobId);
         
         if (controller) {
-            await interaction.update({ content: '🛑 **Đang ra lệnh bóp cổ tiến trình...** Vui lòng đợi hệ thống dọn rác!', components: [] });
+            await interaction.update({ content: '🛑 **Đang ra lệnh dừng tiến trình...** Vui lòng đợi hệ thống dọn rác!', components: [] });
             controller.abort(); 
             this.activeJobs.delete(jobId);
         } else {
@@ -408,7 +413,7 @@ export class DiscordService implements OnModuleInit {
           
           const renderTask = isSerious 
             ? this.threadsSeriousService.processSeriousVideo(
-                post.url, 
+                [post.url], 
                 `<CHUNK type="post" author="${post.author}">\n${post.content}\n</CHUNK>\n<CHUNK type="analysis" keyword="thinking">\nĐó là một góc nhìn rất thú vị và thực tế.\n</CHUNK>`, 
                 async (status) => { await msg.edit({ content: status, components: [cancelRow] }).catch(() => {}); }, 
                 abortController.signal

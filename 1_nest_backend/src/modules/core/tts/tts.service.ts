@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
 import ffmpeg from 'fluent-ffmpeg'; 
+import { execSync } from 'child_process';
 
 @Injectable()
 export class TtsService {
@@ -84,57 +85,43 @@ export class TtsService {
     });
   }
 
-  async generateAudio(text: string, fileName: string, gender: string) {
-    const cleanText = this.cleanTextForTTS(text);
-    const chunks = this.smartChunkText(cleanText); 
-    const audioBuffers: Buffer[] = [];
+  async generateAudio(text: string, fileName: string, gender: string): Promise<{ audioSrc: string, durationInFrames: number }> {
+    const scriptPath = 'D:/LCOM108_NMLT/code/100_bai_code/tep_chua_python/Kokoro-Vietnamese/make_tts.py';
+    
+    // Thư mục lưu file mp3/wav public của Remotion
+    const outputDir = path.join(process.cwd(), '../2_Remotion_Video/public/threads_audio');
+    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+    
+    const filePath = path.join(outputDir, fileName);
+    const safeFilePath = filePath.replace(/\\/g, '/');
+    const cleanedText = text.replace(/"/g, '\\"').replace(/\n/g, ' ');
 
-    const fptVoice = gender === 'female' ? 'banmai' : 'leminh';
-    const viettelVoice = gender === 'female' ? 'hn-quynhanh' : 'sg-minhhoang';
-    const zaloVoiceId = gender === 'female' ? 1 : 3;
-
-    this.logger.log(`✂️ Đã băm thành ${chunks.length} câu. Bắt đầu ép FPT đọc bằng đúng 1 giọng nữ duy nhất...`);
-
-    for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-        let buffer: Buffer | null = null;
-
-        try {
-            buffer = await this.getFptBuffer(chunk, fptVoice, i + 1, chunks.length);
-        } catch (fptError: any) {
-            this.logger.warn(`⚠️ FPT kiệt sức hoàn toàn sau khi đã chờ hết mức ở câu ${i + 1}/${chunks.length}. Đẩy sang Viettel gánh vác...`);
-            try {
-                buffer = await this.getViettelBuffer(chunk, viettelVoice, i + 1, chunks.length);
-            } catch (viettelError: any) {
-                this.logger.warn(`⚠️ Viettel sập nốt. Gọi chốt chặn cuối cùng Zalo...`);
-                try {
-                    buffer = await this.getZaloBuffer(chunk, zaloVoiceId, i + 1, chunks.length);
-                } catch (zaloError: any) {
-                    this.logger.error(`❌ CHÍ MẠNG: Cả 3 nhà mạng đều từ chối đọc câu số ${i + 1}!`);
-                    throw new Error("Hệ thống TTS sập toàn diện.");
-                }
-            }
-        }
+    try {
+        this.logger.log(`🤖 [KOKORO OFFLINE] Đang xử lý cấu trúc câu bằng Kokoro Vietnamese: "${cleanedText.substring(0, 30)}..."`);
         
-        if (buffer) audioBuffers.push(buffer);
+        // Gọi trực tiếp python hệ thống để thực thi make_tts.py
+        const command = `python "${scriptPath}" "${cleanedText}" "${gender}" "${safeFilePath}"`;
+        const result = execSync(command).toString().trim();
 
-        if (i < chunks.length - 1) {
-            await new Promise(r => setTimeout(r, 1500));
+        if (result.includes("SUCCESS") && fs.existsSync(filePath)) {
+            // Tính toán tạm thời durationInFrames dựa trên độ dài ký tự hoặc dùng metadata
+            // Trung bình 1 từ đọc khoảng 3-4 frames (ở 30fps)
+            const wordCount = text.split(' ').length;
+            const durationInFrames = Math.max(90, wordCount * 12); 
+
+            return {
+                audioSrc: `threads_audio/${fileName}`,
+                durationInFrames: durationInFrames
+            };
+        } else {
+            throw new Error(`Python trả về lỗi: ${result}`);
         }
+    } catch (error: any) {
+        this.logger.error(`❌ Lỗi Kokoro: ${error.message}`);
+        // Nếu muốn an toàn, bạn có thể quăng khối try-catch cũ của FPT/Viettel/Zalo vào đây để làm dự phòng
+        throw error;
     }
-
-    const finalBuffer = Buffer.concat(audioBuffers);
-    const filePath = path.join(this.publicDir, fileName);
-    fs.writeFileSync(filePath, finalBuffer);
-
-    this.logger.log(`🔗 Đã hàn thành công file ${fileName} đồng nhất 1 giọng nói!`);
-
-    const durationSeconds = await this.getAudioDuration(filePath);
-    const durationInFrames = Math.ceil(durationSeconds * 60);
-
-    return { audioSrc: `threads_audio/${fileName}`, durationInFrames };
-  }
-
+}
   private async getFptBuffer(text: string, voice: string, part: number, total: number): Promise<Buffer> {
     if (this.fptApiKeys.length === 0) throw new Error("Chưa điền FPT_AI_KEY");
 
@@ -238,4 +225,37 @@ export class TtsService {
     }
     throw new Error("Lỗi tải MP3 Zalo");
   }
+
+  // Bên trong Class TtsService của bạn:
+private async getKokoroBuffer(text: string, gender: string, part: number, total: number): Promise<Buffer> {
+    // Đường dẫn tới file make_tts.py nằm trong thư mục bạn vừa clone
+    const scriptPath = 'D:/LCOM108_NMLT/code/100_bai_code/tep_chua_python/Kokoro-Vietnamese/make_tts.py';
+    
+    // Tạo một file tạm để Python lưu âm thanh vào đó
+    const tempFile = path.join(this.publicDir, `temp_part_${part}.wav`);
+
+    try {
+        // Thực thi lệnh Python: python make_tts.py "nội dung text" "female" "đường dẫn file"
+        // Sử dụng chuỗi bọc cẩn thận để tránh lỗi ký tự đặc biệt của tiếng Việt
+        const command = `python "${scriptPath}" "${text.replace(/"/g, '\\"')}" "${gender}" "${tempFile.replace(/\\/g, '/')}"`;
+        
+        this.logger.log(`🤖 [KOKORO OFFLINE] Đang ép Python xử lý câu ${part}/${total}...`);
+        const result = execSync(command).toString().trim();
+
+        if (result.includes("SUCCESS") && fs.existsSync(tempFile)) {
+            // Đọc file tạm đã tạo thành Buffer để cho NestJS nối file
+            const buffer = fs.readFileSync(tempFile);
+            
+            // Xóa file tạm đi cho sạch ổ cứng
+            fs.unlinkSync(tempFile); 
+            
+            return buffer;
+        } else {
+            throw new Error(`Python trả về lỗi: ${result}`);
+        }
+    } catch (error: any) {
+        if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+        throw new Error(`Lỗi thực thi Kokoro Python: ${error.message}`);
+    }
+}
 }

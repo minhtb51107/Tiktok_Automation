@@ -11,7 +11,7 @@ export class WhisperService {
   private readonly logger = new Logger(WhisperService.name);
 
   async runWhisper(audioPath: string, fileName: string, signal?: AbortSignal) {
-    this.logger.log(`🎧 Bắt đầu gọi Whisper nghe bài hát: ${fileName}...`);
+    this.logger.log(`🎧 Whisper đang bóc sub Karaoke câu: ${fileName}...`);
 
     const outputDir = path.resolve(process.cwd(), '..', '3_Storage_Assets', 'temp_whisper');
     if (!fs.existsSync(outputDir)) {
@@ -22,43 +22,36 @@ export class WhisperService {
     
     const absoluteAudioPath = path.resolve(audioPath);
     
-    const command = `whisper "${absoluteAudioPath}" --model base --language vi --output_format json --word_timestamps True --output_dir "${outputDir}"`;
+    // Ép chạy bằng CPU phối hợp với model tiny siêu nhẹ, triệt tiêu lỗi thiếu Driver CUDA của bộ thư viện torch hệ thống
+    const command = `whisper "${absoluteAudioPath}" --model tiny --language vi --output_format json --word_timestamps True --device cpu --output_dir "${outputDir}"`;
 
     try {
-      const { stdout, stderr } = await execAsync(command, { 
+      await execAsync(command, { 
           cwd: outputDir,
           env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
           signal: signal 
       });
       
-      this.logger.log(`[WHISPER ĐÃ NGHE ĐƯỢC]:\n${stdout.trim() || "🚨 TRỐNG TRƠN! (Nó không nghe thấy chữ nào)"}`);
-      
-      if (stderr && !stderr.includes('UserWarning')) {
-         this.logger.warn(`[WHISPER CẢNH BÁO]:\n${stderr}`);
-      }
-
       const baseName = path.parse(absoluteAudioPath).name; 
       let files = fs.readdirSync(outputDir);
       let jsonFileName = files.find(f => f.includes(baseName) && f.endsWith('.json'));
 
       if (!jsonFileName) {
-          throw new Error(`Whisper chạy xong nhưng TỪ CHỐI xuất file JSON vì không nhận ra tiếng người!`);
+          throw new Error(`Không tìm thấy file kết quả JSON của Whisper.`);
       }
 
       const jsonFilePath = path.join(outputDir, jsonFileName);
       const rawJsonData = fs.readFileSync(jsonFilePath, 'utf8');
       const whisperOutput = JSON.parse(rawJsonData);
 
-      this.logger.log(`📄 Đã bóc băng thành công và có chữ Karaoke cho ${fileName}!`);
+      this.logger.log(`✅ Bóc chữ Karaoke thành công: ${fileName}`);
       return whisperOutput;
 
     } catch (error: any) {
       if (error.name === 'AbortError' || signal?.aborted) {
-         this.logger.warn(`🛑 Tiến trình Whisper đã bị BÓP CỔ CHẾT TỨC TƯỞI (Lệnh dừng khẩn cấp)!`);
          throw new Error('ABORTED');
       }
-      
-      this.logger.error(`❌ Lỗi chí mạng khi bóc băng Whisper: ${error.message}`);
+      this.logger.error(`❌ Lỗi Whisper: ${error.message}`);
       throw error;
     }
   }

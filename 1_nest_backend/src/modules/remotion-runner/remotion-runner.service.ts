@@ -37,7 +37,7 @@ export class RemotionRunnerService {
         '--crf=22',
         `--props=${tempPropsFileName}`,
         '--timeout=120000', 
-        '--concurrency=1',  
+        '--concurrency=12',  // ÉP LUỒNG TỐI ĐA CHO RYZEN 5
         '--log=verbose' 
       ];
 
@@ -77,12 +77,14 @@ export class RemotionRunnerService {
       const remotionProjectDir = path.resolve(process.cwd(), '..', '2_Remotion_Video');
       const outputLocation = path.resolve(process.cwd(), '..', '3_Storage_Assets', 'output_ready', outputFileName);
 
-      const cliArgs = [
+const cliArgs = [
         'remotion', 'render', 'src/index.ts', compositionId, outputLocation,
         '--codec=h264',           
         '--audio-codec=aac',      
         '--pixel-format=yuv420p', 
         `--props=${propsFilePath}`,
+        '--timeout=120000', // 🔥 THÊM DÒNG NÀY: Mở rộng thời gian chờ lên 120 giây (gấp 4 lần) để Chrome kịp load video MP4
+        '--concurrency=8',  // 🔥 SỬA DÒNG NÀY: Giảm nhẹ từ 12 xuống 8 luồng để phần cứng không bị nghẽn cục bộ
         '--log=info' 
       ];
 
