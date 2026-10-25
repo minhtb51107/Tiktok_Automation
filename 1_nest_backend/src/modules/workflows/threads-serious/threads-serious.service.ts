@@ -1,9 +1,6 @@
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
-// Module:
-import { RemotionRunnerModule } from '../../core/remotion-runner/remotion-runner.module';
-
-// Service:
 import { RemotionRunnerService } from '../../core/remotion-runner/remotion-runner.service';
+import { REMOTION_COMPOSITION_IDS } from '../../core/remotion-runner/composition-ids';
 import { ScraperService } from '../../core/scraper/scraper.service';
 import { TtsService } from '../../core/tts/tts.service';
 import { AiService } from '../../core/ai/ai.service';
@@ -298,7 +295,7 @@ Nhiệm vụ của bạn là lấy 100% nội dung của bài viết gốc và c
     const outputPath = path.resolve(process.cwd(), '../3_Storage_Assets/output_ready', outputFileName);
 
     try {
-      await this.remotionRunnerService.renderThreadsVideo('SeriousAdviceVideo', scriptPath, outputFileName);
+      await this.remotionRunnerService.renderThreadsVideo(REMOTION_COMPOSITION_IDS.SERIOUS_ADVICE, scriptPath, outputFileName);
       
       await this.prisma.threadPost.update({
         where: { id: postId },

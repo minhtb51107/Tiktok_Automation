@@ -9,6 +9,8 @@ import * as path from 'path';
 import axios from 'axios';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { resolveBackendAssetPath } from '../../../common/paths/backend-assets';
+import { REMOTION_COMPOSITION_IDS } from '../../core/remotion-runner/composition-ids';
 
 const execAsync = promisify(exec);
 
@@ -247,11 +249,11 @@ export class ThreadsDramaService {
     let memeDictString = "", sfxDictString = "";
     let memeKeys: string[] = [], sfxKeys: string[] = [];
     try {
-      const memeObj = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'meme_dictionary.json'), 'utf8'));
+      const memeObj = JSON.parse(fs.readFileSync(resolveBackendAssetPath('meme_dictionary.json'), 'utf8'));
       memeKeys = Object.keys(memeObj);
       memeDictString = Object.entries(memeObj).map(([k, v]) => `${k}: ${v}`).join('\n'); 
 
-      const sfxObj = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'sfx_dictionary.json'), 'utf8'));
+      const sfxObj = JSON.parse(fs.readFileSync(resolveBackendAssetPath('sfx_dictionary.json'), 'utf8'));
       sfxKeys = Object.keys(sfxObj);
       sfxDictString = Object.entries(sfxObj).map(([k, v]) => `${k}: ${v}`).join('\n');
     } catch (err) {}
@@ -455,7 +457,7 @@ TRẢ VỀ DUY NHẤT 1 MẢNG JSON ĐÚNG ĐỊNH DẠNG SAU (CẤM LỜI BÌNH
     
     if (onProgress) await onProgress('🎬 **Bước 4:** Đang Render Remotion...');
 
-    await this.remotionRunnerService.renderThreadsVideo('ThreadsTopicVideo', scriptPath, outputFileName, signal);
+    await this.remotionRunnerService.renderThreadsVideo(REMOTION_COMPOSITION_IDS.THREADS_TOPIC, scriptPath, outputFileName, signal);
     
     this.cleanupFiles(trashFiles);
     

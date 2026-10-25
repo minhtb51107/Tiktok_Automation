@@ -1,5 +1,6 @@
 import { IsString, IsNotEmpty, IsOptional, IsArray, IsNumber } from 'class-validator';
 
+/** Dormant DTO reserved for the future structured Drama endpoint. */
 export class CreateThreadsDramaDto {
   @IsString()
   @IsNotEmpty({ message: 'URL bài viết Threads không được để trống' })

@@ -1,11 +1,14 @@
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { validateRuntimeConfig } from './config/runtime-config';
 
 async function bootstrap() {
+  const config = validateRuntimeConfig(process.env);
   const app = await NestFactory.create(AppModule);
 
   // 1. Tối ưu Bắt lỗi toàn cục (Global Exception Filter)
@@ -25,6 +28,6 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(3000);
+  await app.listen(config.port);
 }
 bootstrap();

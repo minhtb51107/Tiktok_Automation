@@ -2,6 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { spawn } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import { REMOTION_COMPOSITION_IDS } from './composition-ids';
+import type { RemotionCompositionId } from './composition-ids';
+import { assertRenderProcessSucceeded } from './render-process-outcome';
 
 @Injectable()
 export class RemotionRunnerService {
@@ -29,7 +32,7 @@ export class RemotionRunnerService {
       fs.writeFileSync(tempPropsFilePath, JSON.stringify(propsData));
       
       const cliArgs = [
-        'remotion', 'render', 'src/index.ts', 'ProLyricVideo', outputLocation,
+        'remotion', 'render', 'src/index.ts', REMOTION_COMPOSITION_IDS.TIKTOK_MUSIC, outputLocation,
         '--codec=h264',           
         '--audio-codec=aac',      
         '--pixel-format=yuv420p', 
@@ -49,13 +52,12 @@ export class RemotionRunnerService {
 
       remotionProcess.on('close', (code) => {
         cleanupTempFile();
-        if (signal?.aborted) return resolve();
-        if (code === 0) {
+        try {
+          assertRenderProcessSucceeded(code, signal?.aborted === true);
           this.logger.log(`✅ THÀNH CÔNG! Đã xuất video tại: ${outputLocation}`);
           resolve();
-        } else {
-          this.logger.error(`❌ Lỗi khi render: Tiến trình kết thúc với mã lỗi ${code}`);
-          reject(new Error(`Render failed with code ${code}`));
+        } catch (error) {
+          reject(error);
         }
       });
       
@@ -68,7 +70,7 @@ export class RemotionRunnerService {
     });
   }
 
-  async renderThreadsVideo(compositionId: string, propsFilePath: string, outputFileName: string, signal?: AbortSignal): Promise<void> {
+  async renderThreadsVideo(compositionId: RemotionCompositionId, propsFilePath: string, outputFileName: string, signal?: AbortSignal): Promise<void> {
     this.logger.log(`🚀 Bắt đầu lệnh Render Video Threads/Podcast: ${outputFileName}`);
     
     return new Promise((resolve, reject) => {
@@ -93,9 +95,8 @@ export class RemotionRunnerService {
       const remotionProcess = spawn('npx', cliArgs, { cwd: remotionProjectDir, shell: true, stdio: 'inherit', signal });
 
       remotionProcess.on('close', (code) => {
-        if (signal?.aborted) return resolve();
-
-        if (code === 0) {
+        try {
+          assertRenderProcessSucceeded(code, signal?.aborted === true);
           this.logger.log(`📸 Video xong! Đang chụp Thumbnail...`);
           const thumbFileName = outputFileName.replace('.mp4', '_thumbnail.jpg');
           const thumbLocation = path.resolve(process.cwd(), '..', '3_Storage_Assets', 'output_ready', thumbFileName);
@@ -108,14 +109,26 @@ export class RemotionRunnerService {
             '--log=error'
           ];
 
-          const stillProcess = spawn('npx', stillArgs, { cwd: remotionProjectDir, shell: true });
-          stillProcess.on('close', () => {
-             this.logger.log(`✅ THÀNH CÔNG RỰC RỠ! Đã xuất Video lên Card rời NVIDIA mượt mà!`);
-             resolve();
+          const stillProcess = spawn('npx', stillArgs, {
+            cwd: remotionProjectDir,
+            shell: true,
+            signal,
           });
-        } else {
-          this.logger.error(`❌ Lỗi khi render Threads: Tiến trình kết thúc với mã lỗi ${code}`);
-          reject(new Error(`Render failed with code ${code}`));
+          stillProcess.on('close', (stillCode) => {
+            try {
+              assertRenderProcessSucceeded(
+                stillCode,
+                signal?.aborted === true,
+              );
+              this.logger.log(`✅ THÀNH CÔNG RỰC RỠ! Đã xuất Video lên Card rời NVIDIA mượt mà!`);
+              resolve();
+            } catch (error) {
+              reject(error);
+            }
+          });
+          stillProcess.on('error', reject);
+        } catch (error) {
+          reject(error);
         }
       });
       

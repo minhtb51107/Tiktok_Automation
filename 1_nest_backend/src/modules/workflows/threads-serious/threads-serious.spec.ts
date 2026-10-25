@@ -2,14 +2,16 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ThreadsSeriousService } from './threads-serious.service';
 import { ScraperService } from '../../core/scraper/scraper.service';
 import { AiModule } from '../../core/ai/ai.module';
-import { RemotionRunnerModule } from '../../remotion-runner/remotion-runner.module';
-import { WhisperModule } from '../../whisper/whisper.module';
+import { RemotionRunnerModule } from '../../core/remotion-runner/remotion-runner.module';
+import { WhisperModule } from '../../core/ai/whisper/whisper.module';
 import { TtsService } from '../../core/tts/tts.service';
 import { PrismaModule } from '../../../prisma/prisma.module';
 import { Logger } from '@nestjs/common';
 import { describe, beforeAll, afterAll, it, expect } from '@jest/globals';
 import { AiService } from '../../core/ai/ai.service';
 
+// LIVE INTEGRATION TEST: intentionally excluded from the default Jest baseline.
+// It requires Threads, AI API, and database access and must only be run explicitly.
 describe('--- MÔ PHỎNG KIỂM TRA LUỒNG THREADS SERIOUS ---', () => {
   let module: TestingModule;
   let service: ThreadsSeriousService;
