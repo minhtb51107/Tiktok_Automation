@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { describe, expect, it } from '@jest/globals';
 import { REMOTION_COMPOSITION_IDS } from './composition-ids';
 
 describe('Remotion composition IDs', () => {

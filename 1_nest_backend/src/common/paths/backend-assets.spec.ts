@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { describe, expect, it } from '@jest/globals';
 import {
   getBackendAssetCandidates,
   resolveBackendAssetPath,

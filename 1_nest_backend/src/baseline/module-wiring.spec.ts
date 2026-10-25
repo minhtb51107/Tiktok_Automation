@@ -1,4 +1,5 @@
 import { MODULE_METADATA } from '@nestjs/common/constants';
+import { describe, expect, it } from '@jest/globals';
 import { AppModule } from '../app.module';
 import { AiModule } from '../modules/core/ai/ai.module';
 import { RemotionRunnerModule } from '../modules/core/remotion-runner/remotion-runner.module';

@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { describe, expect, it } from '@jest/globals';
 import {
   assertVideoJobTransition,
   canTransitionVideoJob,
