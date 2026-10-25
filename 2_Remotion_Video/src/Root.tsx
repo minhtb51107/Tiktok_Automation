@@ -4,6 +4,14 @@ import { ThreadsComposition } from './threads/ThreadsComposition';
 import { SeriousComposition } from './serious/SeriousComposition'; // BẮT BUỘC IMPORT
 import { VisualStoryComposition } from './visual-story/VisualStoryComposition';
 import { DUMMY_STORY_DATA } from './visual-story/dummyData';
+import {
+  FunnyTimelinePreview,
+  SeriousTimelinePreview,
+} from './video-pipeline/TimelinePreviewComposition';
+import {
+  EMPTY_FUNNY_PREVIEW,
+  EMPTY_SERIOUS_PREVIEW,
+} from './video-pipeline/preview-defaults';
 
 export const RemotionRoot: React.FC = () => {
   return (
@@ -66,6 +74,36 @@ export const RemotionRoot: React.FC = () => {
         width={1080}
         height={1920}
         defaultProps={{ data: DUMMY_STORY_DATA }}
+      />
+
+      <Composition
+        id="FunnyTimelinePreview"
+        component={FunnyTimelinePreview}
+        fps={60}
+        width={1080}
+        height={1920}
+        defaultProps={EMPTY_FUNNY_PREVIEW}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: props.timeline.totalFrames,
+          fps: props.timeline.fps,
+          width: props.timeline.width,
+          height: props.timeline.height,
+        })}
+      />
+
+      <Composition
+        id="SeriousTimelinePreview"
+        component={SeriousTimelinePreview}
+        fps={60}
+        width={1080}
+        height={1920}
+        defaultProps={EMPTY_SERIOUS_PREVIEW}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: props.timeline.totalFrames,
+          fps: props.timeline.fps,
+          width: props.timeline.width,
+          height: props.timeline.height,
+        })}
       />
     </>
   );

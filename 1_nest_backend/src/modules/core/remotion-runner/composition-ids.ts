@@ -3,6 +3,8 @@ export const REMOTION_COMPOSITION_IDS = {
   THREADS_TOPIC: 'ThreadsTopicVideo',
   SERIOUS_ADVICE: 'SeriousAdviceVideo',
   VISUAL_STORY: 'VisualStoryNewsReel',
+  FUNNY_TIMELINE_PREVIEW: 'FunnyTimelinePreview',
+  SERIOUS_TIMELINE_PREVIEW: 'SeriousTimelinePreview',
 } as const;
 
 export type RemotionCompositionId =
