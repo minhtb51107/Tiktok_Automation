@@ -3,7 +3,7 @@ import { AbsoluteFill, Series, Audio, Sequence, staticFile, Video } from 'remoti
 import { BigCaption } from './BigCaption'; 
 import { ThreadsCard } from './ThreadsCard'; 
 
-interface SeriousProps {   
+interface SeriousProps extends Record<string, unknown> {
   chunks: any[];   
   bgm: string;   
   postInfo: any;   

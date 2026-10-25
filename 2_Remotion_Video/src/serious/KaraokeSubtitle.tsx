@@ -16,8 +16,6 @@ export const KaraokeSubtitle: React.FC<{ words: any[] }> = ({ words }) => {
     }}>
       {words.map((w, i) => {
         const isActive = currentTime >= w.start && currentTime <= w.end;
-        const isPast = currentTime > w.end;
-        
         const opacity = currentTime >= w.start ? 1 : 0.4;
         
         const color = isActive ? '#5865F2' : '#ffffff'; 

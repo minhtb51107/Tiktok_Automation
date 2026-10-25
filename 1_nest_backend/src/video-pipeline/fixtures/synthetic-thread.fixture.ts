@@ -52,7 +52,7 @@ export const SYNTHETIC_AUDIO_ASSETS: AudioAsset[] = [
   {
     id: 'audio-funny-post',
     role: 'NARRATION',
-    uri: 'fixture://audio/funny-post.wav',
+    uri: 'fixtures/video-pipeline/audio/funny-post.wav',
     durationMs: 2200,
     durationSource: 'FIXTURE',
     availability: 'AVAILABLE',
@@ -61,7 +61,7 @@ export const SYNTHETIC_AUDIO_ASSETS: AudioAsset[] = [
   {
     id: 'audio-funny-comment-1',
     role: 'NARRATION',
-    uri: 'fixture://audio/funny-comment-1.wav',
+    uri: 'fixtures/video-pipeline/audio/funny-comment-1.wav',
     durationMs: 1800,
     durationSource: 'FIXTURE',
     availability: 'AVAILABLE',
@@ -70,7 +70,7 @@ export const SYNTHETIC_AUDIO_ASSETS: AudioAsset[] = [
   {
     id: 'audio-funny-comment-2',
     role: 'NARRATION',
-    uri: 'fixture://audio/funny-comment-2.wav',
+    uri: 'fixtures/video-pipeline/audio/funny-comment-2.wav',
     durationMs: 2500,
     durationSource: 'FIXTURE',
     availability: 'AVAILABLE',
@@ -79,7 +79,7 @@ export const SYNTHETIC_AUDIO_ASSETS: AudioAsset[] = [
   {
     id: 'audio-funny-comment-3',
     role: 'NARRATION',
-    uri: 'fixture://audio/funny-comment-3.wav',
+    uri: 'fixtures/video-pipeline/audio/funny-comment-3.wav',
     durationMs: 1600,
     durationSource: 'FIXTURE',
     availability: 'AVAILABLE',
@@ -88,7 +88,7 @@ export const SYNTHETIC_AUDIO_ASSETS: AudioAsset[] = [
   {
     id: 'audio-serious-post',
     role: 'NARRATION',
-    uri: 'fixture://audio/serious-post.wav',
+    uri: 'fixtures/video-pipeline/audio/serious-post.wav',
     durationMs: 4200,
     durationSource: 'FIXTURE',
     availability: 'AVAILABLE',
@@ -97,7 +97,7 @@ export const SYNTHETIC_AUDIO_ASSETS: AudioAsset[] = [
   {
     id: 'audio-serious-comment',
     role: 'NARRATION',
-    uri: 'fixture://audio/serious-comment.wav',
+    uri: 'fixtures/video-pipeline/audio/serious-comment.wav',
     durationMs: 3600,
     durationSource: 'FIXTURE',
     availability: 'AVAILABLE',
@@ -106,7 +106,7 @@ export const SYNTHETIC_AUDIO_ASSETS: AudioAsset[] = [
   {
     id: 'sfx-pop',
     role: 'SFX',
-    uri: 'fixture://audio/pop.wav',
+    uri: 'fixtures/video-pipeline/audio/pop.wav',
     durationMs: 250,
     durationSource: 'FIXTURE',
     availability: 'AVAILABLE',
@@ -117,17 +117,24 @@ export const SYNTHETIC_MEDIA_ASSETS: MediaAsset[] = [
   {
     id: 'meme-reaction',
     kind: 'MEME',
-    uri: 'fixture://media/reaction.png',
+    uri: 'fixtures/video-pipeline/meme-reaction.svg',
     availability: 'AVAILABLE',
     width: 640,
     height: 640,
   },
   {
+    id: 'funny-background',
+    kind: 'BACKGROUND',
+    uri: 'fixtures/video-pipeline/funny-background.svg',
+    availability: 'AVAILABLE',
+    width: 1080,
+    height: 1920,
+  },
+  {
     id: 'serious-background',
     kind: 'BACKGROUND',
-    uri: 'fixture://media/serious-background.mp4',
+    uri: 'fixtures/video-pipeline/serious-background.svg',
     availability: 'AVAILABLE',
-    durationMs: 12000,
     width: 1080,
     height: 1920,
   },

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="0 0 640 640">
+  <rect width="640" height="640" rx="72" fill="#ffcf4a"/>
+  <circle cx="320" cy="320" r="236" fill="#fff4c6"/>
+  <ellipse cx="238" cy="270" rx="36" ry="54" fill="#20242b"/>
+  <ellipse cx="402" cy="270" rx="36" ry="54" fill="#20242b"/>
+  <path d="M205 405 Q320 500 435 405" fill="none" stroke="#20242b" stroke-width="28" stroke-linecap="round"/>
+  <path d="M160 190 Q225 135 282 180M358 180 Q415 135 480 190" fill="none" stroke="#20242b" stroke-width="22" stroke-linecap="round"/>
+  <text x="320" y="590" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#20242b">SYNTHETIC FIXTURE</text>
+</svg>

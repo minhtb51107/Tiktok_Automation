@@ -1,4 +1,3 @@
-import React from 'react';
 import { AbsoluteFill, Sequence, Audio, useCurrentFrame, useVideoConfig, Img, staticFile, interpolate } from 'remotion';
 import { LYRIC_SCRIPT } from '../data/script';
 import { LyricLine } from './LyricLine';

@@ -7,16 +7,19 @@
   "private": true,
   "dependencies": {
     "@remotion/cli": "4.0.462",
+    "@remotion/player": "4.0.462",
+    "@remotion/tailwind-v4": "4.0.462",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "remotion": "4.0.462",
-    "@remotion/tailwind-v4": "4.0.462",
     "tailwindcss": "4.0.0"
   },
   "devDependencies": {
     "@remotion/eslint-config-flat": "4.0.462",
     "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
     "@types/web": "0.0.166",
+    "esbuild": "0.28.0",
     "eslint": "9.19.0",
     "prettier": "3.8.1",
     "typescript": "5.9.3"
@@ -24,6 +27,8 @@
   "scripts": {
     "dev": "remotion studio",
     "build": "remotion bundle",
+    "preview:build": "esbuild src/preview/main.tsx --bundle --outfile=preview-dist/app.js --format=iife --platform=browser --target=es2020 --sourcemap --jsx=automatic",
+    "preview:serve": "npm run preview:build && node scripts/preview-server.mjs",
     "upgrade": "remotion upgrade",
     "lint": "eslint src && tsc"
   },
