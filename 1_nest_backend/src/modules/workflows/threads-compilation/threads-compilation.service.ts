@@ -2,7 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AiService } from '../../core/ai/ai.service'; 
 import { ScraperService } from '../../core/scraper/scraper.service';
 import { TtsService } from '../../core/tts/tts.service';
-import { RemotionRunnerService } from '../../remotion-runner/remotion-runner.service';
+// Service:
+import { RemotionRunnerService } from '../../core/remotion-runner/remotion-runner.service';
 import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';

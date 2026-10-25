@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
 import { TiktokLyricsService } from './tiktok-lyrics.service';
-import { RemotionRunnerModule } from '../../remotion-runner/remotion-runner.module';
-import { WhisperModule } from '../../whisper/whisper.module';
-import { GeminiModule } from '../../core/ai/gemini.module';
+// Module:
+import { RemotionRunnerModule } from '../../core/remotion-runner/remotion-runner.module';
+import { WhisperModule } from '../../core/ai/whisper/whisper.module';
 
 @Module({
-  imports: [RemotionRunnerModule, WhisperModule, GeminiModule],
+  imports: [RemotionRunnerModule, WhisperModule],
   providers: [TiktokLyricsService],
   exports: [TiktokLyricsService]
 })

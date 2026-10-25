@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { AiModule } from '../../core/ai/ai.module';
 import { ScraperService } from '../../core/scraper/scraper.service';
 import { TtsService } from '../../core/tts/tts.service';
-import { RemotionRunnerModule } from '../../remotion-runner/remotion-runner.module';
+import { RemotionRunnerModule } from '../../core/remotion-runner/remotion-runner.module';
 import { ThreadsDramaController } from './threads-drama.controller';
 import { ThreadsDramaService } from './threads-drama.service';
 

@@ -3,7 +3,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
 import ffmpeg from 'fluent-ffmpeg'; 
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 @Injectable()
 export class TtsService {
@@ -41,35 +44,35 @@ export class TtsService {
   }
 
   private smartChunkText(text: string): string[] {
-      const rawSentences = text.split(/([.?!:\n]+)/); 
-      const chunks: string[] = [];
-      let currentChunk = '';
+    const rawSentences = text.split(/([.?!:\n]+)/); 
+    const chunks: string[] = [];
+    let currentChunk = '';
 
-      for (let i = 0; i < rawSentences.length; i++) {
-          const part = rawSentences[i];
-          currentChunk += part;
-          
-          if (part.match(/[.?!:\n]+/) || currentChunk.length >= 150) {
-              const cleaned = currentChunk.trim();
-              if (cleaned.length > 2) chunks.push(cleaned);
-              currentChunk = '';
-          }
-      }
-      if (currentChunk.trim().length > 2) chunks.push(currentChunk.trim());
+    for (let i = 0; i < rawSentences.length; i++) {
+      const part = rawSentences[i];
+      currentChunk += part;
       
-      const finalChunks: string[] = [];
-      for (const c of chunks) {
-          if (c.length > 200) {
-              const half = Math.floor(c.length / 2);
-              const spaceIndex = c.indexOf(' ', half);
-              const splitPoint = spaceIndex === -1 ? half : spaceIndex;
-              finalChunks.push(c.substring(0, splitPoint).trim());
-              finalChunks.push(c.substring(splitPoint).trim());
-          } else {
-              finalChunks.push(c);
-          }
+      if (part.match(/[.?!:\n]+/) || currentChunk.length >= 150) {
+        const cleaned = currentChunk.trim();
+        if (cleaned.length > 2) chunks.push(cleaned);
+        currentChunk = '';
       }
-      return finalChunks;
+    }
+    if (currentChunk.trim().length > 2) chunks.push(currentChunk.trim());
+    
+    const finalChunks: string[] = [];
+    for (const c of chunks) {
+      if (c.length > 200) {
+        const half = Math.floor(c.length / 2);
+        const spaceIndex = c.indexOf(' ', half);
+        const splitPoint = spaceIndex === -1 ? half : spaceIndex;
+        finalChunks.push(c.substring(0, splitPoint).trim());
+        finalChunks.push(c.substring(splitPoint).trim());
+      } else {
+        finalChunks.push(c);
+      }
+    }
+    return finalChunks;
   }
 
   private getAudioDuration(filePath: string): Promise<number> {
@@ -85,10 +88,12 @@ export class TtsService {
     });
   }
 
+  /**
+   * Sinh file audio cho kịch bản video dài bằng Kokoro TTS
+   */
   async generateAudio(text: string, fileName: string, gender: string): Promise<{ audioSrc: string, durationInFrames: number }> {
     const scriptPath = 'D:/LCOM108_NMLT/code/100_bai_code/tep_chua_python/Kokoro-Vietnamese/make_tts.py';
     
-    // Thư mục lưu file mp3/wav public của Remotion
     const outputDir = path.join(process.cwd(), '../2_Remotion_Video/public/threads_audio');
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
     
@@ -97,31 +102,73 @@ export class TtsService {
     const cleanedText = text.replace(/"/g, '\\"').replace(/\n/g, ' ');
 
     try {
-        this.logger.log(`🤖 [KOKORO OFFLINE] Đang xử lý cấu trúc câu bằng Kokoro Vietnamese: "${cleanedText.substring(0, 30)}..."`);
-        
-        // Gọi trực tiếp python hệ thống để thực thi make_tts.py
-        const command = `python "${scriptPath}" "${cleanedText}" "${gender}" "${safeFilePath}"`;
-        const result = execSync(command).toString().trim();
+      this.logger.log(`🤖 [KOKORO OFFLINE] Đang xử lý cấu trúc câu bằng Kokoro Vietnamese: "${cleanedText.substring(0, 30)}..."`);
+      
+      const command = `python "${scriptPath}" "${cleanedText}" "${gender}" "${safeFilePath}"`;
+      
+      // 🚀 BẮT LOG BẤT ĐỒNG BỘ: Không dùng execSync nữa
+      const { stdout, stderr } = await execAsync(command);
 
-        if (result.includes("SUCCESS") && fs.existsSync(filePath)) {
-            // Tính toán tạm thời durationInFrames dựa trên độ dài ký tự hoặc dùng metadata
-            // Trung bình 1 từ đọc khoảng 3-4 frames (ở 30fps)
-            const wordCount = text.split(' ').length;
-            const durationInFrames = Math.max(90, wordCount * 12); 
+      if (stderr) {
+        this.logger.warn(`⚠️ [PYTHON STDERR LOG]:\n${stderr}`);
+      }
 
-            return {
-                audioSrc: `threads_audio/${fileName}`,
-                durationInFrames: durationInFrames
-            };
-        } else {
-            throw new Error(`Python trả về lỗi: ${result}`);
-        }
+      if (stdout.includes("SUCCESS") && fs.existsSync(filePath)) {
+        const wordCount = text.split(' ').length;
+        const durationInFrames = Math.max(90, wordCount * 12); 
+
+        return {
+          audioSrc: `threads_audio/${fileName}`,
+          durationInFrames: durationInFrames
+        };
+      } else {
+        throw new Error(`Python không xuất ra chữ SUCCESS. Chi tiết Output: ${stdout}`);
+      }
     } catch (error: any) {
-        this.logger.error(`❌ Lỗi Kokoro: ${error.message}`);
-        // Nếu muốn an toàn, bạn có thể quăng khối try-catch cũ của FPT/Viettel/Zalo vào đây để làm dự phòng
-        throw error;
+      // 🚀 IN SẠCH TRACEBACK KHI PYTHON BỊ CRASH RA TERMINAL NESTJS
+      this.logger.error(`❌ [KOKORO CRASHED - STDOUT]:\n${error.stdout || 'Không có stdout'}`);
+      this.logger.error(`❌ [KOKORO CRASHED - TRACEBACK CHI TIẾT]:\n${error.stderr || error.message}`);
+      throw error;
     }
-}
+  }
+
+  /**
+   * Sinh Buffer âm thanh cho từng đoạn ngắn (Phục vụ việc nối file audio)
+   */
+  private async getKokoroBuffer(text: string, gender: string, part: number, total: number): Promise<Buffer> {
+    const scriptPath = 'D:/LCOM108_NMLT/code/100_bai_code/tep_chua_python/Kokoro-Vietnamese/make_tts.py';
+    const tempFile = path.join(this.publicDir, `temp_part_${part}.wav`);
+
+    try {
+      const command = `python "${scriptPath}" "${text.replace(/"/g, '\\"')}" "${gender}" "${tempFile.replace(/\\/g, '/')}"`;
+      
+      this.logger.log(`🤖 [KOKORO OFFLINE] Đang ép Python xử lý câu ${part}/${total}...`);
+      
+      // 🚀 BẮT LOG BẤT ĐỒNG BỘ
+      const { stdout, stderr } = await execAsync(command);
+
+      if (stderr) {
+        this.logger.warn(`⚠️ [PYTHON STDERR LOG - PART ${part}]:\n${stderr}`);
+      }
+
+      if (stdout.includes("SUCCESS") && fs.existsSync(tempFile)) {
+        const buffer = fs.readFileSync(tempFile);
+        fs.unlinkSync(tempFile); 
+        return buffer;
+      } else {
+        throw new Error(`Python không xuất ra chữ SUCCESS. Output: ${stdout}`);
+      }
+    } catch (error: any) {
+      if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+      // 🚀 IN SẠCH TRACEBACK PYTHON ĐOẠN NÀY RA TERMINAL
+      this.logger.error(`❌ [KOKORO CRASHED PART ${part} - STDOUT]:\n${error.stdout || 'Rỗng'}`);
+      this.logger.error(`❌ [KOKORO CRASHED PART ${part} - TRACEBACK CHI TIẾT]:\n${error.stderr || error.message}`);
+      throw new Error(`Lỗi thực thi Kokoro Python: ${error.stderr || error.message}`);
+    }
+  }
+
+  // ==================== CÁC PROVIDER DỰ PHÒNG ONLINE (FPT, VIETTEL, ZALO) ====================
+
   private async getFptBuffer(text: string, voice: string, part: number, total: number): Promise<Buffer> {
     if (this.fptApiKeys.length === 0) throw new Error("Chưa điền FPT_AI_KEY");
 
@@ -174,7 +221,7 @@ export class TtsService {
         lastErrorMsg = this.extractError(err);
         this.currentFptKeyIndex = (this.currentFptKeyIndex + 1) % this.fptApiKeys.length;
         attempt++;
-        downloadRetries = 60; // Reset lại lòng kiên nhẫn cho Key tiếp theo
+        downloadRetries = 60;
       }
     }
     throw new Error(`FPT bế tắc: ${lastErrorMsg}`);
@@ -225,37 +272,4 @@ export class TtsService {
     }
     throw new Error("Lỗi tải MP3 Zalo");
   }
-
-  // Bên trong Class TtsService của bạn:
-private async getKokoroBuffer(text: string, gender: string, part: number, total: number): Promise<Buffer> {
-    // Đường dẫn tới file make_tts.py nằm trong thư mục bạn vừa clone
-    const scriptPath = 'D:/LCOM108_NMLT/code/100_bai_code/tep_chua_python/Kokoro-Vietnamese/make_tts.py';
-    
-    // Tạo một file tạm để Python lưu âm thanh vào đó
-    const tempFile = path.join(this.publicDir, `temp_part_${part}.wav`);
-
-    try {
-        // Thực thi lệnh Python: python make_tts.py "nội dung text" "female" "đường dẫn file"
-        // Sử dụng chuỗi bọc cẩn thận để tránh lỗi ký tự đặc biệt của tiếng Việt
-        const command = `python "${scriptPath}" "${text.replace(/"/g, '\\"')}" "${gender}" "${tempFile.replace(/\\/g, '/')}"`;
-        
-        this.logger.log(`🤖 [KOKORO OFFLINE] Đang ép Python xử lý câu ${part}/${total}...`);
-        const result = execSync(command).toString().trim();
-
-        if (result.includes("SUCCESS") && fs.existsSync(tempFile)) {
-            // Đọc file tạm đã tạo thành Buffer để cho NestJS nối file
-            const buffer = fs.readFileSync(tempFile);
-            
-            // Xóa file tạm đi cho sạch ổ cứng
-            fs.unlinkSync(tempFile); 
-            
-            return buffer;
-        } else {
-            throw new Error(`Python trả về lỗi: ${result}`);
-        }
-    } catch (error: any) {
-        if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
-        throw new Error(`Lỗi thực thi Kokoro Python: ${error.message}`);
-    }
-}
 }

@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Param, Delete, Logger, Body } from '@nestjs/common';
+import { Controller, Get, Post, Param, Delete, Logger, Body, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { ThreadsDramaService } from './threads-drama.service';
+import { GenerateThreadsDto } from './dto/generate-threads.dto';
 
 @Controller('api/threads')
 export class ThreadsDramaController {
@@ -12,71 +13,58 @@ export class ThreadsDramaController {
   ) {}
 
   @Post('generate')
-  async generate(@Body('url') url: string) {
-    if (!url) {
-      return { success: false, message: 'Vui lòng cung cấp url bài viết Threads' };
-    }
+  async generate(@Body() dto: GenerateThreadsDto) {
+    // Không cần if(!url) nữa! ValidationPipe ở main.ts sẽ tự động bắt lỗi và báo 400 nếu thiếu url.
+    this.logger.log(`🛠️ Bắt đầu xử lý thủ công cho URL: ${dto.url}`);
     
-    this.logger.log(`🛠️ Bắt đầu xử lý thủ công cho URL: ${url}`);
-    
-    try {
-      const result = await this.threadsTopicService.processDramaVideo(url);
-      return result;
-    } catch (error: any) {
-      this.logger.error(`❌ Lỗi xử lý thủ công: ${error.message}`);
-      return { success: false, message: error.message };
-    }
+    // Không cần try-catch trả về { success: false } thủ công.
+    // Nếu có lỗi, HttpExceptionFilter toàn cục sẽ tự bắt và trả về JSON chuẩn.
+    return this.threadsTopicService.processDramaVideo(dto.url);
   }
 
   @Get('pending')
   async getPendingPosts() {
-    try {
-      const posts = await this.prisma.threadPost.findMany({
-        where: { isApproved: false },
-        orderBy: { aiScore: 'desc' }, // Ưu tiên bài điểm cao lên đầu
-      });
-      return { success: true, data: posts };
-    } catch (error: any) {
-      return { success: false, message: error.message };
-    }
+    // Không cần try-catch thủ công. TransformInterceptor sẽ tự bọc kết quả thành { success: true, data: posts }
+    const posts = await this.prisma.threadPost.findMany({
+      where: { isApproved: false },
+      orderBy: { aiScore: 'desc' },
+    });
+    return posts;
   }
 
   @Post('approve/:id')
   async approveAndRender(@Param('id') id: string) {
-    try {
-      const post = await this.prisma.threadPost.findUnique({ where: { id } });
-      if (!post) throw new Error('Không tìm thấy bài viết này trong kho!');
+    const post = await this.prisma.threadPost.findUnique({ where: { id } });
+    
+    // Ném ngoại lệ chuẩn thay vì throw new Error thường
+    if (!post) {
+      throw new NotFoundException('Không tìm thấy bài viết này trong kho!');
+    }
 
-      this.logger.log(`🎬 Đã duyệt bài [${post.aiScore} điểm]. Bắt đầu quá trình Render Video...`);
+    this.logger.log(`🎬 Đã duyệt bài [${post.aiScore} điểm]. Bắt đầu quá trình Render Video...`);
 
+    await this.prisma.threadPost.update({
+      where: { id },
+      data: { isApproved: true },
+    });
+
+    // Chạy ngầm tiến trình render (Nên chuyển sang Queue ở Mục 6 sau này)
+    this.threadsTopicService.processDramaVideo(post.url).then(async (res) => {
+      this.logger.log(`✅ Render thành công video: ${res?.videoName}`);
       await this.prisma.threadPost.update({
         where: { id },
-        data: { isApproved: true },
+        data: { isRendered: true },
       });
+    }).catch((err) => {
+      this.logger.error(`❌ Render thất bại cho bài ${id}: ${err.message}`);
+    });
 
-      this.threadsTopicService.processDramaVideo(post.url).then(async (res) => {
-        this.logger.log(`✅ Render thành công video: ${res?.videoName}`);
-        await this.prisma.threadPost.update({
-          where: { id },
-          data: { isRendered: true },
-        });
-      }).catch((err) => {
-        this.logger.error(`❌ Render thất bại cho bài ${id}: ${err.message}`);
-      });
-
-      return { success: true, message: 'Đã đưa vào hàng đợi Render Video!' };
-    } catch (error: any) {
-      return { success: false, message: error.message };
-    }
+    return { message: 'Đã đưa vào hàng đợi Render Video!' };
   }
 
   @Delete('reject/:id')
   async rejectPost(@Param('id') id: string) {
-    try {
-      await this.prisma.threadPost.delete({ where: { id } });
-      return { success: true, message: 'Đã xóa bài viết khỏi kho.' };
-    } catch (error: any) {
-      return { success: false, message: error.message };
-    }
+    await this.prisma.threadPost.delete({ where: { id } });
+    return { message: 'Đã xóa bài viết khỏi kho.' };
   }
 }
