@@ -5,7 +5,7 @@ import puppeteer from 'puppeteer';
 export class ScraperService {
   private readonly logger = new Logger(ScraperService.name);
 
-  async scrapeThreadsUrl(url: string, fetchComments: boolean = true) {
+  async scrapeThreadsUrl(url: string, fetchComments: boolean = true, controlled = false) {
     const cleanUrl = url.split('?')[0];
     const targetUrl = cleanUrl.replace('threads.com', 'threads.net');
     this.logger.log(`🔍 Bắt đầu cào URL chuẩn: ${targetUrl}`);
@@ -15,6 +15,18 @@ export class ScraperService {
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-notifications', '--lang=vi-VN,vi']
     });
     const page = await browser.newPage();
+    if (controlled) {
+      await page.setRequestInterception(true);
+      page.on('request', request => {
+        try {
+          const target = new URL(request.url());
+          const allowed = ['threads.net', 'threads.com', 'fbcdn.net', 'cdninstagram.com', 'instagram.com'];
+          const safe = target.protocol === 'https:' && !target.port &&
+            allowed.some(domain => target.hostname === domain || target.hostname.endsWith('.' + domain));
+          void (safe ? request.continue() : request.abort());
+        } catch { void request.abort(); }
+      });
+    }
     
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'vi-VN,vi;q=0.9' });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');

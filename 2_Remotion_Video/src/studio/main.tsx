@@ -1,0 +1,590 @@
+import { useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+import type {
+  StudioSession,
+  StudioItem,
+} from "../../../1_nest_backend/src/studio/studio.contracts";
+import type { VideoPreviewProps } from "../../../1_nest_backend/src/video-pipeline/contracts";
+import "./studio.css";
+import { UrlRows, MetadataEditor, MediaPreview } from "./SourceReview";
+import { StageReportPanel } from "./StageReportPanel";
+
+// Future editor passes this boundary to the existing SeriousTimelinePreview + Player.
+export type StudioPreviewInput = VideoPreviewProps;
+async function api<T>(url: string, method = "GET", body?: unknown): Promise<T> {
+  const r = await fetch("/api/studio/sessions" + url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const json = await r.json();
+  if (!r.ok)
+    throw new Error(
+      Array.isArray(json.message)
+        ? json.message.join(", ")
+        : json.message || json.error?.message || "Request failed",
+    );
+  return json.data ?? json;
+}
+function App() {
+  const [sessions, setSessions] = useState<{ id: string; title: string }[]>([]),
+    [session, setSession] = useState<StudioSession | null>(null);
+  const [step, setStep] = useState("Source"),
+    [busy, setBusy] = useState(false),
+    [notice, setNotice] = useState(""),
+    [error, setError] = useState(""),
+    [dirty, setDirty] = useState(false);
+  const [manual, setManual] = useState(false),
+    [manualUrl, setManualUrl] = useState(""),
+    [text, setText] = useState(""),
+    [comments, setComments] = useState(""),
+    [author, setAuthor] = useState("");
+  const refresh = async () => setSessions(await api(""));
+  useEffect(() => {
+    refresh().catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (dirty) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await fn();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const accept = (s: StudioSession) => {
+    setSession(s);
+    setDirty(false);
+  };
+  const canLeave = () => !dirty || window.confirm("Discard unsaved edits?");
+  const save = async () => {
+    if (!session) return;
+    accept(
+      await api("/" + session.id, "PUT", {
+        revision: session.revision,
+        title: session.title,
+        items: session.items.map(
+          ({ id, selected, displayText, spokenText, metadata }) => ({
+            id,
+            selected,
+            displayText,
+            spokenText,
+            metadata,
+          }),
+        ),
+      }),
+    );
+    await refresh();
+    setNotice("Project saved locally.");
+  };
+  const update = (id: string, patch: Partial<StudioItem>) => {
+    if (!session) return;
+    setSession({
+      ...session,
+      items: session.items.map((i) => (i.id === id ? { ...i, ...patch } : i)),
+    });
+    setDirty(true);
+  };
+  const move = (id: string, direction: number) => {
+    if (!session) return;
+    const items = [...session.items],
+      at = items.findIndex((i) => i.id === id),
+      to = at + direction;
+    if (to < 0 || to >= items.length) return;
+    [items[at], items[to]] = [items[to], items[at]];
+    setSession({
+      ...session,
+      items: items.map((i, order) => ({ ...i, order })),
+    });
+    setDirty(true);
+  };
+  return (
+    <div className="studio">
+      <aside>
+        <a className="brand" href="/studio">
+          <span>◈</span> Content Studio
+        </a>
+        <div className="eyebrow">WORKFLOWS</div>
+        <button className="workflow active">
+          ◉ Threads SERIOUS <small>01</small>
+        </button>
+        {["FUNNY", "COMPILATION", "LYRICS"].map((w) => (
+          <button className="workflow" disabled key={w}>
+            {w}
+            <small>Soon</small>
+          </button>
+        ))}
+        <div className="project-heading">
+          <span className="eyebrow">YOUR PROJECTS</span>
+          <button
+            aria-label="New project"
+            disabled={busy}
+            onClick={() => {
+              if (canLeave())
+                void run(async () => {
+                  accept(await api("", "POST"));
+                  await refresh();
+                  setStep("Source");
+                });
+            }}
+          >
+            ＋
+          </button>
+        </div>
+        <div className="sessions">
+          {sessions.map((s) => (
+            <button
+              className={session?.id === s.id ? "chosen" : ""}
+              key={s.id}
+              disabled={busy}
+              onClick={() => {
+                if (canLeave())
+                  void run(async () => {
+                    accept(await api("/" + s.id));
+                    setStep("Source");
+                  });
+              }}
+            >
+              {s.title}
+              <small>SERIOUS · local project</small>
+            </button>
+          ))}
+        </div>
+        <footer>
+          LOCAL WORKSPACE
+          <br />
+          <span>Publishing automation is off</span>
+        </footer>
+      </aside>
+      <main>
+        <header>
+          <div>
+            <div className="eyebrow">THREADS / SERIOUS</div>
+            <h1>{session?.title || "Your next story starts here"}</h1>
+          </div>
+          <span className="badge">● Local studio</span>
+        </header>
+        <nav aria-label="Workflow steps">
+          {[
+            "Source",
+            "Script",
+            "Voice",
+            "Video Editor",
+            "Render",
+            "Publish",
+          ].map((name, n) => (
+            <button
+              className={step === name ? "current" : ""}
+              onClick={() => setStep(name)}
+              key={name}
+            >
+              <b>{n + 1}</b>
+              {name}
+            </button>
+          ))}
+        </nav>
+        {error && (
+          <div role="alert" className="alert error">
+            {error}
+          </div>
+        )}
+        {notice && (
+          <div role="status" className="alert">
+            {notice}
+          </div>
+        )}
+        {busy && (
+          <div role="status" className="alert">
+            Processing… Please keep this page open.
+          </div>
+        )}
+        {step !== "Source" ? (
+          <section className="empty">
+            <span className="hero-icon">◇</span>
+            <h2>{step} workspace</h2>
+            <p>
+              This step is planned. Source selection and editing are available
+              now.
+            </p>
+            <button onClick={() => setStep("Source")}>Return to Source</button>
+          </section>
+        ) : !session ? (
+          <section className="empty">
+            <span className="hero-icon">✦</span>
+            <h2>Turn a conversation into a thoughtful story.</h2>
+            <p>
+              Create a project, collect your source material, and choose what
+              deserves a voice.
+            </p>
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  accept(await api("", "POST"));
+                  await refresh();
+                })
+              }
+            >
+              ＋ Create SERIOUS project
+            </button>
+          </section>
+        ) : (
+          <>
+            <section className="source-header">
+              <div>
+                <h2>01 / Source material</h2>
+                <p>Collect the original. Shape your version. Keep both.</p>
+              </div>
+              <button
+                className="primary"
+                disabled={busy}
+                onClick={() => void run(save)}
+              >
+                {dirty ? "Save changes" : "Save project"}
+              </button>
+            </section>
+            <label className="title-field">
+              Project name
+              <input
+                maxLength={150}
+                value={session.title}
+                onChange={(e) => {
+                  setSession({ ...session, title: e.target.value });
+                  setDirty(true);
+                }}
+              />
+            </label>
+            <section className="panel">
+              <div className="panel-top">
+                <h3>Add Threads content</h3>
+                <span>Up to 5 public URLs</span>
+              </div>
+              <UrlRows
+                key={session.id}
+                session={session}
+                disabled={busy || dirty}
+                onFetch={async (urls, scope) => {
+                  await run(async () => {
+                    const current = await api<StudioSession>("/" + session.id);
+                    accept(
+                      await api("/" + session.id + "/fetch", "POST", {
+                        revision: current.revision,
+                        urls,
+                        scope,
+                      }),
+                    );
+                    await refresh();
+                  });
+                }}
+              />
+              <div className="actions">
+                <button onClick={() => setManual(!manual)}>
+                  {manual ? "Close manual import" : "Paste content manually"}
+                </button>
+                <small>
+                  {dirty
+                    ? "Save changes before importing."
+                    : "Extraction runs only when you click Fetch."}
+                </small>
+              </div>
+              {manual && (
+                <div className="manual">
+                  <h3>Manual source import</h3>
+                  <label>
+                    Original source URL (optional)
+                    <input
+                      value={manualUrl}
+                      onChange={(e) => setManualUrl(e.target.value)}
+                      placeholder="Threads share link or permalink"
+                    />
+                  </label>
+                  <p>
+                    Paste a post and optional comments. Each comment occupies
+                    one line.
+                  </p>
+                  <label>
+                    Author
+                    <input
+                      value={author}
+                      onChange={(e) => setAuthor(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Original post
+                    <textarea
+                      rows={4}
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Comments
+                    <textarea
+                      rows={3}
+                      value={comments}
+                      onChange={(e) => setComments(e.target.value)}
+                    />
+                  </label>
+                  <button
+                    disabled={busy || dirty || !text.trim()}
+                    onClick={() =>
+                      void run(async () => {
+                        accept(
+                          await api("/" + session.id, "PUT", {
+                            revision: session.revision,
+                            manual: { text, author, comments, url: manualUrl },
+                          }),
+                        );
+                        setText("");
+                        setComments("");
+                        setManual(false);
+                        await refresh();
+                        setNotice(
+                          "Manual source imported. Original text preserved.",
+                        );
+                      })
+                    }
+                  >
+                    Import source
+                  </button>
+                </div>
+              )}
+            </section>
+            {session.errors
+              .filter(
+                (e) =>
+                  !(session.attempts || []).some(
+                    (a) =>
+                      a.status === "PARTIAL" &&
+                      a.diagnostics.some(
+                        (d) => e === a.originalUrl + ": " + d.message,
+                      ),
+                  ),
+              )
+              .map((e) => (
+                <div role="alert" className="alert error" key={e}>
+                  {e}
+                </div>
+              ))}
+            <StageReportPanel
+              id={session.id}
+              revision={session.revision}
+              dirty={dirty}
+            />
+            {!!session.attempts?.some((a) => a.contextCandidates?.length) && (
+              <details className="panel">
+                <summary>
+                  Auxiliary context — excluded from target content unless
+                  explicitly added
+                </summary>
+                {session.attempts.flatMap((a) =>
+                  (a.contextCandidates || []).map((c, index) => (
+                    <div
+                      className="context-candidate"
+                      key={a.originalUrl + index}
+                    >
+                      <strong>{c.author}</strong>
+                      <p>{c.text}</p>
+                      <small>
+                        {String(c.url || "No permalink")} · Relationship
+                        unverified
+                      </small>
+                      <button
+                        disabled={
+                          busy ||
+                          dirty ||
+                          session.items.some((i) => i.sourceUrl === c.url)
+                        }
+                        onClick={() =>
+                          void run(async () => {
+                            accept(
+                              await api("/" + session.id, "PUT", {
+                                revision: session.revision,
+                                addContext: {
+                                  originalUrl: a.originalUrl,
+                                  index,
+                                },
+                              }),
+                            );
+                          })
+                        }
+                      >
+                        Add this context item
+                      </button>
+                    </div>
+                  )),
+                )}
+              </details>
+            )}
+            {!!session.attempts?.length && !session.scope && (
+              <div className="alert">
+                Legacy extraction contains unverified context. Original data is
+                preserved.
+                <button
+                  disabled={busy || dirty}
+                  onClick={() =>
+                    void run(async () => {
+                      accept(
+                        await api("/" + session.id + "/exact-copy", "POST"),
+                      );
+                      await refresh();
+                    })
+                  }
+                >
+                  Verify exact targets in a preserved copy
+                </button>
+              </div>
+            )}
+            <section className="content-heading">
+              <h3>
+                Collected content <span>{session.items.length}</span>
+              </h3>
+              <span>
+                {session.items.filter((i) => i.selected).length} selected ·{" "}
+                {dirty ? "Unsaved changes" : "Saved"}
+                {session.elapsedMs !== undefined
+                  ? ` · Extraction ${(session.elapsedMs / 1000).toFixed(1)}s`
+                  : ""}
+              </span>
+            </section>
+            {session.items.length === 0 ? (
+              <div className="panel empty-small">
+                Add a Threads URL or paste source material to begin.
+              </div>
+            ) : (
+              session.items
+                .filter(
+                  (i) =>
+                    i.inclusion === "EXPLICIT_CONTEXT" ||
+                    i.inclusion === "MANUAL" ||
+                    !session.attempts?.length ||
+                    session.attempts.some(
+                      (a) =>
+                        !!a.matchedTargetId && a.canonicalUrl === i.sourceUrl,
+                    ),
+                )
+                .map((i, index) => (
+                  <article
+                    className={"content-card " + (i.selected ? "selected" : "")}
+                    key={i.id}
+                  >
+                    <div className="card-head">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={i.selected}
+                          onChange={(e) =>
+                            update(i.id, { selected: e.target.checked })
+                          }
+                        />
+                        <strong>{i.author.displayName}</strong>
+                        <span className="badge">
+                          {i.metadata?.type || i.sourceReference.entityType}
+                        </span>
+                      </label>
+                      <div>
+                        <button
+                          aria-label="Move up"
+                          disabled={index === 0}
+                          onClick={() => move(i.id, -1)}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          aria-label="Move down"
+                          disabled={index === session.items.length - 1}
+                          onClick={() => move(i.id, 1)}
+                        >
+                          ↓
+                        </button>
+                      </div>
+                    </div>
+                    {i.sourceUrl && (
+                      <a href={i.sourceUrl} target="_blank" rel="noreferrer">
+                        {i.sourceUrl}
+                      </a>
+                    )}
+                    <p className="original">{i.displayText}</p>
+                    <details>
+                      <summary>
+                        Review original, metadata, media & edit text
+                      </summary>
+                      <details>
+                        <summary>Original source · read only</summary>
+                        <p className="original">{i.originalText}</p>
+                        {i.mediaReferences.map((m, n) => (
+                          <p className="media" key={n}>
+                            Media reference: {m}
+                          </p>
+                        ))}
+                      </details>
+                      <MetadataEditor
+                        item={i}
+                        onChange={(patch) => update(i.id, patch)}
+                      />
+                      <MediaPreview item={i} />
+                      <div className="edit-grid">
+                        <label>
+                          Display text
+                          <textarea
+                            rows={4}
+                            value={i.displayText}
+                            onChange={(e) =>
+                              update(i.id, { displayText: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Spoken text
+                          <textarea
+                            rows={4}
+                            value={i.spokenText}
+                            onChange={(e) =>
+                              update(i.id, { spokenText: e.target.value })
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="card-bottom">
+                        <small>
+                          #{index + 1} · Revision {i.revision} ·{" "}
+                          {i.manualLocks.length
+                            ? "Manual text locks"
+                            : "Original text"}{" "}
+                        </small>
+                        <button
+                          onClick={() =>
+                            update(i.id, {
+                              displayText: i.originalText,
+                              spokenText: i.originalText,
+                            })
+                          }
+                        >
+                          Restore original text
+                        </button>
+                      </div>
+                    </details>
+                  </article>
+                ))
+            )}
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+createRoot(document.getElementById("root")!).render(<App />);

@@ -28,6 +28,6 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(config.port);
+  await app.listen(config.port, '127.0.0.1');
 }
 bootstrap();

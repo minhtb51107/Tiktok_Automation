@@ -2,6 +2,8 @@
 # 1. THƯ MỤC HỆ THỐNG & BẢO MẬT (QUAN TRỌNG NHẤT)
 # ==========================================
 node_modules/
+2_Remotion_Video/studio-dist/
+1_nest_backend/.studio-data/
 dist/
 .env
 1_nest_backend/tiktok_profile/

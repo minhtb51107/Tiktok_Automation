@@ -25,6 +25,7 @@
     "typescript": "5.9.3"
   },
   "scripts": {
+    "studio:build": "esbuild src/studio/main.tsx --bundle --outfile=studio-dist/app.js --format=iife --platform=browser --target=es2020 --jsx=automatic",
     "dev": "remotion studio",
     "build": "remotion bundle",
     "preview:build": "esbuild src/preview/main.tsx --bundle --outfile=preview-dist/app.js --format=iife --platform=browser --target=es2020 --sourcemap --jsx=automatic",
