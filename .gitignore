@@ -2,6 +2,13 @@
 # 1. THƯ MỤC HỆ THỐNG & BẢO MẬT (QUAN TRỌNG NHẤT)
 # ==========================================
 node_modules/
+.env.*
+!.env.example
+*.pth
+*.pt
+*.onnx
+# User-owned local source video: retain on disk, never publish in source checkpoints.
+2_Remotion_Video/public/backgrounds/snaptt.me-10723984.mp4
 2_Remotion_Video/studio-dist/
 1_nest_backend/.studio-data/
 dist/
