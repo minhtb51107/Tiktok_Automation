@@ -4987,8 +4987,78 @@ html[data-studio-theme="LIGHT"] .s2-job-bar-track {
   border-top: 1px solid var(--v2-border);
 }
 
+/* Stage 2.1 Collector Run Progress, History & Approval Gate Styles */
+.s2-env-pill.is-neutral {
+  background: rgba(143, 160, 255, 0.08);
+  border: 1px solid rgba(143, 160, 255, 0.28);
+  color: var(--v2-text);
+}
+
+html[data-studio-theme="LIGHT"] .s2-env-pill.is-neutral {
+  background: #f5f3ff;
+  border-color: #c4b5fd;
+  color: #1e1b4b;
+}
+
+.s2-collector-live-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.95fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.s2-collector-detail-box,
+.s2-collector-history-box {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid var(--v2-border);
+}
+
+html[data-studio-theme="LIGHT"] .s2-collector-detail-box,
+html[data-studio-theme="LIGHT"] .s2-collector-history-box {
+  background: #faf9fd;
+}
+
+.s2-collector-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.s2-collector-progress-wrap {
+  margin-bottom: 14px;
+}
+
+.s2-collector-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.s2-audio-dot.is-draft {
+  background: rgba(252, 224, 104, 0.18);
+  color: #fce068;
+  border: 1px solid rgba(252, 224, 104, 0.45);
+}
+
+html[data-studio-theme="LIGHT"] .s2-audio-dot.is-draft {
+  background: #fef9c3;
+  color: #854d0e;
+  border-color: #facc15;
+}
+
 /* Responsive Breakpoints for Stage 2 */
 @media (max-width: 1200px) {
+  .s2-collector-live-grid {
+    grid-template-columns: 1fr;
+  }
+  .s2-collector-kpi-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .s2-review-split-mode {
     grid-template-columns: 1fr;
   }
@@ -5042,7 +5112,8 @@ html[data-studio-theme="LIGHT"] .s2-job-bar-track {
     grid-template-columns: 1fr;
   }
   .s2-kw-params-grid,
-  .s2-env-grid {
+  .s2-env-grid,
+  .s2-collector-kpi-row {
     grid-template-columns: 1fr;
   }
   .s2-search-box {

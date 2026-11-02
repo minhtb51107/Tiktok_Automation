@@ -93,21 +93,52 @@ export function ProductionQueueWorkspace({
   );
 
   const selectedItems = (session?.items || []).filter((i) => i.selected);
+  const getLatestVoiceAsset = (itemId: string) =>
+    (session?.voiceAssets || [])
+      .filter((a) => a.itemId === itemId && a.status !== "STALE")
+      .slice(-1)[0] || null;
+
   const scenesWithAudio = selectedItems.filter((item) =>
-    (session?.voiceAssets || []).some(
-      (a) => a.itemId === item.id && a.status !== "STALE",
-    ),
+    Boolean(getLatestVoiceAsset(item.id)),
   );
+  const approvedSpokenScenes = selectedItems.filter(
+    (item) =>
+      Boolean(
+        item.spokenApproval?.valid &&
+          item.spokenApproval.revision === item.revision,
+      ),
+  );
+  const approvedVoiceScenes = selectedItems.filter((item) => {
+    const asset = getLatestVoiceAsset(item.id);
+    return Boolean(asset && asset.status === "APPROVED" && asset.approvedAt);
+  });
+  const productionApprovedScenes = selectedItems.filter((item) => {
+    const asset = getLatestVoiceAsset(item.id);
+    const voiceOk = Boolean(
+      asset && asset.status === "APPROVED" && asset.approvedAt,
+    );
+    const spokenOk = Boolean(
+      item.spokenApproval?.valid &&
+        item.spokenApproval.revision === item.revision,
+    );
+    const mappingOk = item.contentMapping?.status === "VERIFIED";
+    return voiceOk && spokenOk && mappingOk;
+  });
+
   const totalAudioSec = selectedItems.reduce((acc, item) => {
-    const asset = (session?.voiceAssets || [])
-      .filter((a) => a.itemId === item.id && a.status !== "STALE")
-      .slice(-1)[0];
+    const asset = getLatestVoiceAsset(item.id);
     return acc + (asset ? asset.durationMs / 1000 : 0);
   }, 0);
 
-  const readinessPct =
+  const isFullyProductionApproved =
+    selectedItems.length > 0 &&
+    productionApprovedScenes.length === selectedItems.length;
+
+  const productionApprovalPct =
     selectedItems.length > 0
-      ? Math.round((scenesWithAudio.length / selectedItems.length) * 100)
+      ? Math.round(
+          (productionApprovedScenes.length / selectedItems.length) * 100,
+        )
       : 0;
 
   return (
@@ -120,10 +151,17 @@ export function ProductionQueueWorkspace({
         <div className="s2-hero-copy">
           <div className="v3-eyebrow-row">
             <span className="v3-prov-pill prov-real">
-              ● {completedRenders.length} MP4 ĐÃ XUẤT
+              ● {completedRenders.length} MP4 BẢN NHÁP (DRAFT)
             </span>
-            <span className="v3-prov-pill prov-review">
-              🎞 {selectedItems.length} CẢNH ĐANG DỰNG ({readinessPct}% SẴN SÀNG)
+            <span
+              className={`v3-prov-pill ${
+                isFullyProductionApproved ? "prov-real" : "prov-review"
+              }`}
+              data-testid="queue-hero-readiness-pill"
+            >
+              {isFullyProductionApproved
+                ? `✓ ${productionApprovedScenes.length}/${selectedItems.length} CẢNH ĐẠT CHUẨN SẢN XUẤT`
+                : `🎙 ${scenesWithAudio.length}/${selectedItems.length} AUDIO DRAFT · ⏳ ${productionApprovedScenes.length}/${selectedItems.length} ĐÃ DUYỆT SẢN XUẤT`}
             </span>
             <span className="v3-prov-pill prov-real">
               ⚙ {jobs.length} TÁC VỤ KỸ THUẬT
@@ -131,10 +169,10 @@ export function ProductionQueueWorkspace({
           </div>
           <h2>Kho Video & Điều phối Sản xuất</h2>
           <p>
-            Quản lý trực quan toàn bộ quy trình sản xuất: tách biệt rõ{" "}
-            <strong>Video MP4 đã xuất</strong>,{" "}
-            <strong>Dự án video đang dựng</strong> và{" "}
-            <strong>Nhật ký tác vụ kỹ thuật</strong>. Mọi thao tác thử lại đều
+            Quản lý trực quan toàn bộ quy trình sản xuất: phân biệt rõ{" "}
+            <strong>Audio/MP4 bản nháp (DRAFT)</strong> với{" "}
+            <strong>Video đạt chất lượng sản xuất (đã duyệt lời đọc & giọng đọc)</strong>{" "}
+            và <strong>Nhật ký tác vụ kỹ thuật</strong>. Mọi thao tác thử lại đều
             bảo toàn nguyên vẹn dữ liệu dự án.
           </p>
         </div>
@@ -348,21 +386,36 @@ export function ProductionQueueWorkspace({
                     {/* Card Details */}
                     <div className="s2-mp4-card-body">
                       <div className="s2-mp4-head-row">
-                        <span
-                          className={`s2-status-badge ${
-                            isCompleted
-                              ? "badge-qualified"
-                              : m.status === "CANCELLED"
-                                ? "badge-review"
-                                : "badge-rejected"
-                          }`}
-                        >
-                          {isCompleted
-                            ? "✓ MP4 Hoàn chỉnh"
-                            : m.status === "CANCELLED"
-                              ? "⏹ Đã hủy"
-                              : "✕ Lỗi xuất"}
-                        </span>
+                        {(() => {
+                          const isDraftRender =
+                            m.mode === "DRAFT" ||
+                            m.warnings.some(
+                              (w) =>
+                                w.includes("DRAFT") ||
+                                w.includes("not approved"),
+                            );
+                          return (
+                            <span
+                              className={`s2-status-badge ${
+                                isCompleted
+                                  ? isDraftRender
+                                    ? "badge-review"
+                                    : "badge-qualified"
+                                  : m.status === "CANCELLED"
+                                    ? "badge-review"
+                                    : "badge-rejected"
+                              }`}
+                            >
+                              {isCompleted
+                                ? isDraftRender
+                                  ? "🎬 MP4 Bản nháp (DRAFT — Chưa duyệt xuất bản)"
+                                  : "✓ MP4 Đạt chuẩn Sản xuất"
+                                : m.status === "CANCELLED"
+                                  ? "⏹ Đã hủy"
+                                  : "✕ Lỗi xuất"}
+                            </span>
+                          );
+                        })()}
                         <code className="s2-mono-id">#{m.jobId.slice(0, 8)}</code>
                       </div>
 
@@ -490,25 +543,129 @@ export function ProductionQueueWorkspace({
             <div className="s2-prod-progress-head">
               <div>
                 <strong>
-                  Tiến độ sẵn sàng: {scenesWithAudio.length}/
-                  {selectedItems.length} cảnh đã có giọng đọc Kokoro · Tổng thời
-                  lượng dự kiến ~{totalAudioSec.toFixed(1)}s
+                  Nguyên liệu hiện tại: {scenesWithAudio.length}/
+                  {selectedItems.length} cảnh đã có Audio nháp (DRAFT) ·{" "}
+                  {productionApprovedScenes.length}/{selectedItems.length} cảnh đã
+                  duyệt chuẩn sản xuất (~{totalAudioSec.toFixed(1)}s)
                 </strong>
                 <small>
                   {runningJobs.length > 0
                     ? `Đang chạy ${runningJobs.length} tác vụ nền...`
-                    : "Tất cả cảnh đã sẵn sàng để tinh chỉnh trên Timeline hoặc xuất MP4."}
+                    : isFullyProductionApproved
+                      ? "Tất cả cảnh đã được duyệt kịch bản đọc và giọng đọc chính thức."
+                      : "⚠ Audio hiện tại là bản nháp (DRAFT) để nghe thử & dựng nháp. Cần hoàn tất duyệt lời đọc (Spoken Approval) và duyệt giọng đọc (Voice Approval) trước khi đạt chuẩn sản xuất."}
                 </small>
               </div>
-              <span className="s2-status-badge badge-qualified">
-                {readinessPct}% SẴN SÀNG
-              </span>
+              <div
+                style={{ display: "flex", gap: 8, flexWrap: "wrap" }}
+                data-testid="production-readiness-badges"
+              >
+                <span
+                  className="s2-status-badge badge-review"
+                  data-testid="badge-draft-audio-count"
+                >
+                  🎙 {scenesWithAudio.length}/{selectedItems.length} AUDIO NHÁP
+                  (DRAFT)
+                </span>
+                <span
+                  className={`s2-status-badge ${
+                    isFullyProductionApproved
+                      ? "badge-qualified"
+                      : "badge-review"
+                  }`}
+                  data-testid="badge-production-approval-status"
+                >
+                  {isFullyProductionApproved
+                    ? "✓ ĐẠT CHUẨN SẢN XUẤT"
+                    : `⏳ CHƯA DUYỆT SẢN XUẤT (${productionApprovedScenes.length}/${selectedItems.length})`}
+                </span>
+              </div>
+            </div>
+
+            {/* 4-Gate Approval & Draft Breakdown Strip */}
+            <div
+              className="s2-env-grid"
+              style={{ marginBottom: 14 }}
+              data-testid="production-approval-gate-strip"
+            >
+              <div className="s2-env-pill is-neutral">
+                <span>🎙</span>
+                <div>
+                  <strong>
+                    Audio nháp (DRAFT): {scenesWithAudio.length}/
+                    {selectedItems.length} cảnh
+                  </strong>
+                  <small>Phục vụ nghe thử & căn nhịp (~{totalAudioSec.toFixed(1)}s)</small>
+                </div>
+              </div>
+              <div
+                className={`s2-env-pill ${
+                  approvedSpokenScenes.length === selectedItems.length &&
+                  selectedItems.length > 0
+                    ? "is-ok"
+                    : "is-missing"
+                }`}
+              >
+                <span>
+                  {approvedSpokenScenes.length === selectedItems.length &&
+                  selectedItems.length > 0
+                    ? "✓"
+                    : "⏳"}
+                </span>
+                <div>
+                  <strong>
+                    Duyệt kịch bản đọc: {approvedSpokenScenes.length}/
+                    {selectedItems.length} cảnh
+                  </strong>
+                  <small>Spoken Text Approval trước khi xuất bản</small>
+                </div>
+              </div>
+              <div
+                className={`s2-env-pill ${
+                  approvedVoiceScenes.length === selectedItems.length &&
+                  selectedItems.length > 0
+                    ? "is-ok"
+                    : "is-missing"
+                }`}
+              >
+                <span>
+                  {approvedVoiceScenes.length === selectedItems.length &&
+                  selectedItems.length > 0
+                    ? "✓"
+                    : "⏳"}
+                </span>
+                <div>
+                  <strong>
+                    Duyệt giọng đọc: {approvedVoiceScenes.length}/
+                    {selectedItems.length} cảnh
+                  </strong>
+                  <small>Voice Asset Approval trong bước Giọng đọc</small>
+                </div>
+              </div>
+              <div
+                className={`s2-env-pill ${
+                  isFullyProductionApproved ? "is-ok" : "is-missing"
+                }`}
+              >
+                <span>{isFullyProductionApproved ? "✓" : "🔒"}</span>
+                <div>
+                  <strong>
+                    Chuẩn sản xuất chính thức: {productionApprovedScenes.length}/
+                    {selectedItems.length} cảnh ({productionApprovalPct}%)
+                  </strong>
+                  <small>
+                    {isFullyProductionApproved
+                      ? "Đủ điều kiện xuất chính thức"
+                      : "Chỉ xuất được MP4 Bản nháp (DRAFT)"}
+                  </small>
+                </div>
+              </div>
             </div>
 
             <div className="v3-striped-progress-track">
               <div
                 className="v3-striped-progress-fill"
-                style={{ width: `${Math.max(8, readinessPct)}%` }}
+                style={{ width: `${Math.max(6, productionApprovalPct)}%` }}
               />
             </div>
 
@@ -518,19 +675,32 @@ export function ProductionQueueWorkspace({
                   session?.sourceImages?.[item.id]?.uri ||
                   item.metadata?.avatar ||
                   null;
-                const asset = (session?.voiceAssets || [])
-                  .filter((a) => a.itemId === item.id && a.status !== "STALE")
-                  .slice(-1)[0];
+                const asset = getLatestVoiceAsset(item.id);
+                const isVoiceApproved = Boolean(
+                  asset && asset.status === "APPROVED" && asset.approvedAt,
+                );
+                const isSpokenApproved = Boolean(
+                  item.spokenApproval?.valid &&
+                    item.spokenApproval.revision === item.revision,
+                );
 
                 return (
                   <div key={item.id} className="s2-story-scene-card">
                     <div className="s2-story-scene-top">
                       <span className="s2-scene-badge">Cảnh #{idx + 1}</span>
                       <span
-                        className={`s2-audio-dot ${asset ? "is-ready" : "is-missing"}`}
+                        className={`s2-audio-dot ${
+                          isVoiceApproved
+                            ? "is-ready"
+                            : asset
+                              ? "is-draft"
+                              : "is-missing"
+                        }`}
                       >
                         {asset
-                          ? `🎙 ${(asset.durationMs / 1000).toFixed(1)}s`
+                          ? `🎙 ${(asset.durationMs / 1000).toFixed(1)}s · ${
+                              isVoiceApproved ? "Đã duyệt" : "DRAFT"
+                            }`
                           : "○ Chưa có âm thanh"}
                       </span>
                     </div>
@@ -555,6 +725,22 @@ export function ProductionQueueWorkspace({
                       {item.displayText.slice(0, 85)}
                       {item.displayText.length > 85 ? "..." : ""}
                     </p>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 6,
+                        flexWrap: "wrap",
+                        marginTop: 8,
+                        fontSize: "0.73rem",
+                      }}
+                    >
+                      <span className="s2-mono-id">
+                        Lời đọc: {isSpokenApproved ? "✓ Đã duyệt" : "⏳ Chờ duyệt"}
+                      </span>
+                      <span className="s2-mono-id">
+                        Voice: {isVoiceApproved ? "✓ Đã duyệt" : "⏳ Audio nháp"}
+                      </span>
+                    </div>
                   </div>
                 );
               })}

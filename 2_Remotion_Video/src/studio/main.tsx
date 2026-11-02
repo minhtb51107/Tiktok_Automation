@@ -1067,6 +1067,7 @@ function App() {
             onUpdateItem={update}
             onMoveItem={move}
             onNavigateArea={navigateAreaBySlug}
+            onRefreshData01={refreshData01}
             onCreateProject={() =>
               void run(async () => {
                 accept(await api("", "POST"));

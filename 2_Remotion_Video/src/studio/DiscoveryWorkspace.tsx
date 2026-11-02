@@ -39,6 +39,7 @@ interface DiscoveryWorkspaceProps {
     area: "dashboard" | "discovery" | "data-review" | "production-queue" | "video-studio" | "settings",
   ) => void;
   onCreateProject: () => void;
+  onRefreshData01?: () => Promise<void>;
 }
 
 type AcquisitionTab = "URLS_AND_MANUAL" | "KEYWORD_API" | "FUTURE_SCHEDULE";
@@ -52,6 +53,15 @@ const SUGGESTED_KEYWORDS = [
   "kỹ năng sống",
   "tài chính cá nhân",
 ];
+
+const COLLECTOR_STAGE_LABELS: Record<string, string> = {
+  AUTH_PREFLIGHT: "Kiểm tra điều kiện xác thực ban đầu",
+  VERIFY_TOKEN: "Xác minh chữ ký & quyền Token",
+  KEYWORD_SEARCH: "Đang truy vấn từ khóa qua Threads API",
+  DATA01_IMPORT: "Đang đưa bài viết vào bộ lọc DATA-01",
+  WAITING_MANUAL_REVIEW: "Hoàn tất thu thập · Chờ bạn duyệt bài",
+  STOPPED: "Đã dừng an toàn",
+};
 
 export function DiscoveryWorkspace({
   session,
@@ -68,6 +78,7 @@ export function DiscoveryWorkspace({
   onMoveItem,
   onNavigateArea,
   onCreateProject,
+  onRefreshData01,
 }: DiscoveryWorkspaceProps) {
   const [activeTab, setActiveTab] =
     useState<AcquisitionTab>("URLS_AND_MANUAL");
@@ -86,6 +97,7 @@ export function DiscoveryWorkspace({
   const [collectorRuns, setCollectorRuns] = useState<
     ThreadsCollectorRunItem[]
   >([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [scheduler, setScheduler] = useState<ThreadsSchedulerStatus | null>(
     null,
   );
@@ -98,8 +110,10 @@ export function DiscoveryWorkspace({
   const [keywordDraft, setKeywordDraft] = useState("");
   const [searchType, setSearchType] = useState<"RECENT" | "TOP">("RECENT");
   const [perKeyword, setPerKeyword] = useState<number>(5);
+  const [maxRequests, setMaxRequests] = useState<number>(8);
+  const [maxRunSeconds, setMaxRunSeconds] = useState<number>(120);
 
-  // Scheduler form state
+  // Scheduler form state (backend enforces minimum 6 hours = 21600000 ms, maximum 7 days = 604800000 ms)
   const [schedIntervalHours, setSchedIntervalHours] = useState<number>(6);
   const [schedMinInventory, setSchedMinInventory] = useState<number>(10);
   const [schedBacklogLimit, setSchedBacklogLimit] = useState<number>(20);
@@ -108,6 +122,9 @@ export function DiscoveryWorkspace({
     const res = await fetchThreadsDiscoveryState();
     setAuthStatus(res.auth);
     setCollectorRuns(res.runs);
+    if (res.runs.length > 0 && !selectedRunId) {
+      setSelectedRunId(res.runs[0].id);
+    }
     if (res.scheduler) {
       setScheduler(res.scheduler);
       if (res.scheduler.keywords?.length) {
@@ -115,8 +132,19 @@ export function DiscoveryWorkspace({
       }
       setSearchType(res.scheduler.searchType || "RECENT");
       setPerKeyword(res.scheduler.perKeyword || 5);
+      if (res.scheduler.maxRequests) {
+        setMaxRequests(Math.min(12, Math.max(1, res.scheduler.maxRequests)));
+      }
+      if (res.scheduler.maxRunMs) {
+        setMaxRunSeconds(
+          Math.min(180, Math.max(10, Math.round(res.scheduler.maxRunMs / 1000))),
+        );
+      }
       setSchedIntervalHours(
-        Math.max(6, Math.round((res.scheduler.intervalMs || 21600000) / 3600000)),
+        Math.min(
+          168,
+          Math.max(6, Math.round((res.scheduler.intervalMs || 21600000) / 3600000)),
+        ),
       );
       setSchedMinInventory(res.scheduler.minimumInventory || 10);
       setSchedBacklogLimit(res.scheduler.reviewBacklogLimit || 20);
@@ -151,6 +179,11 @@ export function DiscoveryWorkspace({
         method: "POST",
       });
       const json = await res.json();
+      if (!res.ok) {
+        throw new Error(
+          json.error?.message || json.message || "Không thể kiểm tra kết nối API",
+        );
+      }
       const data = (json.data ?? json) as ThreadsAuthStatusResponse;
       setAuthStatus(data);
       if (data.status === "READY") {
@@ -167,25 +200,128 @@ export function DiscoveryWorkspace({
     }
   };
 
+  const handleStartCollectorRun = async () => {
+    setApiBusy(true);
+    setApiError("");
+    setApiMessage("");
+    try {
+      const pilotKeywords = Array.from(
+        new Set(keywords.map((k) => k.trim()).filter(Boolean)),
+      ).slice(0, 2);
+      if (pilotKeywords.length < 1) {
+        throw new Error("Vui lòng chọn ít nhất 1 từ khóa để bắt đầu thu thập.");
+      }
+      const requestId = `pilot-${Date.now()}`;
+      const body = {
+        keywords: pilotKeywords,
+        searchType,
+        perKeyword: Math.min(5, Math.max(1, Math.round(perKeyword))),
+        maxRequests: Math.min(12, Math.max(1, Math.round(maxRequests))),
+        maxRunMs: Math.min(180000, Math.max(1000, Math.round(maxRunSeconds * 1000))),
+        requestId,
+      };
+      const res = await fetch("/api/studio/threads/collector/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(
+          json.error?.message ||
+            json.message ||
+            "Không thể khởi chạy bộ thu thập Threads",
+        );
+      }
+      const run = (json.data ?? json) as ThreadsCollectorRunItem;
+      setCollectorRuns((prev) => [
+        run,
+        ...prev.filter((existing) => existing.id !== run.id),
+      ]);
+      setSelectedRunId(run.id);
+      if (run.status === "COMPLETED") {
+        setApiMessage(
+          `Đã hoàn tất lượt thu thập #${run.id.slice(0, 8)}: lấy được ${run.returned} bài, đưa vào DATA-01 ${run.imported} bài (${run.newPosts} bài mới).`,
+        );
+      } else {
+        setApiMessage(
+          `Lượt thu thập #${run.id.slice(0, 8)} dừng ở trạng thái ${run.status} (${run.stage}).`,
+        );
+      }
+      if (onRefreshData01) {
+        await onRefreshData01();
+      }
+      await loadThreadsApiState();
+    } catch (err) {
+      setApiError((err as Error).message);
+    } finally {
+      setApiBusy(false);
+    }
+  };
+
+  const handleResumeCollectorRun = async (runId: string) => {
+    setApiBusy(true);
+    setApiError("");
+    setApiMessage("");
+    try {
+      const res = await fetch(
+        `/api/studio/threads/collector/runs/${runId}/resume`,
+        {
+          method: "POST",
+        },
+      );
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(
+          json.error?.message ||
+            json.message ||
+            "Không thể tiếp tục phiên thu thập",
+        );
+      }
+      const run = (json.data ?? json) as ThreadsCollectorRunItem;
+      setCollectorRuns((prev) => [
+        run,
+        ...prev.filter((existing) => existing.id !== run.id),
+      ]);
+      setSelectedRunId(run.id);
+      setApiMessage(
+        `Đã tiếp tục phiên #${run.id.slice(0, 8)} → Trạng thái: ${run.status} (${run.imported}/${run.returned} bài đã nạp).`,
+      );
+      if (onRefreshData01) {
+        await onRefreshData01();
+      }
+      await loadThreadsApiState();
+    } catch (err) {
+      setApiError((err as Error).message);
+    } finally {
+      setApiBusy(false);
+    }
+  };
+
   const handleSaveScheduler = async () => {
     setApiBusy(true);
     setApiError("");
     setApiMessage("");
     try {
-      const pilotKeywords = keywords.slice(0, 2);
+      const pilotKeywords = Array.from(
+        new Set(keywords.map((k) => k.trim()).filter(Boolean)),
+      ).slice(0, 2);
       if (pilotKeywords.length === 0) {
         throw new Error("Vui lòng chọn ít nhất 1 từ khóa cho lịch thu thập.");
       }
+      const clampedHours = Math.min(168, Math.max(6, Math.round(schedIntervalHours)));
       const res = await fetch("/api/studio/threads/scheduler/configure", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           keywords: pilotKeywords,
           searchType,
-          perKeyword,
-          intervalMs: schedIntervalHours * 3600000,
-          minimumInventory: schedMinInventory,
-          reviewBacklogLimit: schedBacklogLimit,
+          perKeyword: Math.min(5, Math.max(1, Math.round(perKeyword))),
+          maxRequests: Math.min(12, Math.max(1, Math.round(maxRequests))),
+          maxRunMs: Math.min(180000, Math.max(1000, Math.round(maxRunSeconds * 1000))),
+          intervalMs: clampedHours * 3600000,
+          minimumInventory: Math.min(1000, Math.max(1, Math.round(schedMinInventory))),
+          reviewBacklogLimit: Math.min(1000, Math.max(1, Math.round(schedBacklogLimit))),
         }),
       });
       const json = await res.json();
@@ -196,7 +332,38 @@ export function DiscoveryWorkspace({
       }
       setScheduler(json.data ?? json);
       setApiMessage(
-        "Đã lưu cấu hình lịch thu thập vào DATA-02 (chế độ an toàn: không tự động chạy ngầm khi chưa mở khóa OAuth).",
+        `Đã lưu cấu hình lịch thu thập định kỳ mỗi ${clampedHours} giờ vào DATA-02 (chế độ an toàn: không tự động chạy ngầm khi chưa mở khóa OAuth).`,
+      );
+    } catch (err) {
+      setApiError((err as Error).message);
+    } finally {
+      setApiBusy(false);
+    }
+  };
+
+  const handleSchedulerAction = async (
+    endpoint: "pause" | "resume" | "acknowledge-block",
+  ) => {
+    setApiBusy(true);
+    setApiError("");
+    setApiMessage("");
+    try {
+      const res = await fetch(`/api/studio/threads/scheduler/${endpoint}`, {
+        method: "POST",
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(
+          json.error?.message || json.message || "Không thể cập nhật trạng thái lịch",
+        );
+      }
+      setScheduler(json.data ?? json);
+      setApiMessage(
+        endpoint === "pause"
+          ? "Đã tạm dừng lịch thu thập tự động."
+          : endpoint === "resume"
+            ? "Đã bỏ tạm dừng lịch thu thập."
+            : "Đã xác nhận gỡ trạng thái khóa lịch thu thập.",
       );
     } catch (err) {
       setApiError((err as Error).message);
@@ -645,7 +812,7 @@ export function DiscoveryWorkspace({
               <div className="s2-param-box">
                 <span>Số bài mỗi từ khóa (1–5 bài)</span>
                 <div className="s2-type-Segmented">
-                  {[3, 5].map((n) => (
+                  {[1, 3, 5].map((n) => (
                     <button
                       key={n}
                       type="button"
@@ -659,38 +826,42 @@ export function DiscoveryWorkspace({
               </div>
             </div>
 
-            {/* Honest Action Footer: Disabled with clear explanation when BLOCKED_AUTH */}
+            {/* Honest Action Footer: Connected to POST /api/studio/threads/collector/runs */}
             <div className="s2-collector-action-box">
               <div>
                 <strong>
                   {isAuthReady
-                    ? "Sẵn sàng chạy thu thập từ khóa"
+                    ? "Sẵn sàng chạy thu thập từ khóa (POST /api/studio/threads/collector/runs)"
                     : "🔒 Chưa thể bắt đầu quét tự động (API chưa kết nối OAuth)"}
                 </strong>
                 <p>
                   {isAuthReady
-                    ? `Sẽ tìm tối đa ${perKeyword} bài cho mỗi từ khóa (${keywords.slice(0, 2).join(", ")}).`
+                    ? `Sẽ tìm tối đa ${perKeyword} bài cho mỗi từ khóa (${keywords.slice(0, 2).join(", ")}) · Giới hạn ${maxRequests} request / ${maxRunSeconds}s.`
                     : "Hệ thống trung thực: không giả lập dữ liệu crawler khi chưa xác thực tài khoản Meta Threads."}
                 </p>
               </div>
               <button
                 type="button"
                 className="s2-btn-primary"
-                disabled={!isAuthReady || apiBusy}
+                disabled={!isAuthReady || apiBusy || keywords.length === 0}
+                onClick={() => void handleStartCollectorRun()}
+                data-testid="discovery-start-collector-btn"
                 title={
                   isAuthReady
-                    ? "Bắt đầu thu thập"
+                    ? "Gọi POST /api/studio/threads/collector/runs"
                     : "Cần hoàn tất kết nối OAuth ở khung bên phải trước"
                 }
               >
-                {isAuthReady
-                  ? "🚀 Bắt đầu thu thập ngay"
-                  : "🔒 Cần kết nối API để thu thập"}
+                {apiBusy
+                  ? "⏳ Đang thu thập từ khóa..."
+                  : isAuthReady
+                    ? "🚀 Bắt đầu thu thập ngay"
+                    : "🔒 Cần kết nối API để thu thập"}
               </button>
             </div>
           </div>
 
-          {/* Right: Clear API Connection & Permission Status Card */}
+          {/* Right: Clear API Connection, OAuth Vault vs .env Token Distinction & Permission Card */}
           <div
             className="s2-bento-card s2-auth-status-card"
             data-testid="threads-auth-status-card"
@@ -706,6 +877,7 @@ export function DiscoveryWorkspace({
                 className={`s2-status-badge ${
                   isAuthReady ? "badge-qualified" : "badge-review"
                 }`}
+                data-testid="threads-auth-status-badge"
               >
                 {authStatus?.status || "BLOCKED_AUTH"}
               </span>
@@ -719,56 +891,131 @@ export function DiscoveryWorkspace({
               </strong>
               <p>
                 {authStatus?.reason ||
-                  "Cần cấu hình App ID, App Secret và hoàn tất đăng nhập HTTPS OAuth cục bộ trước khi tìm kiếm theo từ khóa."}
+                  "Cần cấu hình App ID, App Secret, HTTPS Callback URI và xác thực Token (qua OAuth Vault hoặc biến môi trường) trước khi tìm kiếm theo từ khóa."}
               </p>
             </div>
 
+            {/* 1. App Credentials in .env (Distinct from User Token) */}
             <div className="s2-checklist-group">
               <span className="s2-sub-heading">
-                1. Cấu hình biến môi trường (`1_nest_backend/.env`)
+                1. Cấu hình Ứng dụng Meta (`1_nest_backend/.env`)
               </span>
               <div className="s2-env-grid">
                 {(
                   [
                     {
                       key: "THREADS_APP_ID",
-                      label: "App ID",
-                      ok: authStatus?.config?.present?.THREADS_APP_ID,
+                      label: "THREADS_APP_ID",
+                      ok: Boolean(authStatus?.config?.present?.THREADS_APP_ID),
+                      detail: authStatus?.config?.present?.THREADS_APP_ID
+                        ? "Đã cấu hình"
+                        : "Chưa cấu hình",
                     },
                     {
                       key: "THREADS_APP_SECRET",
-                      label: "App Secret",
-                      ok: authStatus?.config?.present?.THREADS_APP_SECRET,
+                      label: "THREADS_APP_SECRET",
+                      ok: Boolean(
+                        authStatus?.config?.present?.THREADS_APP_SECRET,
+                      ),
+                      detail: authStatus?.config?.present?.THREADS_APP_SECRET
+                        ? "Đã cấu hình"
+                        : "Chưa cấu hình",
                     },
                     {
                       key: "THREADS_REDIRECT_URI",
-                      label: "HTTPS Callback URI",
-                      ok: authStatus?.config?.present?.THREADS_REDIRECT_URI,
-                    },
-                    {
-                      key: "THREADS_ACCESS_TOKEN",
-                      label: "Access Token / Vault",
-                      ok: authStatus?.config?.present?.THREADS_ACCESS_TOKEN,
+                      label: "THREADS_REDIRECT_URI",
+                      ok: Boolean(
+                        authStatus?.config?.present?.THREADS_REDIRECT_URI &&
+                          authStatus?.config?.redirectValid,
+                      ),
+                      detail: !authStatus?.config?.present?.THREADS_REDIRECT_URI
+                        ? "Chưa cấu hình"
+                        : authStatus?.config?.redirectValid
+                          ? "HTTPS Callback hợp lệ"
+                          : "Cần domain HTTPS hợp lệ",
                     },
                   ] as const
                 ).map((item) => (
                   <div
                     key={item.key}
                     className={`s2-env-pill ${item.ok ? "is-ok" : "is-missing"}`}
+                    data-testid={`env-pill-${item.key}`}
                   >
                     <span>{item.ok ? "✓" : "○"}</span>
                     <div>
                       <strong>{item.label}</strong>
-                      <small>{item.ok ? "Đã cấu hình" : "Chưa thiết lập"}</small>
+                      <small>{item.detail}</small>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
 
+            {/* 2. Explicit Distinction: OAuth Vault Token vs .env THREADS_ACCESS_TOKEN */}
+            <div
+              className="s2-checklist-group"
+              data-testid="threads-token-source-box"
+            >
+              <span className="s2-sub-heading">
+                2. Nguồn User Access Token (Chọn 1 trong 2 cơ chế)
+              </span>
+              <div className="s2-env-grid">
+                {(() => {
+                  const usingVault = authStatus?.tokenSource === "OAUTH_VAULT";
+                  const hasEnvToken = Boolean(
+                    authStatus?.config?.present?.THREADS_ACCESS_TOKEN,
+                  );
+                  const usingEnv =
+                    authStatus?.tokenSource === "ENV" || hasEnvToken;
+                  return (
+                    <>
+                      <div
+                        className={`s2-env-pill ${usingVault ? "is-ok" : "is-neutral"}`}
+                        data-testid="token-source-oauth-vault"
+                      >
+                        <span>{usingVault ? "✓" : "🔐"}</span>
+                        <div>
+                          <strong>OAuth Vault cục bộ (Khuyên dùng)</strong>
+                          <small>
+                            {usingVault
+                              ? "Đang sử dụng Token mã hóa trong OAuth Vault"
+                              : hasEnvToken
+                                ? "Đang tạm tắt vì có THREADS_ACCESS_TOKEN trong .env"
+                                : "Lưu tự động sau khi đăng nhập OAuth (/oauth/login)"}
+                          </small>
+                        </div>
+                      </div>
+
+                      <div
+                        className={`s2-env-pill ${
+                          usingEnv || usingVault ? "is-ok" : "is-neutral"
+                        }`}
+                        data-testid="token-source-env-var"
+                      >
+                        <span>{hasEnvToken || usingVault ? "✓" : "⚙"}</span>
+                        <div>
+                          <strong>Biến THREADS_ACCESS_TOKEN (.env)</strong>
+                          <small>
+                            {hasEnvToken
+                              ? authStatus?.tokenSource === "ENV"
+                                ? "Đang dùng Token từ .env (Đã xác thực)"
+                                : "Đã khai báo trong .env (Chờ verify)"
+                              : usingVault
+                                ? "Để trống hợp lệ (Đang dùng OAuth Vault)"
+                                : "Tùy chọn: để trống nếu dùng OAuth Vault"}
+                          </small>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* 3. Required OAuth Scopes */}
             <div className="s2-checklist-group">
               <span className="s2-sub-heading">
-                2. Quyền OAuth bắt buộc từ Meta Threads
+                3. Quyền OAuth bắt buộc từ Meta Threads
               </span>
               <div className="s2-scope-list">
                 {(
@@ -792,18 +1039,361 @@ export function DiscoveryWorkspace({
 
             <div className="s2-auth-card-foot">
               <small>
-                Lịch sử lượt quét từ khóa đã chạy: <b>{collectorRuns.length}</b>{" "}
-                lượt
+                Nguồn token hiện tại:{" "}
+                <b>
+                  {authStatus?.tokenSource === "OAUTH_VAULT"
+                    ? "OAuth Vault cục bộ"
+                    : authStatus?.tokenSource === "ENV"
+                      ? "Biến môi trường (.env)"
+                      : authStatus?.config?.present?.THREADS_ACCESS_TOKEN
+                        ? "Biến .env (Chưa verify)"
+                        : "Chưa nạp token"}
+                </b>
               </small>
               <button
                 type="button"
                 className="s2-btn-secondary"
                 disabled={apiBusy}
                 onClick={() => void handleVerifyAuth()}
+                data-testid="threads-verify-auth-btn"
               >
                 {apiBusy ? "Đang kiểm tra..." : "↻ Kiểm tra lại kết nối API"}
               </button>
             </div>
+          </div>
+
+          {/* Full-Width Collector Run Status, Progress, Counts, Errors & History Panel */}
+          <div
+            className="s2-bento-card s2-collector-runs-card"
+            style={{ gridColumn: "1 / -1" }}
+            data-testid="collector-runs-panel"
+          >
+            <div className="s2-card-head">
+              <div>
+                <span className="s2-eyebrow-tag">
+                  TIẾN TRÌNH & LỊCH SỬ BỘ THU THẬP (GET /api/studio/threads/collector/runs)
+                </span>
+                <h3>
+                  Trạng thái Chạy, Số bài Thu thập & Nhật ký Lỗi ({collectorRuns.length}{" "}
+                  lượt)
+                </h3>
+                <p>
+                  Dữ liệu trực tiếp từ API <code>/api/studio/threads/collector/runs</code>.
+                  Hiển thị tiến độ từng từ khóa, số bài lấy được, số bài đưa vào{" "}
+                  <code>DATA-01</code> và cho phép tiếp tục (Resume) khi gián đoạn.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="s2-btn-secondary"
+                disabled={apiBusy}
+                onClick={() => void loadThreadsApiState()}
+              >
+                ↻ Làm mới lịch sử Collector
+              </button>
+            </div>
+
+            {collectorRuns.length === 0 ? (
+              <div
+                className="s2-empty-card"
+                data-testid="collector-runs-empty"
+              >
+                <p>
+                  Chưa có lượt chạy bộ thu thập từ khóa nào được ghi nhận trong{" "}
+                  <code>.studio-data/threads-api/runs</code>. Khi kết nối OAuth{" "}
+                  <strong>READY</strong> và nhấn{" "}
+                  <strong>🚀 Bắt đầu thu thập ngay</strong>, tiến trình và kết quả
+                  sẽ hiển thị tại đây.
+                </p>
+              </div>
+            ) : (
+              (() => {
+                const activeRun =
+                  collectorRuns.find((r) => r.id === selectedRunId) ||
+                  collectorRuns[0];
+                const totalTarget =
+                  (activeRun.input?.keywords?.length || 1) *
+                  (activeRun.input?.perKeyword || 5);
+                const progressPct =
+                  activeRun.status === "COMPLETED"
+                    ? 100
+                    : Math.min(
+                        95,
+                        Math.max(
+                          10,
+                          Math.round(
+                            (activeRun.returned / Math.max(1, totalTarget)) * 100,
+                          ),
+                        ),
+                      );
+
+                return (
+                  <div className="s2-collector-live-grid">
+                    {/* Active / Selected Run Detail */}
+                    <div
+                      className="s2-collector-detail-box"
+                      data-testid="collector-latest-run"
+                    >
+                      <div className="s2-collector-detail-head">
+                        <div>
+                          <span
+                            className={`s2-status-badge ${
+                              activeRun.status === "COMPLETED"
+                                ? "badge-qualified"
+                                : activeRun.status === "RUNNING"
+                                  ? "badge-queued"
+                                  : "badge-rejected"
+                            }`}
+                            data-testid="collector-run-status"
+                          >
+                            {activeRun.status}
+                          </span>
+                          <strong style={{ marginLeft: 8 }}>
+                            Phiên #{activeRun.id.slice(0, 8)} ({activeRun.execution})
+                          </strong>
+                        </div>
+                        <span
+                          className="s2-mono-id"
+                          data-testid="collector-run-stage"
+                        >
+                          Bước:{" "}
+                          {COLLECTOR_STAGE_LABELS[activeRun.stage] ||
+                            activeRun.stage}
+                        </span>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="s2-collector-progress-wrap">
+                        <div className="s2-metric-label">
+                          <span>
+                            Tiến độ truy vấn:{" "}
+                            <b>
+                              Từ khóa{" "}
+                              {Math.min(
+                                activeRun.input.keywords.length,
+                                (activeRun.queryIndex ?? 0) +
+                                  (activeRun.status === "COMPLETED" ? 0 : 1),
+                              )}
+                              /{activeRun.input.keywords.length}
+                            </b>{" "}
+                            · Request{" "}
+                            <b>
+                              {activeRun.requestAttempts}/
+                              {activeRun.input.maxRequests}
+                            </b>
+                          </span>
+                          <strong>{progressPct}%</strong>
+                        </div>
+                        <div className="s2-metric-track">
+                          <div
+                            className="s2-metric-fill"
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* 4 Key Operational Counts */}
+                      <div
+                        className="s2-collector-kpi-row"
+                        data-testid="collector-run-counts"
+                      >
+                        <div className="s2-env-pill is-ok">
+                          <span>📥</span>
+                          <div>
+                            <strong data-testid="collector-count-returned">
+                              {activeRun.returned} bài
+                            </strong>
+                            <small>Lấy được từ API</small>
+                          </div>
+                        </div>
+                        <div className="s2-env-pill is-ok">
+                          <span>🗄</span>
+                          <div>
+                            <strong data-testid="collector-count-imported">
+                              {activeRun.imported} bài
+                            </strong>
+                            <small>Đã nạp DATA-01</small>
+                          </div>
+                        </div>
+                        <div className="s2-env-pill is-ok">
+                          <span>✨</span>
+                          <div>
+                            <strong data-testid="collector-count-new">
+                              {activeRun.newPosts} bài mới
+                            </strong>
+                            <small>Chưa từng có</small>
+                          </div>
+                        </div>
+                        <div className="s2-env-pill is-neutral">
+                          <span>♻</span>
+                          <div>
+                            <strong data-testid="collector-count-duplicates">
+                              {activeRun.sourceDuplicates} bài
+                            </strong>
+                            <small>Trùng lặp đã lọc</small>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Per-keyword breakdown & DATA-01 state badges */}
+                      <div className="s2-scope-list" style={{ marginTop: 10 }}>
+                        {activeRun.input.keywords.map((kw, idx) => (
+                          <span key={kw} className="s2-scope-chip is-granted">
+                            #{kw}: {activeRun.counts?.[idx] ?? 0}/
+                            {activeRun.input.perKeyword} bài
+                          </span>
+                        ))}
+                        {Object.entries(activeRun.dataStates || {}).map(
+                          ([st, cnt]) => (
+                            <span key={st} className="s2-scope-chip">
+                              {st}: {cnt}
+                            </span>
+                          ),
+                        )}
+                      </div>
+
+                      {/* Errors from API */}
+                      {activeRun.errors && activeRun.errors.length > 0 && (
+                        <div
+                          className="alert error"
+                          role="alert"
+                          style={{ marginTop: 12 }}
+                          data-testid="collector-run-errors"
+                        >
+                          <strong>
+                            ⚠ Lỗi ghi nhận trong phiên thu thập ({activeRun.errors.length}):
+                          </strong>
+                          <ul style={{ margin: "6px 0 0 18px" }}>
+                            {activeRun.errors.map((err, i) => (
+                              <li key={i}>{err}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Collected Items Preview */}
+                      {activeRun.items && activeRun.items.length > 0 && (
+                        <div
+                          className="s2-collector-items-list"
+                          style={{ marginTop: 12 }}
+                          data-testid="collector-run-items"
+                        >
+                          <span className="s2-sub-heading">
+                            Bài viết thu được trong phiên này ({activeRun.items.length})
+                          </span>
+                          <div className="s2-env-grid" style={{ marginTop: 6 }}>
+                            {activeRun.items.map((item) => (
+                              <div
+                                key={item.postId}
+                                className="s2-env-pill is-ok"
+                              >
+                                <span>📄</span>
+                                <div>
+                                  <strong>
+                                    @{item.author || "threads_user"} ·{" "}
+                                    {item.state}
+                                    {item.score !== null
+                                      ? ` (${Math.round(item.score)}đ)`
+                                      : ""}
+                                  </strong>
+                                  <small>
+                                    {item.sourceUrl || item.postId.slice(0, 16)}
+                                  </small>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Resume / Action Footer */}
+                      <div
+                        className="s2-auth-card-foot"
+                        style={{ marginTop: 12 }}
+                      >
+                        <small>
+                          Bắt đầu:{" "}
+                          {new Date(activeRun.startedAt).toLocaleString("vi-VN")}
+                          {activeRun.metrics?.elapsedMs !== undefined
+                            ? ` · Thời gian chạy ${(activeRun.metrics.elapsedMs / 1000).toFixed(1)}s`
+                            : ""}
+                        </small>
+                        {activeRun.status !== "COMPLETED" && (
+                          <button
+                            type="button"
+                            className="s2-btn-primary"
+                            disabled={apiBusy}
+                            onClick={() =>
+                              void handleResumeCollectorRun(activeRun.id)
+                            }
+                            data-testid="collector-resume-btn"
+                          >
+                            ↻ Tiếp tục phiên thu thập (Resume)
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Historical Collector Runs List */}
+                    <div
+                      className="s2-collector-history-box"
+                      data-testid="collector-history-list"
+                    >
+                      <span className="s2-sub-heading">
+                        Lịch sử các lượt chạy ({collectorRuns.length})
+                      </span>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 8,
+                          marginTop: 8,
+                        }}
+                      >
+                        {collectorRuns.map((r) => (
+                          <button
+                            key={r.id}
+                            type="button"
+                            className={`s2-env-pill ${
+                              r.id === activeRun.id ? "is-ok" : "is-neutral"
+                            }`}
+                            style={{
+                              textAlign: "left",
+                              cursor: "pointer",
+                              width: "100%",
+                            }}
+                            onClick={() => setSelectedRunId(r.id)}
+                            data-testid={`collector-history-item-${r.id.slice(0, 8)}`}
+                          >
+                            <span>
+                              {r.status === "COMPLETED"
+                                ? "✓"
+                                : r.status === "RUNNING"
+                                  ? "⏳"
+                                  : "⚠"}
+                            </span>
+                            <div style={{ flex: 1 }}>
+                              <strong>
+                                #{r.id.slice(0, 8)} ·{" "}
+                                {r.input.keywords.map((k) => `#${k}`).join(", ")}{" "}
+                                ({r.status})
+                              </strong>
+                              <small>
+                                Lấy được {r.returned} bài · Đã nạp {r.imported}{" "}
+                                bài · Bài mới {r.newPosts}
+                                {r.errors?.length
+                                  ? ` · ${r.errors.length} lỗi`
+                                  : ""}
+                              </small>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()
+            )}
           </div>
         </div>
       )}
@@ -823,8 +1413,10 @@ export function DiscoveryWorkspace({
                 <h3>Thiết lập Quy tắc Thu thập Định kỳ</h3>
                 <p>
                   Chuẩn bị trước lịch quét từ khóa và ngưỡng an toàn. Theo quy
-                  tắc an toàn Studio, lịch này <strong>mặc định Tắt & Tạm dừng</strong>{" "}
-                  và không tự động chạy nền khi khởi động ứng dụng.
+                  tắc an toàn Studio, lịch này{" "}
+                  <strong>mặc định Tắt & Tạm dừng</strong> và giới hạn chu kỳ{" "}
+                  <strong>tối thiểu 6 giờ (tối đa 7 ngày)</strong> theo đúng ràng
+                  buộc backend.
                 </p>
               </div>
               <span className="s2-status-badge badge-review">
@@ -834,18 +1426,41 @@ export function DiscoveryWorkspace({
               </span>
             </div>
 
+            {scheduler?.blockedReason && (
+              <div className="alert error" role="alert">
+                <strong>
+                  ⚠ Lịch thu thập đang bị khóa an toàn: {scheduler.blockedReason}
+                </strong>
+                <button
+                  type="button"
+                  className="s2-btn-secondary"
+                  style={{ marginLeft: 12 }}
+                  disabled={apiBusy}
+                  onClick={() => void handleSchedulerAction("acknowledge-block")}
+                >
+                  Xác nhận đã kiểm tra
+                </button>
+              </div>
+            )}
+
             <div className="s2-sched-grid">
               <label className="s2-field-label">
-                Chu kỳ kiểm tra định kỳ ( tối thiểu 6 giờ )
+                Chu kỳ kiểm tra định kỳ (Giới hạn Backend: 6 giờ – 7 ngày)
                 <select
                   value={schedIntervalHours}
                   onChange={(e) =>
-                    setSchedIntervalHours(Number(e.target.value))
+                    setSchedIntervalHours(
+                      Math.min(168, Math.max(6, Number(e.target.value) || 6)),
+                    )
                   }
+                  data-testid="scheduler-interval-select"
                 >
-                  <option value={6}>Mỗi 6 giờ (Khuyến nghị)</option>
+                  <option value={6}>Mỗi 6 giờ (Tối thiểu theo chính sách)</option>
                   <option value={12}>Mỗi 12 giờ (2 lần / ngày)</option>
                   <option value={24}>Mỗi 24 giờ (1 lần / ngày)</option>
+                  <option value={48}>Mỗi 48 giờ (2 ngày / lần)</option>
+                  <option value={72}>Mỗi 72 giờ (3 ngày / lần)</option>
+                  <option value={168}>Mỗi 7 ngày (168 giờ — Tối đa)</option>
                 </select>
               </label>
 
@@ -854,11 +1469,11 @@ export function DiscoveryWorkspace({
                 <input
                   type="number"
                   min={1}
-                  max={100}
+                  max={1000}
                   value={schedMinInventory}
                   onChange={(e) =>
                     setSchedMinInventory(
-                      Math.max(1, Number(e.target.value) || 10),
+                      Math.min(1000, Math.max(1, Number(e.target.value) || 10)),
                     )
                   }
                 />
@@ -869,11 +1484,11 @@ export function DiscoveryWorkspace({
                 <input
                   type="number"
                   min={1}
-                  max={200}
+                  max={1000}
                   value={schedBacklogLimit}
                   onChange={(e) =>
                     setSchedBacklogLimit(
-                      Math.max(1, Number(e.target.value) || 20),
+                      Math.min(1000, Math.max(1, Number(e.target.value) || 20)),
                     )
                   }
                 />
@@ -884,18 +1499,37 @@ export function DiscoveryWorkspace({
               <small>
                 Từ khóa áp dụng cho lịch:{" "}
                 <strong>#{keywords.slice(0, 2).join(", #")}</strong> (
-                {searchType} · {perKeyword} bài/từ khóa)
+                {searchType} · {perKeyword} bài/từ khóa · Chu kỳ {schedIntervalHours}h)
               </small>
-              <button
-                type="button"
-                className="s2-btn-primary"
-                disabled={apiBusy}
-                onClick={() => void handleSaveScheduler()}
-              >
-                {apiBusy
-                  ? "Đang lưu cấu hình..."
-                  : "💾 Lưu cấu hình lịch thu thập"}
-              </button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {scheduler && (
+                  <button
+                    type="button"
+                    className="s2-btn-secondary"
+                    disabled={apiBusy}
+                    onClick={() =>
+                      void handleSchedulerAction(
+                        scheduler.paused ? "resume" : "pause",
+                      )
+                    }
+                  >
+                    {scheduler.paused
+                      ? "▶ Bỏ tạm dừng lịch"
+                      : "⏸ Tạm dừng lịch"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="s2-btn-primary"
+                  disabled={apiBusy}
+                  onClick={() => void handleSaveScheduler()}
+                  data-testid="scheduler-save-btn"
+                >
+                  {apiBusy
+                    ? "Đang lưu cấu hình..."
+                    : "💾 Lưu cấu hình lịch thu thập"}
+                </button>
+              </div>
             </div>
           </div>
 

@@ -340,6 +340,7 @@ export function DataReviewWorkspace({
         );
       } else {
         let completed = 0;
+        const updatedDetails: Record<string, Data01PostDetailResponse> = {};
         for (const item of confirmation.targetItems) {
           if (!item.data01PostId || item.data01Revision === null) continue;
           const res = await fetch(
@@ -363,7 +364,14 @@ export function DataReviewWorkspace({
                 `Không thể lưu quyết định cho @${item.handle}`,
             );
           }
+          const detailPayload = (json.data ?? json) as Data01PostDetailResponse;
+          if (detailPayload?.post?.id) {
+            updatedDetails[detailPayload.post.id] = detailPayload;
+          }
           completed++;
+        }
+        if (Object.keys(updatedDetails).length > 0) {
+          setDetailsByPostId((prev) => ({ ...prev, ...updatedDetails }));
         }
         const labelMap = {
           ACCEPT: "Chấp nhận (Đạt chuẩn)",
@@ -823,12 +831,26 @@ export function DataReviewWorkspace({
               </div>
             </div>
 
+            {reviewError && (
+              <div
+                className="alert error"
+                role="alert"
+                data-testid="review-confirm-error"
+                style={{ marginTop: 10 }}
+              >
+                {reviewError}
+              </div>
+            )}
+
             <div className="s2-confirm-footer">
               <button
                 type="button"
                 className="s2-btn-secondary"
                 disabled={reviewPending}
-                onClick={() => setConfirmation(null)}
+                onClick={() => {
+                  setReviewError("");
+                  setConfirmation(null);
+                }}
               >
                 Quay lại
               </button>

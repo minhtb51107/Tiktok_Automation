@@ -231,6 +231,11 @@ export interface ThreadsCollectorRunItem {
   stage: string;
   startedAt: string;
   completedAt: string | null;
+  deadlineAt?: number;
+  queryIndex?: number;
+  counts?: number[];
+  cursor?: string | null;
+  inFlight?: string | null;
   requestAttempts: number;
   responsesReceived: number;
   newPosts: number;
@@ -239,8 +244,24 @@ export interface ThreadsCollectorRunItem {
   imported: number;
   dataStates: Record<string, number>;
   reviewReasons: Record<string, number>;
+  items?: Array<{
+    postId: string;
+    sourceUrl: string | null;
+    author: string | null;
+    state: string;
+    score: number | null;
+    reasons: string[];
+  }>;
   errors: string[];
   warnings: string[];
+  cooldownUntil?: number;
+  metrics?: {
+    elapsedMs: number;
+    observedPeakProcessRssBytes?: number;
+    cpuUserMicros?: number;
+    cpuSystemMicros?: number;
+    storedPageBytes?: number;
+  };
 }
 
 export interface ThreadsSchedulerStatus {

@@ -78,16 +78,25 @@ Redesigned the technical job log into a **3-Zone Visual Video Production Board**
 
 ---
 
-## 4. Verification Evidence & Codex Handoff Notes
+## 4. Stage 2.1 Refinements & Verification Evidence (`s2-1-validation-evidence.json`)
 
-### Automated + Visual Browser Verification (`s2-validation-evidence.json`)
-- **TypeScript & Bundle Build**: `npx tsc --noEmit` (0 errors) and `npm run studio:build` (`studio-dist/app.js` 2.1mb, `studio-dist/app.css` 117.5kb).
-- **Responsive Viewports (`0px` Horizontal Overflow)**:
-  - Verified across `1920×1080` (Dark & Light), `1366×768`, `768×1024`, and `390×844` across all 3 Stage 2 screens (`Data Review`, `Discovery`, `Production Queue`).
-- **Interactive Browser Verification**:
-  - Verified Quick Grid vs. Split Detail mode switching, multi-select Batch Review Bar (`batchBarVisible: true`), Review Confirmation Modal (`confirmModalVisible: true`), Review & Transition History timeline (`historyTimelineSteps: 3`), Discovery 3-mode tabs (`showsBlockedAuth: true`, `showsScopes: true`), and Production Queue diagnostics drawer (`jobDiagnosticsExpanded: true`).
-- **Session Immutability**:
-  - Reference session `35b8a880-b8b5-49ec-be42-0991228eb45e.json` SHA-256 remained `add3e11415f1868136bdf0fa373d4417009cd963dde7086e24833fcdeaeb084d` (`sessionUnmodified: true`).
+Following the Stage 2 code review, **Checkpoint Stage 2.1** implements and verifies all 8 engineering refinements:
+1. **`POST /api/studio/threads/collector/runs` Integration**:
+   - Connected the `🚀 Bắt đầu thu thập ngay` button (`[data-testid="discovery-start-collector-btn"]`) directly to `POST /api/studio/threads/collector/runs` with a validated `PilotInput` payload (`keywords`, `searchType`, `perKeyword`, `maxRequests`, `maxRunMs`, `requestId`), and wired `POST /api/studio/threads/collector/runs/:id/resume` (`[data-testid="collector-resume-btn"]`).
+2. **Real Collector Run Progress, Counts, Errors & History**:
+   - Added `[data-testid="collector-runs-panel"]` connected to `GET /api/studio/threads/collector/runs`, displaying active run status, stage, progress bar, 4 operational counts (`returned`, `imported`, `newPosts`, `sourceDuplicates`), per-keyword progress, error diagnostics (`[data-testid="collector-run-errors"]`), collected items preview, and clickable run history (`[data-testid="collector-history-list"]`).
+3. **Scheduler Minimum 6-Hour Constraint**:
+   - Synced `[data-testid="scheduler-interval-select"]` with `1_nest_backend/src/threads-api/scheduler.ts` (`intervalMs >= 6 * 3600000` and `<= 7 * 86400000`), offering `6h`, `12h`, `24h`, `48h`, `72h`, and `168h (7 ngày)`, plus `pause`, `resume`, and `acknowledge-block` actions.
+4. **OAuth Vault vs. `.env` `THREADS_ACCESS_TOKEN` Distinction**:
+   - Separated App Config (`THREADS_APP_ID`, `THREADS_APP_SECRET`, `THREADS_REDIRECT_URI` + HTTPS `redirectValid`) from User Token Source (`[data-testid="threads-token-source-box"]`), clearly distinguishing encrypted local OAuth Vault tokens (`tokenSource === "OAUTH_VAULT"`) from `.env` `THREADS_ACCESS_TOKEN` (`tokenSource === "ENV"`) without falsely reporting missing configuration when `THREADS_ACCESS_TOKEN` is left empty for OAuth Vault mode.
+5. **`5/5 Audio DRAFT` vs. Production-Approved Video**:
+   - Removed the misleading `100% SẴN SÀNG` label when approvals are incomplete. Added explicit dual badges (`🎙 5/5 AUDIO NHÁP (DRAFT)` and `⏳ CHƯA DUYỆT SẢN XUẤT (0/5)`), a 4-gate approval breakdown strip (`[data-testid="production-approval-gate-strip"]` tracking Draft Audio, Spoken Text Approval, Voice Asset Approval, and Production Readiness), and `🎬 MP4 Bản nháp (DRAFT — Chưa duyệt xuất bản)` badges on draft renders.
+6. **Automated Mock OAuth `READY` Collector Run Test**:
+   - Verified in `validate-studio-v3-stage2-1.cjs` (`collectorOAuthReadyRun.passed: true`): confirmed `wrongEndpointCalled: false`, verified exact `PilotInput` request body on `POST /api/studio/threads/collector/runs`, verified UI rendering of `returned: 7 bài`, `imported: 6 bài`, `newPosts: 4 bài mới`, `duplicates: 2 bài`, `RATE_LIMITED` error box, and `POST /api/studio/threads/collector/runs/:id/resume` recovery to `COMPLETED`.
+7. **Automated Data Review API, Error Handling & Post-Save State Update Test**:
+   - Verified in `validate-studio-v3-stage2-1.cjs` (`dataReviewApiAndStateUpdate.passed: true`): confirmed `POST /api/studio/data/posts/:id/review` payload (`{ revision: 2, decision: "ACCEPT", reason: "...", confirmedType: "POST" }`), verified `400 Bad Request` (`STALE_REVISION`) error banner inside the confirmation modal (`[data-testid="review-confirm-error"]`), and verified post-save UI updates (modal closes, filter count updates to `Đạt chuẩn 1`, card badge updates to `✓ Đạt chuẩn · Sẵn sàng dựng`, and History tab shows `QUYẾT ĐỊNH CỦA BẠN: ACCEPT`).
+8. **Worktree Isolation & Session Immutability**:
+   - Reference session `35b8a880-b8b5-49ec-be42-0991228eb45e.json` SHA-256 remained `add3e11415f1868136bdf0fa373d4417009cd963dde7086e24833fcdeaeb084d` (`sessionUnmodified: true`).
 
 ### Optional Backend Contract Enhancements for Codex
 All Stage 2 screens work today against existing `DATA-01` (`/api/studio/data/*`) and `DATA-02` (`/api/studio/threads/*`) contracts. Two optional enhancements for future backend iterations:

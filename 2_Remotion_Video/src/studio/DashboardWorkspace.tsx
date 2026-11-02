@@ -149,19 +149,19 @@ export function DashboardWorkspace({
           <div className="v3-chroma-top">
             <span className="v3-prov-pill prov-dark-ink">
               <span className="v3-pulse-dot" /> REAL DATA ·{" "}
-              {runningJobs.length > 0 ? "ĐANG XỬ LÝ" : "SẴN SÀNG"}
+              {runningJobs.length > 0 ? "ĐANG XỬ LÝ" : "BẢN NHÁP (DRAFT)"}
             </span>
             <span className="v3-card-step-tag">01 · Trạng thái</span>
           </div>
           <h3 className="v3-chroma-title">
             {runningJobs.length > 0
               ? `Đang chạy ${runningJobs.length} tác vụ`
-              : "Sẵn sàng dựng & duyệt"}
+              : "5/5 Audio nháp · Chờ duyệt"}
           </h3>
           <p className="v3-chroma-desc">
             Đã thu thập <strong>{medallion.items.length} bài Threads</strong> và
-            tạo sẵn <strong>{voicedScenes.length}/{medallion.items.length} giọng đọc</strong>{" "}
-            ({totalDurationSec.toFixed(0)} giây). Hệ thống đang ở chế độ chờ an toàn.
+            tạo sẵn <strong>{voicedScenes.length}/{medallion.items.length} giọng đọc nháp (DRAFT)</strong>{" "}
+            ({totalDurationSec.toFixed(0)} giây). Cần duyệt bài & giọng đọc trước khi xuất chính thức.
           </p>
           <div className="v3-chroma-footer">
             <button
