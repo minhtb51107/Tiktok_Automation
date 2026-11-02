@@ -1,0 +1,57 @@
+.data-workspace {
+  display: grid;
+  gap: 16px;
+}
+.data-workspace > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.data-grid {
+  display: grid;
+  grid-template-columns: minmax(250px, 1fr) minmax(350px, 2fr);
+  gap: 16px;
+}
+.data-list,
+.data-inspector {
+  max-height: 65vh;
+  overflow: auto;
+  min-width: 0;
+}
+.data-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.data-list button {
+  text-align: left;
+  white-space: normal;
+  display: grid;
+  gap: 5px;
+}
+.data-workspace pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.data-workspace code {
+  overflow-wrap: anywhere;
+}
+.data-workspace textarea {
+  width: 100%;
+}
+.data-workspace label {
+  display: grid;
+  gap: 5px;
+}
+.data-list .current {
+  outline: 2px solid #6f87ff;
+}
+@media (max-width: 850px) {
+  .data-grid {
+    grid-template-columns: 1fr;
+  }
+  .data-list {
+    max-height: 35vh;
+  }
+}

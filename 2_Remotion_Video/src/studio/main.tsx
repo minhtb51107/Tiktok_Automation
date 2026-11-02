@@ -13,6 +13,7 @@ import { ScriptWorkspace } from "./ScriptWorkspace";
 import { VoiceWorkspace } from "./VoiceWorkspace";
 import { ProgressPanel } from "./ProgressPanel";
 import { EditorWorkspace } from "./EditorWorkspace";
+import {DataWorkspace} from "./DataWorkspace";
 import {PublishingWorkspace} from "./PublishingWorkspace";
 import { RenderWorkspace } from "./RenderWorkspace";
 
@@ -89,7 +90,7 @@ function App() {
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
     const query=new URLSearchParams(window.location.search),id=query.get('session');
-    if(id&&/^[a-f0-9-]{36}$/.test(id))void api<StudioSession>('/'+id).then(s=>{setSession(s);const requested=query.get('step');if(['Source','Script','Voice','Video Editor','Render','Publish'].includes(requested||''))setStep(requested!);}).catch(e=>setError(e.message));
+    if(id&&/^[a-f0-9-]{36}$/.test(id))void api<StudioSession>('/'+id).then(s=>{setSession(s);const requested=query.get('step');if(['Source','Script','Voice','Video Editor','Render','Publish','Data'].includes(requested||''))setStep(requested!);}).catch(e=>setError(e.message));
     const failed = (e: Event) => setError((e as CustomEvent<string>).detail);
     window.addEventListener("studio-job-error", failed);
     return () => window.removeEventListener("studio-job-error", failed);
@@ -229,7 +230,7 @@ function App() {
           </div>
           <span className="badge">● Local studio {session&&<small data-testid="active-session">Session {session.id} · revision {session.revision}</small>}</span>
         </header>
-        <nav aria-label="Workflow steps">
+        <nav aria-label="Workflow steps"><button disabled={!session} title="Select a SERIOUS project to open Data Library" className={step==='Data'?'current':''} onClick={()=>{if(canLeave())setStep('Data');}}>Data Library</button>
           {[
             "Source",
             "Script",
@@ -264,7 +265,7 @@ function App() {
             refresh.
           </div>
         )}
-        {session && (['Video Editor','Render'].includes(step)?<details className={step==='Video Editor'?'editor-jobs':'render-shared-jobs'}><summary>All stage jobs</summary><ProgressPanel id={session.id} onActive={setJobActive} onCompleted={()=>{if(!dirty&&!editorDirty)void api<StudioSession>('/'+session.id).then(accept).catch(e=>setError(e.message));}}/></details>:(
+        {session && step!=='Data' && (['Video Editor','Render'].includes(step)?<details className={step==='Video Editor'?'editor-jobs':'render-shared-jobs'}><summary>All stage jobs</summary><ProgressPanel id={session.id} onActive={setJobActive} onCompleted={()=>{if(!dirty&&!editorDirty)void api<StudioSession>('/'+session.id).then(accept).catch(e=>setError(e.message));}}/></details>:(
           <ProgressPanel
             id={session.id}
             onActive={setJobActive}
@@ -276,7 +277,7 @@ function App() {
             }}
           />
         ))}
-        {step === "Script" && session ? (
+        {step === "Data" && session ? (<DataWorkspace key={session.id} session={session}/>) : step === "Script" && session ? (
           <ScriptWorkspace
             session={session}
             busy={busy}

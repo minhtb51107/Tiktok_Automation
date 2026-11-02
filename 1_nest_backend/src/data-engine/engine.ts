@@ -471,6 +471,7 @@ export class DataEngine {
         throw Error(
           'Queued snapshot is retained; review changes require a new observation/evaluation',
         );
+      if(!e.gold||!['SCORED','QUALIFIED','REJECTED'].includes(e.state))throw Error('Finish/resume the pipeline before manual review');
       if (
         !['ACCEPT', 'REJECT', 'NEEDS_REVIEW'].includes(decision) ||
         typeof reason !== 'string' ||

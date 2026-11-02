@@ -213,6 +213,10 @@ describe('DATA-01 rules, scoring and deduplication — SYNTHETIC TEST DATA', () 
   });
 });
 describe('DATA-01 durable integration — local files, no API/model/database', () => {
+  it('blocks manual review of a durable but unfinished validation checkpoint',async()=>{
+    const e=await engine(),r=await e.import([input()],asOf),d=await e.detail(r.results[0].postId);d.evaluation!.state='VALIDATED';d.evaluation!.gold=null;await e.store.write('evaluations/'+d.evaluation!.id+'.json',d.evaluation);
+    await expect(e.review(d.post.id,d.evaluation!.revision,'ACCEPT','TEST DATA unfinished source','POST')).rejects.toThrow('Finish/resume');expect((await e.detail(d.post.id)).evaluation!.review).toBeNull();
+  });
   it('deduplicates a later repaired source against a previously valid source, without self-duplicate updates',async()=>{
     const e=await engine();await e.import([{...input('TEST001'),publishedAt:'INVALID'},input('TEST002')],asOf);
     const fixed=await e.import([{...input('TEST001'),fetchedAt:'2026-11-01T02:00:00.000Z'}],asOf),d=await e.detail(fixed.results[0].postId);expect(d.evaluation!.silver!.duplicate?.kind).toBe('EXACT');
