@@ -10,6 +10,8 @@ export class ThreadsApiError extends Error {
     readonly httpStatus = 0,
     readonly apiCode: number | null = null,
     readonly retryAfterMs = 0,
+    readonly detail: string = 'API_ERROR',
+    readonly apiSubcode: number | null = null,
   ) {
     super(`${kind}: Meta HTTP ${httpStatus}, code ${apiCode ?? 'unavailable'}`);
   }
@@ -64,8 +66,30 @@ export class ThreadsProvider {
           ),
         ),
       });
-    } catch {
-      throw new ThreadsApiError('TRANSIENT');
+    } catch (e: any) {
+      const cause = e?.cause?.code;
+      const allowed = [
+        'ENOTFOUND',
+        'ETIMEDOUT',
+        'ECONNRESET',
+        'ECONNREFUSED',
+        'UND_ERR_CONNECT_TIMEOUT',
+        'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+        'CERT_HAS_EXPIRED',
+        'DEPTH_ZERO_SELF_SIGNED_CERT',
+        'SELF_SIGNED_CERT_IN_CHAIN',
+      ];
+      throw new ThreadsApiError(
+        'TRANSIENT',
+        0,
+        null,
+        0,
+        allowed.includes(cause)
+          ? cause
+          : e?.name === 'TimeoutError'
+            ? 'REQUEST_TIMEOUT'
+            : 'NETWORK_FAILURE',
+      );
     }
     await hooks.after?.();
     let size = 0;
@@ -120,6 +144,10 @@ export class ThreadsProvider {
         r.status,
         code,
         Math.min(86400000, Number.isFinite(delay) ? delay : 0),
+        classifyMetaError(j),
+        Number.isSafeInteger(j.error?.error_subcode)
+          ? j.error.error_subcode
+          : null,
       );
     }
     return j;
@@ -176,4 +204,18 @@ export class ThreadsProvider {
       hooks,
     );
   }
+}
+
+// Only fixed diagnostic labels leave this boundary; never echo Meta text or URLs.
+function classifyMetaError(j: any): string {
+  const text = String(j.error?.message || j.error_message || '');
+  if (
+    /code.*(?:expired|used|invalid)|(?:expired|used|invalid).*code/i.test(text)
+  )
+    return 'AUTHORIZATION_CODE_REJECTED';
+  if (/redirect.*(?:uri|url)/i.test(text)) return 'REDIRECT_URI_REJECTED';
+  if (/client.secret|app.secret|invalid.*app.*id/i.test(text))
+    return 'APP_CREDENTIALS_REJECTED';
+  if (/test.*app|tester|invite/i.test(text)) return 'TESTER_ACCESS_REQUIRED';
+  return 'API_ERROR';
 }

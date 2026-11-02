@@ -18,6 +18,7 @@ import { ThreadsAuth } from './auth';
 import { ThreadsCollector } from './collector';
 import { DiscoveryScheduler } from './scheduler';
 import { redirectUrl, threadsConfig } from './config';
+import { OAuthFailure } from './oauth-diagnostics';
 @Injectable()
 export class ThreadsDiscoveryService {
   readonly auth = new ThreadsAuth();
@@ -44,6 +45,15 @@ export class ThreadsController {
   }
   @Get('auth/status') status() {
     return this.call(() => this.svc.auth.status());
+  }
+  @Get('auth/diagnostics') diagnostics() {
+    return this.call(() => this.svc.auth.store.read('auth/last-attempt.json'));
+  }
+  @Post('auth/recover') recover(@Headers('origin') o?: string) {
+    this.origin(o);
+    if (this.svc.collector.isActive())
+      throw new BadRequestException('COLLECTOR_BUSY');
+    return this.call(() => this.svc.auth.recover());
   }
   @Post('auth/verify') verify(@Headers('origin') o?: string) {
     this.origin(o);
@@ -99,11 +109,14 @@ export class ThreadsController {
           out.status +
           '. Close this window and check the local auth/status endpoint. No collection or publishing was started.',
       );
-    } catch {
+    } catch (e) {
       return res
         .status(400)
         .send(
-          'BLOCKED_AUTH: authorization denied, expired or failed. No token is returned. Restart OAuth from the registered HTTPS login URL.',
+          e instanceof OAuthFailure
+            ? e.message +
+                '. No credentials are returned. Inspect local /api/studio/threads/auth/diagnostics.'
+            : 'BLOCKED_AUTH: OAUTH_CALLBACK_REJECTED. No token is returned. Inspect the local diagnostics endpoint before starting a new login.',
         );
     }
   }

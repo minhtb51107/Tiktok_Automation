@@ -75,6 +75,135 @@ afterEach(async () => {
   }
 });
 describe('Threads OAuth / provider — MOCK ONLY, SYNTHETIC TEST DATA', () => {
+  it.each(['numeric', 'string', 'absent', 'null'])(
+    'handles %s user_id without treating it as the verification authority',
+    async (kind) => {
+      const f = await fixture();
+      f.cfg.accessToken = '';
+      jest.spyOn(f.auth.provider, 'exchange').mockResolvedValue({
+        access_token: 'synthetic-short-token',
+        ...(kind === 'absent'
+          ? {}
+          : {
+              user_id:
+                kind === 'null'
+                  ? null
+                  : kind === 'numeric'
+                    ? 1234567890123456
+                    : '1234567890123456',
+            }),
+      });
+      const begin = await f.auth.begin('threads-studio.test:3443'),
+        state = new URL(begin.url).searchParams.get('state')!;
+      expect(
+        (await f.auth.callback('synthetic-code', state, begin.binding)).status,
+      ).toBe('READY');
+      const diag = JSON.stringify(
+        await f.auth.store.read('auth/last-attempt.json'),
+      );
+      for (const forbidden of [
+        secret,
+        token,
+        'synthetic-code',
+        state,
+        begin.binding,
+      ])
+        expect(diag).not.toContain(forbidden);
+      expect(diag).toContain('TOKEN_VERIFICATION');
+    },
+  );
+  it('identifies a failed short exchange without retaining raw Meta error text', async () => {
+    const f = await fixture();
+    f.cfg.accessToken = '';
+    jest
+      .spyOn(f.auth.provider, 'exchange')
+      .mockRejectedValue(
+        new ThreadsApiError(
+          'INVALID_REQUEST',
+          400,
+          100,
+          0,
+          'AUTHORIZATION_CODE_REJECTED',
+          36008,
+        ),
+      );
+    const begin = await f.auth.begin('threads-studio.test:3443'),
+      state = new URL(begin.url).searchParams.get('state')!;
+    await expect(
+      f.auth.callback('synthetic-code', state, begin.binding),
+    ).rejects.toThrow('OAUTH_SHORT_TOKEN_EXCHANGE_FAILED');
+    const diag: any = await f.auth.store.read('auth/last-attempt.json');
+    expect(diag.events.at(-1)).toMatchObject({
+      stage: 'SHORT_TOKEN_EXCHANGE',
+      httpStatus: 400,
+      apiCode: 100,
+      apiSubcode: 36008,
+      detail: 'AUTHORIZATION_CODE_REJECTED',
+    });
+  });
+  it('recovers long exchange using encrypted checkpoint, without another code exchange', async () => {
+    const f = await fixture();
+    f.cfg.accessToken = '';
+    const exchange = jest.spyOn(f.auth.provider, 'exchange');
+    const long = jest
+      .spyOn(f.auth.provider, 'longLived')
+      .mockRejectedValueOnce(new ThreadsApiError('TRANSIENT', 503));
+    const begin = await f.auth.begin('threads-studio.test:3443'),
+      state = new URL(begin.url).searchParams.get('state')!;
+    await expect(
+      f.auth.callback('synthetic-code', state, begin.binding),
+    ).rejects.toThrow('OAUTH_LONG_TOKEN_EXCHANGE_FAILED');
+    expect((await f.auth.recover()).status).toBe('READY');
+    expect(exchange).toHaveBeenCalledTimes(1);
+    expect(long).toHaveBeenCalledTimes(2);
+  });
+  it('reports storage failures at their actual stage without echoing filesystem diagnostics', async () => {
+    const f = await fixture();
+    f.cfg.accessToken = '';
+    const { TokenVault } = require('../studio/token-vault');
+    jest
+      .spyOn(TokenVault.prototype, 'write')
+      .mockRejectedValue(Error('private-path-' + secret));
+    const begin = await f.auth.begin('threads-studio.test:3443'),
+      state = new URL(begin.url).searchParams.get('state')!;
+    await expect(
+      f.auth.callback('synthetic-code', state, begin.binding),
+    ).rejects.toThrow('OAUTH_CHECKPOINT_STORAGE_FAILED');
+    expect(
+      JSON.stringify(await f.auth.store.read('auth/last-attempt.json')),
+    ).not.toContain(secret);
+  });
+  it('matches official fixed request shapes and exposes only allowlisted transport causes', async () => {
+    const calls: any[] = [];
+    const p = new ThreadsProvider((async (u: any, i: any) => {
+      calls.push({ u: new URL(u), i });
+      return Response.json({ access_token: 'synthetic' });
+    }) as any);
+    await p.exchange('synthetic-code', config());
+    await p.longLived(token, secret);
+    expect(calls[0].u.origin).toBe('https://graph.threads.com');
+    expect(calls[0].u.pathname).toBe('/v1.0/oauth/access_token');
+    expect(calls[0].i.method).toBe('POST');
+    expect(new URLSearchParams(calls[0].i.body).get('grant_type')).toBe(
+      'authorization_code',
+    );
+    expect(calls[1].u.pathname).toBe('/v1.0/access_token');
+    expect(calls[1].u.searchParams.get('grant_type')).toBe('th_exchange_token');
+    expect(calls[1].i.headers.Authorization).toBe('Bearer ' + token);
+    const bad = new ThreadsProvider((async () => {
+      throw Object.assign(Error(secret), {
+        cause: { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' },
+      });
+    }) as any);
+    try {
+      await bad.debug(token);
+    } catch (e) {
+      expect((e as ThreadsApiError).detail).toBe(
+        'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+      );
+      expect((e as Error).message).not.toContain(secret);
+    }
+  });
   it('rejects localhost/IP/insecure callback and excludes unknown pilot fields', () => {
     for (const u of [
       'http://threads-studio.test/callback',
@@ -117,20 +246,18 @@ describe('Threads OAuth / provider — MOCK ONLY, SYNTHETIC TEST DATA', () => {
     'blocks %s',
     async (kind) => {
       const f = await fixture();
-      jest
-        .spyOn(f.auth.provider, 'debug')
-        .mockResolvedValue({
-          data: {
-            is_valid: true,
-            app_id: kind === 'wrong-app' ? 'different' : f.cfg.appId,
-            user_id: 'test-user',
-            expires_at: now / 1000 + (kind === 'expired' ? -1 : 3600),
-            scopes:
-              kind === 'missing-scope'
-                ? ['threads_basic']
-                : ['threads_basic', 'threads_keyword_search'],
-          },
-        });
+      jest.spyOn(f.auth.provider, 'debug').mockResolvedValue({
+        data: {
+          is_valid: true,
+          app_id: kind === 'wrong-app' ? 'different' : f.cfg.appId,
+          user_id: 'test-user',
+          expires_at: now / 1000 + (kind === 'expired' ? -1 : 3600),
+          scopes:
+            kind === 'missing-scope'
+              ? ['threads_basic']
+              : ['threads_basic', 'threads_keyword_search'],
+        },
+      });
       if (kind === 'wrong-user')
         jest
           .spyOn(f.auth.provider, 'profile')
@@ -151,13 +278,13 @@ describe('Threads OAuth / provider — MOCK ONLY, SYNTHETIC TEST DATA', () => {
     expect(new URL(out.url).origin).toBe('https://www.threads.com');
     await expect(
       f.auth.callback('synthetic-code', state, '0'.repeat(64)),
-    ).rejects.toThrow('mismatched');
+    ).rejects.toThrow('OAUTH_STATE_VALIDATION_FAILED');
     expect(
       (await f.auth.callback('synthetic-code', state, out.binding)).status,
     ).toBe('READY');
     await expect(
       f.auth.callback('synthetic-code', state, out.binding),
-    ).rejects.toThrow('expired');
+    ).rejects.toThrow('OAUTH_STATE_VALIDATION_FAILED');
     const vault = await fs.readdir(path.join(f.root, 'vault'));
     const bytes = await fs.readFile(
       path.join(f.root, 'vault', vault[0]),
@@ -183,7 +310,7 @@ describe('Threads OAuth / provider — MOCK ONLY, SYNTHETIC TEST DATA', () => {
     const exchange = jest.spyOn(f.auth.provider, 'exchange');
     await expect(
       f.auth.callback('synthetic-code', state, out.binding),
-    ).rejects.toThrow('expired');
+    ).rejects.toThrow('OAUTH_STATE_VALIDATION_FAILED');
     expect(exchange).not.toHaveBeenCalled();
     const second = await f.auth.begin('threads-studio.test:3443'),
       s = new URL(second.url).searchParams.get('state')!;

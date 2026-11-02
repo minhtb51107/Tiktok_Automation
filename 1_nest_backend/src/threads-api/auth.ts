@@ -10,6 +10,7 @@ import {
 } from './config';
 import * as path from 'path';
 import { safePage } from './adapter';
+import { OAuthDiagnostics, OAuthValidationError } from './oauth-diagnostics';
 const digest = (s: string) => createHash('sha256').update(s).digest('hex'),
   accountId = '00000000-0000-4000-8000-000000000002';
 interface AuthRecord {
@@ -28,6 +29,14 @@ interface AuthRecord {
   tokenSource: string;
   reason: string;
   retryAfterMs?: number;
+  verificationChecks?: Record<string, boolean>;
+  apiFailure?: {
+    kind: ThreadsApiError['kind'];
+    httpStatus: number;
+    apiCode: number | null;
+    apiSubcode: number | null;
+    detail: string;
+  };
 }
 export class ThreadsAuth {
   private completing = false;
@@ -135,6 +144,14 @@ export class ThreadsAuth {
     try {
       const j = await this.provider.debug(t.value, hooks),
         d = j.data;
+      r.verificationChecks = {
+        tokenValid: d?.is_valid === true,
+        appMatches: String(d?.app_id) === c.appId,
+        expiryValid:
+          Number.isFinite(d?.expires_at) && d.expires_at * 1000 > this.now(),
+        scopesArray: Array.isArray(d?.scopes),
+        identityPresent: !!d?.user_id,
+      };
       if (
         !d ||
         d.is_valid !== true ||
@@ -157,6 +174,8 @@ export class ThreadsAuth {
         r.reason = 'Missing granted read/search scopes';
       } else {
         const p = await this.provider.profile(t.value, hooks);
+        r.verificationChecks.identityMatches =
+          String(p.id) === String(d.user_id);
         if (String(p.id) !== String(d.user_id))
           throw new ThreadsApiError('BLOCKED_AUTH');
         r.status = 'READY';
@@ -165,6 +184,13 @@ export class ThreadsAuth {
       }
     } catch (e) {
       if (e instanceof ThreadsApiError) {
+        r.apiFailure = {
+          kind: e.kind,
+          httpStatus: e.httpStatus,
+          apiCode: e.apiCode,
+          apiSubcode: e.apiSubcode,
+          detail: e.detail,
+        };
         r.reason = e.message;
         r.retryAfterMs = e.retryAfterMs;
         r.status =
@@ -254,48 +280,134 @@ export class ThreadsAuth {
     }
   }
   private async completeCallback(code: string, state: string, binding: string) {
+    const diagnostic = new OAuthDiagnostics(this.store);
+    return this.completeStages(code, state, binding, diagnostic);
+  }
+  private async completeStages(
+    code: string,
+    state: string,
+    binding: string,
+    diagnostic: OAuthDiagnostics,
+  ) {
     const c = this.cfg();
-    if (c.accessToken)
-      throw Error(
-        'BLOCKED_AUTH: environment token changed during OAuth; restart login',
-      );
-    if (
-      !/^[a-f0-9]{64}$/.test(state || '') ||
-      !/^[a-f0-9]{64}$/.test(binding || '')
-    )
-      throw Error('BLOCKED_AUTH: missing/mismatched OAuth state cookie');
-    const file = 'auth/' + digest(state) + '.json',
-      p = await this.store.read<any>(file);
-    if (
-      !p ||
-      p.expires <= this.now() ||
-      p.appHash !== digest(c.appId) ||
-      p.redirectHash !== digest(c.redirectUri) ||
-      !timingSafeEqual(
-        Buffer.from(p.browserHash),
-        Buffer.from(digest(binding)),
-      ) ||
-      typeof code !== 'string' ||
-      !code ||
-      code.length > 8192
-    )
-      throw Error('BLOCKED_AUTH: expired/mismatched OAuth callback');
-    await this.store.consume(file); // Atomic one-use claim before code exchange; codes are never retried.
-    const short = await this.provider.exchange(code, c);
-    if (typeof short.access_token !== 'string' || !short.user_id)
-      throw Error('BLOCKED_AUTH: incomplete code exchange');
-    const long = await this.provider.longLived(short.access_token, c.appSecret);
-    if (
-      typeof long.access_token !== 'string' ||
-      !Number.isFinite(long.expires_in) ||
-      long.expires_in <= 0
-    )
-      throw Error('BLOCKED_AUTH: long-lived token exchange failed');
-    await this.vault().write(accountId, {
-      accessToken: long.access_token,
-      appHash: digest(c.appId),
-      expiresAt: this.now() + long.expires_in * 1000,
+    await diagnostic.step('STATE_VALIDATION', async () => {
+      if (c.accessToken) throw new OAuthValidationError('ENV_TOKEN_CHANGED');
+      if (
+        !/^[a-f0-9]{64}$/.test(state || '') ||
+        !/^[a-f0-9]{64}$/.test(binding || '')
+      )
+        throw new OAuthValidationError('STATE_OR_COOKIE_MISSING');
+      const file = 'auth/' + digest(state) + '.json',
+        p = await this.store.read<any>(file);
+      if (!p) throw new OAuthValidationError('STATE_NOT_FOUND_OR_REPLAYED');
+      if (p.expires <= this.now())
+        throw new OAuthValidationError('STATE_EXPIRED');
+      if (
+        p.appHash !== digest(c.appId) ||
+        p.redirectHash !== digest(c.redirectUri)
+      )
+        throw new OAuthValidationError('APP_OR_CALLBACK_CHANGED');
+      if (
+        typeof p.browserHash !== 'string' ||
+        p.browserHash.length !== 64 ||
+        !timingSafeEqual(
+          Buffer.from(p.browserHash),
+          Buffer.from(digest(binding)),
+        )
+      )
+        throw new OAuthValidationError('COOKIE_BINDING_MISMATCH');
+      if (typeof code !== 'string' || !code || code.length > 8192)
+        throw new OAuthValidationError('CODE_MISSING_OR_INVALID');
+      await this.store.consume(file); // Atomic one-use claim before code exchange; codes are never retried.
     });
-    return this.verify();
+    const short = await diagnostic.step('SHORT_TOKEN_EXCHANGE', () =>
+      this.provider.exchange(code, c),
+    );
+    await diagnostic.step('SHORT_TOKEN_VALIDATION', async () => {
+      if (typeof short?.access_token !== 'string' || !short.access_token)
+        throw new OAuthValidationError('SHORT_TOKEN_MISSING');
+      // Identity is established by debug_token and /me, never by lossy Number conversion.
+      if (
+        short.user_id !== undefined &&
+        short.user_id !== null &&
+        typeof short.user_id !== 'string' &&
+        typeof short.user_id !== 'number'
+      )
+        throw new OAuthValidationError('USER_ID_TYPE_INVALID');
+    });
+    await diagnostic.step('CHECKPOINT_STORAGE', () =>
+      this.vault().write('00000000-0000-4000-8000-000000000003', {
+        accessToken: short.access_token,
+        appHash: digest(c.appId),
+        expiresAt: this.now() + 3600000,
+        phase: 'SHORT',
+      }),
+    );
+    return this.finishToken(short.access_token, c, diagnostic);
+  }
+  private async finishToken(
+    token: string,
+    c: ThreadsConfig,
+    diagnostic: OAuthDiagnostics,
+  ) {
+    const long = await diagnostic.step('LONG_TOKEN_EXCHANGE', () =>
+      this.provider.longLived(token, c.appSecret),
+    );
+    await diagnostic.step('LONG_TOKEN_VALIDATION', async () => {
+      if (
+        typeof long?.access_token !== 'string' ||
+        !long.access_token ||
+        !Number.isFinite(long.expires_in) ||
+        long.expires_in <= 0
+      )
+        throw new OAuthValidationError('LONG_TOKEN_RESPONSE_INVALID');
+    });
+    await diagnostic.step('TOKEN_STORAGE', () =>
+      this.vault().write(accountId, {
+        accessToken: long.access_token,
+        appHash: digest(c.appId),
+        expiresAt: this.now() + long.expires_in * 1000,
+      }),
+    );
+    return diagnostic.step('TOKEN_VERIFICATION', async () => {
+      const verified = await this.verify();
+      const failure = (await this.store.read<AuthRecord>('auth/status.json'))
+        ?.apiFailure;
+      if (verified.status !== 'READY')
+        throw new ThreadsApiError(
+          verified.status === 'BLOCKED_PERMISSION'
+            ? 'BLOCKED_PERMISSION'
+            : 'BLOCKED_AUTH',
+          failure?.httpStatus || 0,
+          failure?.apiCode ?? null,
+          0,
+          failure?.detail || 'API_ERROR',
+          failure?.apiSubcode ?? null,
+        );
+      return verified;
+    });
+  }
+  async recover() {
+    if (this.completing) throw Error('OAuth busy');
+    this.completing = true;
+    try {
+      if (await this.token()) return this.verify();
+      const pending = await this.vault().read(
+        '00000000-0000-4000-8000-000000000003',
+      );
+      if (
+        pending.appHash !== digest(this.cfg().appId) ||
+        pending.expiresAt <= this.now() ||
+        pending.phase !== 'SHORT'
+      )
+        throw Error('BLOCKED_AUTH: no valid encrypted recovery checkpoint');
+      return await this.finishToken(
+        pending.accessToken,
+        this.cfg(),
+        new OAuthDiagnostics(this.store),
+      );
+    } finally {
+      this.completing = false;
+    }
   }
 }
