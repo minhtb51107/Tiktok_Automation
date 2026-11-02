@@ -9,9 +9,6 @@ import type { StudioJob } from "../../../1_nest_backend/src/studio/progress";
 import type { RenderManifest } from "../../../1_nest_backend/src/studio/render.types";
 import type { LibraryAsset } from "../../../1_nest_backend/src/studio/public-assets";
 import "./studio.css";
-import { UrlRows, MetadataEditor, MediaPreview } from "./SourceReview";
-import { StageReportPanel } from "./StageReportPanel";
-import { ThreadsPreview } from "./ThreadsPreview";
 import { ScriptWorkspace } from "./ScriptWorkspace";
 import { VoiceWorkspace } from "./VoiceWorkspace";
 import { ProgressPanel } from "./ProgressPanel";
@@ -20,14 +17,13 @@ import { PublishingWorkspace } from "./PublishingWorkspace";
 import { RenderWorkspace } from "./RenderWorkspace";
 import { DashboardWorkspace } from "./DashboardWorkspace";
 import { DataReviewWorkspace } from "./DataReviewWorkspace";
+import { DiscoveryWorkspace } from "./DiscoveryWorkspace";
 import {
   ProductionQueueWorkspace,
   SettingsWorkspace,
 } from "./OperationsWorkspaces";
-import { TopicEditor } from "./VisualControls";
 import {
   fetchData01Catalog,
-  SIMULATED_DISCOVERY_SCHEDULES,
   type Data01CatalogResponse,
 } from "./studio-v2-adapter";
 
@@ -273,7 +269,6 @@ function App() {
   const [data01Catalog, setData01Catalog] =
     useState<Data01CatalogResponse | null>(null);
   const [data01Connected, setData01Connected] = useState<boolean>(false);
-  const [focusItemId, setFocusItemId] = useState<string>("ALL");
   const [projectsExpanded, setProjectsExpanded] = useState<boolean>(false);
 
   useEffect(() => {
@@ -291,11 +286,6 @@ function App() {
   }, [session?.id, step, area]);
 
   const busy = localBusy || jobActive;
-  const [manual, setManual] = useState(false),
-    [manualUrl, setManualUrl] = useState(""),
-    [text, setText] = useState(""),
-    [comments, setComments] = useState(""),
-    [author, setAuthor] = useState("");
 
   const refresh = async () => {
     const list = await api<{ id: string; title: string; updatedAt?: string }[]>(
@@ -495,26 +485,15 @@ function App() {
     session !== null &&
     !["Dashboard", "Data Review", "Settings"].includes(area);
 
-  // Contextual workflow step bar ONLY appears in manual studio/discovery workflows, NOT on Dashboard/Data Review/Settings
+  // Contextual workflow step bar ONLY appears inside manual Video Studio / Script / Voice / Render / Publish steps
   const showContextualStepBar =
-    area === "Discovery" ||
     area === "Video Studio" ||
+    (area === "Discovery" && step !== "Source") ||
     (area === "Production Queue" && ["Render", "Publish"].includes(step));
 
   const completedRendersCount = sessionRenders.filter(
     (r) => r.status === "COMPLETED",
   ).length;
-
-  const visibleSourceItems = (session?.items || []).filter(
-    (i) =>
-      (focusItemId === "ALL" || i.id === focusItemId) &&
-      (i.inclusion === "EXPLICIT_CONTEXT" ||
-        i.inclusion === "MANUAL" ||
-        !session?.attempts?.length ||
-        session.attempts.some(
-          (a) => !!a.matchedTargetId && a.canonicalUrl === i.sourceUrl,
-        )),
-  );
 
   const AREA_LABELS: Record<
     StudioArea,
@@ -1009,415 +988,92 @@ function App() {
             </p>
             <button onClick={() => setStep("Source")}>Return to Source</button>
           </section>
-        ) : !session ? (
-          <section className="empty">
-            <span className="hero-icon">✦</span>
-            <h2>Turn a conversation into a thoughtful story.</h2>
-            <p>
-              Create a project, collect your source material, and choose what
-              deserves a voice.
-            </p>
-            <button
-              className="primary"
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  accept(await api("", "POST"));
-                  await refresh();
-                })
-              }
-            >
-              ＋ Tạo dự án Threads mới
-            </button>
-          </section>
         ) : (
-          <>
-            <section className="source-header">
-              <div>
-                <span className="v2-eyebrow">
-                  THU THẬP NGUỒN BÀI THREADS · BẢO TOÀN NGUYÊN BẢN
-                </span>
-                <h2>01 / Nguồn bài Threads (Discovery)</h2>
-                <p>Thu thập bài gốc, giữ nguyên lịch sử và tinh chỉnh bản dựng.</p>
-              </div>
-              <div className="actions">
-                <button
-                  disabled={busy}
-                  onClick={() => navigateArea("Data Review")}
-                >
-                  Mở Bảng Duyệt Dữ liệu (DATA-01)
-                </button>
-                <button
-                  className="primary"
-                  disabled={busy}
-                  onClick={() => void run(save)}
-                >
-                  {dirty ? "Lưu thay đổi" : "Lưu dự án"}
-                </button>
-              </div>
-            </section>
-            <label className="title-field">
-              Tên dự án
-              <input
-                maxLength={150}
-                value={session.title}
-                onChange={(e) => {
-                  setSession({ ...session, title: e.target.value });
-                  setDirty(true);
-                }}
-              />
-            </label>
-            <section className="panel">
-              <div className="panel-top">
-                <h3>Thêm liên kết bài viết Threads</h3>
-                <span>Tối đa 5 URL công khai · Tải tuần tự an toàn</span>
-              </div>
-              <UrlRows
-                key={session.id}
-                session={session}
-                disabled={busy || dirty}
-                onFetch={async (urls, scope) => {
-                  await run(async () => {
-                    const current = await api<StudioSession>("/" + session.id);
-                    accept(
-                      await api("/" + session.id + "/fetch", "POST", {
-                        revision: current.revision,
-                        urls,
-                        scope,
-                      }),
-                    );
-                    await refresh();
-                  });
-                }}
-              />
-              <div className="actions">
-                <button onClick={() => setManual(!manual)}>
-                  {manual ? "Đóng nhập thủ công" : "Dán nội dung thủ công"}
-                </button>
-                <small>
-                  {dirty
-                    ? "Hãy lưu thay đổi trước khi tải bài mới."
-                    : "Hệ thống chỉ trích xuất khi bạn nhấn Fetch."}
-                </small>
-              </div>
-              {manual && (
-                <div className="manual">
-                  <h3>Nhập nội dung thủ công</h3>
-                  <label>
-                    URL bài gốc (tùy chọn)
-                    <input
-                      value={manualUrl}
-                      onChange={(e) => setManualUrl(e.target.value)}
-                      placeholder="Threads share link or permalink"
-                    />
-                  </label>
-                  <label>
-                    Tác giả
-                    <input
-                      value={author}
-                      onChange={(e) => setAuthor(e.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Nội dung bài gốc
-                    <textarea
-                      rows={4}
-                      value={text}
-                      onChange={(e) => setText(e.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Bình luận kèm theo
-                    <textarea
-                      rows={3}
-                      value={comments}
-                      onChange={(e) => setComments(e.target.value)}
-                    />
-                  </label>
-                  <button
-                    disabled={busy || dirty || !text.trim()}
-                    onClick={() =>
-                      void run(async () => {
-                        accept(
-                          await api("/" + session.id, "PUT", {
-                            revision: session.revision,
-                            manual: { text, author, comments, url: manualUrl },
-                          }),
-                        );
-                        setText("");
-                        setComments("");
-                        setManual(false);
-                        await refresh();
-                        setNotice("Đã nhập bài viết thủ công.");
-                      })
-                    }
-                  >
-                    Nhập vào dự án
-                  </button>
-                </div>
-              )}
-              <details>
-                <summary>
-                  Cấu hình nguồn theo dõi mẫu ·{" "}
-                  <span className="v2-status-pill status-needs-review">
-                    MOCK DATA / CONTRACT PREVIEW
-                  </span>
-                </summary>
-                <div className="v2-kv-list">
-                  {SIMULATED_DISCOVERY_SCHEDULES.map((sc) => (
-                    <div className="v2-kv-row" key={sc.id}>
-                      <span>
-                        {sc.queryOrSource} ({sc.category})
-                      </span>
-                      <strong>
-                        {sc.cadence} · {sc.rateLimit}
-                      </strong>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            </section>
-            {session.errors
-              .filter(
-                (e) =>
-                  !(session.attempts || []).some(
-                    (a) =>
-                      a.status === "PARTIAL" &&
-                      a.diagnostics.some(
-                        (d) => e === a.originalUrl + ": " + d.message,
-                      ),
+          <DiscoveryWorkspace
+            session={session}
+            busy={busy}
+            dirty={dirty}
+            onUpdateSessionTitle={(title) => {
+              if (!session) return;
+              setSession({ ...session, title });
+              setDirty(true);
+            }}
+            onSave={() => void run(save)}
+            onFetchUrls={async (urls, scope) => {
+              if (!session) return;
+              await run(async () => {
+                const current = await api<StudioSession>("/" + session.id);
+                accept(
+                  await api("/" + session.id + "/fetch", "POST", {
+                    revision: current.revision,
+                    urls,
+                    scope,
+                  }),
+                );
+                await refresh();
+              });
+            }}
+            onManualImport={async ({ text, author, comments, url }) => {
+              if (!session) return;
+              await run(async () => {
+                accept(
+                  await api("/" + session.id, "PUT", {
+                    revision: session.revision,
+                    manual: { text, author, comments, url },
+                  }),
+                );
+                await refresh();
+                setNotice("Đã nhập bài viết thủ công.");
+              });
+            }}
+            onAddContextCandidate={async (originalUrl, index) => {
+              if (!session) return;
+              await run(async () => {
+                accept(
+                  await api("/" + session.id, "PUT", {
+                    revision: session.revision,
+                    addContext: {
+                      originalUrl,
+                      index,
+                    },
+                  }),
+                );
+              });
+            }}
+            onRefreshMetadata={(itemId) => {
+              if (!session) return;
+              void run(async () => {
+                accept(
+                  await api(
+                    "/" + session.id + "/metadata/" + itemId,
+                    "POST",
+                    { revision: session.revision },
                   ),
-              )
-              .map((e) => (
-                <div role="alert" className="alert error" key={e}>
-                  {e}
-                </div>
-              ))}
-            <StageReportPanel
-              id={session.id}
-              revision={session.revision}
-              dirty={dirty}
-            />
-            {!!session.attempts?.some((a) => a.contextCandidates?.length) && (
-              <details className="panel">
-                <summary>
-                  Ngữ cảnh phụ trợ — không tự động đưa vào kịch bản trừ khi bạn
-                  chọn
-                </summary>
-                {session.attempts.flatMap((a) =>
-                  (a.contextCandidates || []).map((c, index) => (
-                    <div
-                      className="context-candidate"
-                      key={a.originalUrl + index}
-                    >
-                      <strong>{c.author}</strong>
-                      <p>{c.text}</p>
-                      <small>
-                        {String(c.url || "No permalink")} · Relationship
-                        unverified
-                      </small>
-                      <button
-                        disabled={
-                          busy ||
-                          dirty ||
-                          session.items.some((i) => i.sourceUrl === c.url)
-                        }
-                        onClick={() =>
-                          void run(async () => {
-                            accept(
-                              await api("/" + session.id, "PUT", {
-                                revision: session.revision,
-                                addContext: {
-                                  originalUrl: a.originalUrl,
-                                  index,
-                                },
-                              }),
-                            );
-                          })
-                        }
-                      >
-                        Thêm vào dự án
-                      </button>
-                    </div>
-                  )),
-                )}
-              </details>
-            )}
-            <section className="content-heading">
-              <h3>
-                Bài viết đã thu thập <span>{session.items.length}</span>
-              </h3>
-              <span>
-                {session.items.filter((i) => i.selected).length} đang chọn ·{" "}
-                {dirty ? "Chưa lưu thay đổi" : "Đã lưu"}
-                {session.elapsedMs !== undefined
-                  ? ` · Trích xuất ${(session.elapsedMs / 1000).toFixed(1)}s`
-                  : ""}
-              </span>
-            </section>
-            {session.items.length > 1 && (
-              <div
-                className="v2-scene-jumpbar"
-                role="toolbar"
-                aria-label="Chọn nhanh bài viết"
-              >
-                <span>CHỌN NHANH:</span>
-                <button
-                  className={focusItemId === "ALL" ? "active" : ""}
-                  onClick={() => setFocusItemId("ALL")}
-                >
-                  Tất cả ({session.items.length})
-                </button>
-                {session.items.map((item, idx) => (
-                  <button
-                    key={item.id}
-                    className={focusItemId === item.id ? "active" : ""}
-                    onClick={() => setFocusItemId(item.id)}
-                  >
-                    #{idx + 1} {item.author.displayName}
-                  </button>
-                ))}
-              </div>
-            )}
-            {session.items.length === 0 ? (
-              <div className="panel empty-small">
-                Hãy dán liên kết bài viết Threads để bắt đầu.
-              </div>
-            ) : (
-              visibleSourceItems.map((i, index) => (
-                <article
-                  className={"content-card " + (i.selected ? "selected" : "")}
-                  key={i.id}
-                >
-                  <div className="card-head">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={i.selected}
-                        onChange={(e) =>
-                          update(i.id, { selected: e.target.checked })
-                        }
-                      />
-                      <strong>{i.author.displayName}</strong>
-                      <span className="badge">
-                        {i.metadata?.type || i.sourceReference.entityType}
-                      </span>
-                    </label>
-                    <div>
-                      <button
-                        aria-label="Move up"
-                        disabled={index === 0}
-                        onClick={() => move(i.id, -1)}
-                      >
-                        ↑
-                      </button>
-                      <button
-                        aria-label="Move down"
-                        disabled={index === session.items.length - 1}
-                        onClick={() => move(i.id, 1)}
-                      >
-                        ↓
-                      </button>
-                    </div>
-                  </div>
-                  {i.sourceUrl && (
-                    <a href={i.sourceUrl} target="_blank" rel="noreferrer">
-                      {i.sourceUrl}
-                    </a>
-                  )}
-                  <ThreadsPreview
-                    item={i}
-                    disabled={busy || dirty}
-                    onRefresh={() =>
-                      void run(async () => {
-                        accept(
-                          await api(
-                            "/" + session.id + "/metadata/" + i.id,
-                            "POST",
-                            { revision: session.revision },
-                          ),
-                        );
-                      })
-                    }
-                  />
-                  <details>
-                    <summary>
-                      Xem văn bản gốc, chủ đề, thông tin & chỉnh sửa nội dung
-                    </summary>
-                    <details>
-                      <summary>Văn bản gốc · Chỉ đọc</summary>
-                      <p className="original">{i.originalText}</p>
-                      {i.mediaReferences.map((m, n) => (
-                        <p className="media" key={n}>
-                          Media reference: {m}
-                        </p>
-                      ))}
-                    </details>
-                    <TopicEditor
-                      item={i}
-                      disabled={busy || dirty}
-                      save={async (body) => {
-                        await run(async () => {
-                          accept(
-                            await api(
-                              "/" + session.id + "/topic/" + i.id,
-                              "POST",
-                              { ...(body as object), revision: session.revision },
-                            ),
-                          );
-                        });
-                      }}
-                    />
-                    <MetadataEditor
-                      item={i}
-                      onChange={(patch) => update(i.id, patch)}
-                    />
-                    <MediaPreview item={i} />
-                    <div className="edit-grid">
-                      <label>
-                        Display text
-                        <textarea
-                          rows={4}
-                          value={i.displayText}
-                          onChange={(e) =>
-                            update(i.id, { displayText: e.target.value })
-                          }
-                        />
-                      </label>
-                      <label>
-                        Spoken text
-                        <textarea
-                          rows={4}
-                          value={i.spokenText}
-                          onChange={(e) =>
-                            update(i.id, { spokenText: e.target.value })
-                          }
-                        />
-                      </label>
-                    </div>
-                    <div className="card-bottom">
-                      <small>
-                        #{index + 1} · Revision {i.revision} ·{" "}
-                        {i.manualLocks.length
-                          ? "Manual text locks"
-                          : "Original text"}{" "}
-                      </small>
-                      <button
-                        onClick={() =>
-                          update(i.id, {
-                            displayText: i.originalText,
-                            spokenText: i.originalText,
-                          })
-                        }
-                      >
-                        Restore original text
-                      </button>
-                    </div>
-                  </details>
-                </article>
-              ))
-            )}
-          </>
+                );
+              });
+            }}
+            onSaveTopic={async (itemId, body) => {
+              if (!session) return;
+              await run(async () => {
+                accept(
+                  await api(
+                    "/" + session.id + "/topic/" + itemId,
+                    "POST",
+                    { ...(body as object), revision: session.revision },
+                  ),
+                );
+              });
+            }}
+            onUpdateItem={update}
+            onMoveItem={move}
+            onNavigateArea={navigateAreaBySlug}
+            onCreateProject={() =>
+              void run(async () => {
+                accept(await api("", "POST"));
+                await refresh();
+              })
+            }
+          />
         )}
       </main>
     </div>

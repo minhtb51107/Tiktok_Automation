@@ -1,8 +1,9 @@
-# UX-02 — Creative Operations Studio Visual Overhaul (Stage 1: App Shell & Dashboard)
+# UX-02 — Creative Operations Studio Visual Overhaul (Stage 1 & Stage 2)
 
 - **Worktree**: `D:\LCOM108_NMLT\code\100_bai_code\Tiktok_Automation_studio_v2`
 - **Branch**: `design/studio-v2`
-- **Baseline Checkpoint**: `7f8db07`
+- **Stage 1 Checkpoint**: `e1541ec` (App Shell / Navigation + Chromatic Bento Dashboard)
+- **Stage 2 Scope**: `Data Review` (Priority #1) → `Discovery` (Priority #2) → `Production Queue` (Priority #3)
 - **Reference Session**: `35b8a880-b8b5-49ec-be42-0991228eb45e` (SHA-256 `add3e11415f1868136bdf0fa373d4417009cd963dde7086e24833fcdeaeb084d`, unmodified)
 
 ---
@@ -27,49 +28,68 @@
 
 ---
 
-## 2. Information Architecture & Navigation Redesign
+## 2. Stage 1 Summary: Information Architecture & Chromatic Bento Dashboard (`e1541ec`)
 
-### Eliminating Duplicate Navigation
-- **Problem in V2**: The sidebar and the 6-step horizontal bar (`1. Nguồn bài → 6. Xuất bản`) plus a top job drawer appeared simultaneously on every screen, creating visual clutter and redundant navigation.
-- **V3 Solution**:
-  - On **Dashboard**, **Duyệt dữ liệu (`data-review`)**, **Hàng đợi (`production-queue`)**, and **Cài đặt (`settings`)**, the 6-step bar and top job drawer are **completely hidden**.
-  - Contextual step pills (`.v3-contextual-steps`) appear **only** when the user enters manual studio workflows (`Khám phá Threads` or `Xưởng Video`).
-
-### Removing Legacy Workflows from Active UI
-- Removed **FUNNY**, **COMPILATION**, and **LYRICS** completely from the sidebar, project creation flows, and active navigation.
-- All historical session files and legacy code on disk remain untouched.
+- **Eliminated Duplicate Navigation**: The 6-step horizontal bar (`1. Nguồn bài → 6. Xuất bản`) and top job drawer are completely hidden on `Tổng quan Studio`, `Nguồn bài Threads` (`Discovery`), `Duyệt dữ liệu`, `Kho Video & Hàng đợi`, and `Cấu hình`, appearing only inside the manual Video Studio (`Script`, `Voice`, `Editor`, `Render`, `Publish`).
+- **Removed Legacy Workflows from Active UI**: `FUNNY`, `COMPILATION`, and `LYRICS` are removed from active navigation while preserving all historical sessions on disk.
+- **Content-First Dashboard**: Answers the 4 primary user questions in <3 seconds via 4 color-drenched Bento cards, a live 9:16 phone-bezel video preview, a 4-stage pipeline, and 5 tactile Threads source cards.
 
 ---
 
-## 3. Content-First Dashboard (Zero Information Dump)
+## 3. Stage 2 Overhaul: `Data Review → Discovery → Production Queue`
 
-The redesigned Dashboard (`DashboardWorkspace.tsx`) answers the 4 primary user questions immediately via **Row 1 — 4 Chromatic Bento Cards**:
-1. **Hệ thống đang làm gì?** → **Periwinkle Card (`Đang dựng tự động`)**: Shows the active Threads pipeline (`5 cảnh nối tiếp · 87.3 giây · Giọng Kokoro am_adam`) with a 3D-style megaphone/waveform illustration and one-click `Mở Xưởng Video →`.
-2. **Có điều gì cần tôi xử lý?** → **Buttercup Card (`5 bài cần bạn duyệt`)**: Shows the author avatar stack, plain-language explanation (*"Xác nhận loại bài viết & kiểm tra 2 bài có từ viết tắt"*), and `Duyệt 5 bài ngay →`.
-3. **Có video nào đã hoàn thành?** → **Mint Card (`1 Video MP4 hoàn chỉnh`)**: Shows the completed `93.1 MB · 1080×1920 · 30fps` draft video with `▶ Xem & Tải MP4`.
-4. **Tôi cần nhấn vào đâu để tiếp tục?** → **Flamingo Card (`Tiến độ công việc · 3/5 bước`)**: Features the Ref 2 diagonal striped progress bar, an interactive 5-step checklist highlighting the exact current action (`[!] Duyệt 5 bài DATA-01`), and `Làm bước tiếp theo →`.
+### Priority 1: Data Review (`DataReviewWorkspace.tsx`)
+Replaced the technical admin `<table>` with a user-centric **Threads Post Card & Split Review Studio**:
+- **Visual Threads Post Cards**: Each card displays the author's real avatar (`item.avatarUrl` with fallback initials), display name, `@handle`, topic tag (`#công việc tphcm`), published date (`📅 Đăng ngày 08/08/2026` from `DATA-01` Bronze `publishedAt`), word count, Kokoro audio duration (`🎙 3.5s`), engagement metrics (`♥ 10.5K · 💬 355 · ↻ 284`), and a semantic status badge (`⏳ Cần bạn duyệt`, `✓ Đạt chuẩn`, `🎬 Trong hàng đợi`, `✕ Đã từ chối`).
+- **Two View Modes (`Xem nhanh (Thẻ)` vs. `Xem chi tiết & Lịch sử`)**:
+  - **Quick Scan Grid (`Xem nhanh (Thẻ)`)**: Multi-column responsive card grid for rapid scanning and batch selection.
+  - **Split Detail Studio (`Xem chi tiết & Lịch sử`)**: Left column shows visual post cards; right column shows a sticky 3-tab Inspector (`🎯 Vì sao & Duyệt`, `✍ Lời đọc & Hiển thị`, `🕒 Lịch sử`).
+- **Plain-Language Diagnostic Explanations (Zero Technical Jargon Dump)**:
+  - Every card surfaces two scannable visual rows: **`Điểm mạnh:`** (green pills: `✓ Điểm cấu trúc & nội dung tốt (75/100)`, `✓ Độ dài nhịp đọc tốt (15 từ)`, `✓ Tương tác cao (10.5K lượt thích)`) and **`Cần kiểm tra:`** (amber/danger pills: `⚠ Chưa xác nhận loại bài (Bài gốc hay Bình luận)`, `⚠ Phát hiện từ viết tắt / tiếng lóng (clm, đcđ...)`).
+  - Inside the detail drawer, all 6 `DATA-01` Gold breakdown metrics (`Độ khớp chủ đề mục tiêu`, `Độ đầy đủ ngữ cảnh`, `Sức hút thảo luận`, `Độ phù hợp nhịp đọc Video`, `Độ mới bài viết`, `Tương tác cộng đồng`) are rendered as visual progress bars with Vietnamese explanations.
+- **Explicit 3-Decision Controls + Confirmation Modal**:
+  - Each card and the detail drawer include an inline Entity Type segmented selector (`Bài gốc` / `Bình luận`) and 3 tactile decision buttons (`✓ Chấp nhận`, `⏳ Cần xem lại`, `✕ Từ chối`).
+  - Every data-affecting review action opens a confirmation dialog (`[data-testid="review-confirm-modal"]`) with preset Vietnamese review reasons, custom note input, and explicit confirmation before calling `POST /api/studio/data/posts/:id/review`.
+- **Multi-Select Batch Review (No Auto-Approval)**:
+  - Users can select multiple cards via checkboxes or `Chọn tất cả đang lọc`, opening a floating Batch Review Bar (`[data-testid="batch-review-bar"]`) that requires explicit confirmation before applying `ACCEPT`, `NEEDS_REVIEW`, or `REJECT` across selected posts.
+- **Review & State Transition History**:
+  - The `🕒 Lịch sử` tab fetches `GET /api/studio/data/posts/:id` (`fetchData01PostDetail`) and displays a chronological timeline (`[data-testid="review-history-timeline"]`) of every state transition (`DISCOVERED → VALIDATED → SCORED → QUALIFIED/REJECTED`) and human review decision.
 
-### Visual Components in Row 2 & Progressive Disclosure in Row 3
-- **Live 9:16 Phone-Bezel Video Preview**: Streams the real rendered MP4 (`/api/studio/sessions/35b8a880.../renders/b5a16c6d.../video`) inside a tactile phone frame with direct play/pause and download controls, paired with a 4-stage interactive pipeline (`Thu thập → Chấm điểm → Giọng đọc → Xuất MP4`) and a real 5-scene Duration & Score pill bar chart.
-- **5 Tactile Source Post Cards**: Displays the 5 real Threads posts with cached local author avatars, `@handle`, topic pill, `Cần duyệt · XX.Xđ` badge, quoted excerpt, audio duration chip, and contextual actions (`Duyệt bài`, `Lời đọc`).
-- **Progressive Disclosure Footer (`<details>`)**: Technical metadata (Session UUID, SHA-256 audio hashes, Remotion composition IDs) is tucked inside a collapsible `Chi tiết kỹ thuật` drawer at the bottom of the page.
+### Priority 2: Discovery (`DiscoveryWorkspace.tsx`)
+Replaced the raw scraper form with a transparent, extensible **3-Mode Threads Discovery Hub**:
+- **Mode 1 — Direct URLs & Manual Input (`🔗 Dán Link & Nhập bài trực tiếp`)**:
+  - Works immediately with one primary CTA (`🚀 Bắt đầu Thu thập & Đưa vào Duyệt`), multi-URL badge counter, topic tag input, comment limit selector (`1–10`), context mode toggle, and manual fallback post composer.
+- **Mode 2 — Official Threads Keyword Collector (`🔍 Từ khóa & Threads API` — Connected to `DATA-02`)**:
+  - Queries `GET /api/studio/threads/auth/status` (`fetchThreadsDiscoveryState`).
+  - Explicitly surfaces the live connection state (`CHƯA KẾT NỐI THREADS API — BLOCKED_AUTH`), lists the 4 required `.env` keys (`THREADS_APP_ID`, `THREADS_APP_SECRET`, `THREADS_REDIRECT_URI`, `THREADS_ACCESS_TOKEN`) and 2 required OAuth scopes (`threads_basic`, `threads_keyword_search`), provides a multi-keyword tag builder, and disables `POST /api/studio/threads/collect` when credentials are missing so the UI **never fakes an active crawler**.
+- **Mode 3 — Future Collection Schedule (`🗓 Lịch thu thập tự động` — Connected to `DATA-02 Scheduler`)**:
+  - Queries `GET /api/studio/threads/scheduler` and saves real configuration via `POST /api/studio/threads/scheduler/configure` (interval selector `1h / 3h / 6h / 12h / 24h`, minimum inventory target, review backlog pause limit, and scheduled keyword tags) while clearly stating that background crawling stays paused until `THREADS_ACCESS_TOKEN` is connected and the user explicitly enables it.
+- **Visual Collected Posts Grid**:
+  - Displays the 5 collected Threads posts as visual cards below the Discovery Hub with direct navigation to `Chuyển sang Duyệt dữ liệu (5 bài) →`.
+
+### Priority 3: Production Queue (`OperationsWorkspaces.tsx` — `ProductionQueueWorkspace`)
+Redesigned the technical job log into a **3-Zone Visual Video Production Board**:
+- **Zone 1 — Exported MP4 Videos (`🎬 Video MP4 Đã xuất`)**:
+  - Renders each exported `.mp4` inside a 9:16 vertical video preview card (`<video preload="metadata" muted playsInline>`), paired with resolution (`1080×1920 · 30fps`), file size (`93.1 MB`), render elapsed duration (`534.7s`), `DRAFT — Chưa duyệt xuất bản` safety badge, and direct `⬇ Tải MP4` / `↗ Xem toàn màn hình` actions.
+- **Zone 2 — Active Video Production Storyboard (`🎞 Bản dựng Hiện tại — 5 cảnh nối tiếp`)**:
+  - Visualizes the active project's 5 scenes as a horizontal storyboard strip showing scene readiness (`5/5 cảnh đã có giọng đọc Kokoro · 100% SẴN SÀNG`), individual scene duration (`3.5s`, `10.5s`, `30.3s`, `23.2s`, `9.6s`), author avatar, and script excerpt, with CTAs to open the 9:16 Canvas (`Mở Bàn dựng 9:16`) or render a new MP4 (`Xuất bản nháp MP4 mới`).
+- **Zone 3 — Technical Pipeline Jobs (`⚙ Nhật ký Tác vụ Kỹ thuật`)**:
+  - Displays FIFO backend jobs with category filter pills (`RENDER`, `EDITOR`, `VOICE`, `MEDIA`, `SCRIPT`), visual progress bars, elapsed time, an expandable **Diagnostics & Warning Drawer** (`🔍 Xem 12 ghi chú` / `Ẩn chi tiết`), and a safe **Retry / Inspect** action (`↻ Chuyển tới Kết xuất Video MP4 để kiểm tra / chạy lại`) that preserves all session data.
 
 ---
 
-## 4. DATA-01 Accuracy Investigation & Fix
+## 4. Verification Evidence & Codex Handoff Notes
 
-### Why Studio V2 Showed `3 Gold / 2 Silver` vs. `DATA-01` Showing `5 NEEDS_REVIEW`
-1. **Root Cause**:
-   - Branch `design/studio-v2` was created before `DATA-01` commits `d0ad9b2` and `d7927ba` landed on `feature/threads-serious-studio`.
-   - In V2 (`7f8db07`), `studio-v2-adapter.ts` computed a client-side heuristic (`estimateQualitySignals`) from the session JSON and labeled 3 posts `Gold` and 2 posts `Silver`.
-2. **Actual `DATA-01` Engine Truth**:
-   - In `1_nest_backend/src/data-engine/engine.ts` and `.studio-data/reports/data01/real-dataset.json`, **Bronze → Silver → Gold** are sequential pipeline layers (`5 Bronze observations → 5 Silver normalized → 5 Gold scored`), not quality tiers.
-   - Inside the Gold catalog (`/api/studio/data`), all **5 posts** have `state: "SCORED"` and `eligibility: "NEEDS_REVIEW"` (`counts: { SCORED: 5 }`, `qualifiedRatio: 0`):
-     - `post-2f890f3aa63f` (`@phuonglinh.916`, score `75.29`) — `NEEDS_REVIEW` (`entityType: UNKNOWN`)
-     - `post-174f139f7276` (`@h_anh206`, score `76.43`) — `NEEDS_REVIEW` (`entityType: UNKNOWN`)
-     - `post-5fa03c6812ca` (`@m_nhon07`, score `82.61`) — `NEEDS_REVIEW` (`entityType: UNKNOWN`)
-     - `post-9474ca15dc13` (`@quyenminh.le`, score `75.47`) — `NEEDS_REVIEW` (`entityType: UNKNOWN` + `POLICY_RISK` slang `clm/cmn`)
-     - `post-bf74566ab8a2` (`@twice_._not`, score `69.46`) — `NEEDS_REVIEW` (`entityType: UNKNOWN` + `POLICY_RISK` slang `đcđ`)
-3. **Fix Implemented**:
-   - Connected `studio-v2-adapter.ts` (`fetchData01Catalog`) and `DataReviewWorkspace.tsx` directly to `GET /api/studio/data`, `POST /api/studio/data/posts/:id/review`, and `POST /api/studio/data/import-session`.
-   - Replaced the misleading `3 Gold / 2 Silver` count with the real `DATA-01` status (`5 bài cần duyệt / 0 đủ chuẩn tự động`) and explicit provenance badges (`REAL DATA`, `NEEDS REVIEW`, `NOT CONNECTED`, `MOCK DATA`).
+### Automated + Visual Browser Verification (`s2-validation-evidence.json`)
+- **TypeScript & Bundle Build**: `npx tsc --noEmit` (0 errors) and `npm run studio:build` (`studio-dist/app.js` 2.1mb, `studio-dist/app.css` 117.5kb).
+- **Responsive Viewports (`0px` Horizontal Overflow)**:
+  - Verified across `1920×1080` (Dark & Light), `1366×768`, `768×1024`, and `390×844` across all 3 Stage 2 screens (`Data Review`, `Discovery`, `Production Queue`).
+- **Interactive Browser Verification**:
+  - Verified Quick Grid vs. Split Detail mode switching, multi-select Batch Review Bar (`batchBarVisible: true`), Review Confirmation Modal (`confirmModalVisible: true`), Review & Transition History timeline (`historyTimelineSteps: 3`), Discovery 3-mode tabs (`showsBlockedAuth: true`, `showsScopes: true`), and Production Queue diagnostics drawer (`jobDiagnosticsExpanded: true`).
+- **Session Immutability**:
+  - Reference session `35b8a880-b8b5-49ec-be42-0991228eb45e.json` SHA-256 remained `add3e11415f1868136bdf0fa373d4417009cd963dde7086e24833fcdeaeb084d` (`sessionUnmodified: true`).
+
+### Optional Backend Contract Enhancements for Codex
+All Stage 2 screens work today against existing `DATA-01` (`/api/studio/data/*`) and `DATA-02` (`/api/studio/threads/*`) contracts. Two optional enhancements for future backend iterations:
+1. **Batch Review Endpoint (`POST /api/studio/data/posts/batch-review`)**: Currently, batch review in `DataReviewWorkspace.tsx` executes sequential `POST /api/studio/data/posts/:id/review` calls so it works immediately with `DATA-01`. A single atomic batch endpoint would reduce disk writes when reviewing 20+ posts at once.
+2. **Author Avatar URL in `DATA-01` Bronze Record**: `DATA-01` Bronze currently stores `authorHandle` and `authorDisplayName`, while the cached avatar URL lives in the Studio session's `source.items[].authorAvatarUrl`. `studio-v2-adapter.ts` joins them automatically; persisting `authorAvatarUrl` inside `DATA-01` Bronze will keep avatars available even for standalone keyword-collected posts before they are attached to a session.

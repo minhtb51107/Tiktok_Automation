@@ -10,6 +10,50 @@ import {
 } from "./studio-v2-adapter";
 import { VOICE_SPEED } from "../../../1_nest_backend/src/studio/voice-settings";
 
+type QueueZoneFilter = "ALL" | "MP4_OUTPUTS" | "ACTIVE_PRODUCTION" | "TECH_JOBS";
+
+const STAGE_META: Record<
+  string,
+  { icon: string; label: string; stepTarget: string; colorClass: string }
+> = {
+  RENDER: {
+    icon: "🎬",
+    label: "Kết xuất Video MP4",
+    stepTarget: "Render",
+    colorClass: "stage-render",
+  },
+  EDITOR: {
+    icon: "🖼",
+    label: "Chuẩn bị Bàn dựng 9:16",
+    stepTarget: "Video Editor",
+    colorClass: "stage-editor",
+  },
+  VOICE: {
+    icon: "🎙",
+    label: "Tổng hợp Giọng đọc Kokoro",
+    stepTarget: "Voice",
+    colorClass: "stage-voice",
+  },
+  SCRIPT: {
+    icon: "✍",
+    label: "Chuẩn hóa Kịch bản đọc",
+    stepTarget: "Script",
+    colorClass: "stage-script",
+  },
+  MEDIA: {
+    icon: "📥",
+    label: "Tải & Lưu ảnh đại diện",
+    stepTarget: "Source",
+    colorClass: "stage-media",
+  },
+  SOURCE: {
+    icon: "🔗",
+    label: "Trích xuất Bài gốc Threads",
+    stepTarget: "Source",
+    colorClass: "stage-source",
+  },
+};
+
 export function ProductionQueueWorkspace({
   session,
   jobs,
@@ -25,229 +69,717 @@ export function ProductionQueueWorkspace({
   onCancelJob: (jobId: string) => void;
   onOpenStep: (step: string) => void;
 }) {
+  const [zoneFilter, setZoneFilter] = useState<QueueZoneFilter>("ALL");
   const [stageFilter, setStageFilter] = useState<string>("ALL");
+  const [playingRenderId, setPlayingRenderId] = useState<string | null>(null);
+  const [inspectedRenderId, setInspectedRenderId] = useState<string | null>(
+    null,
+  );
+  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+
   const filteredJobs = jobs.filter(
     (j) => stageFilter === "ALL" || j.currentStage === stageFilter,
   );
-  const stages = Array.from(new Set(["ALL", ...jobs.map((j) => j.currentStage)]));
+  const stages = Array.from(
+    new Set(["ALL", ...jobs.map((j) => j.currentStage)]),
+  );
+
+  const completedRenders = renders.filter((r) => r.status === "COMPLETED");
+  const failedOrCancelledRenders = renders.filter(
+    (r) => r.status !== "COMPLETED",
+  );
+  const runningJobs = jobs.filter((j) =>
+    ["QUEUED", "RUNNING"].includes(j.status),
+  );
+
+  const selectedItems = (session?.items || []).filter((i) => i.selected);
+  const scenesWithAudio = selectedItems.filter((item) =>
+    (session?.voiceAssets || []).some(
+      (a) => a.itemId === item.id && a.status !== "STALE",
+    ),
+  );
+  const totalAudioSec = selectedItems.reduce((acc, item) => {
+    const asset = (session?.voiceAssets || [])
+      .filter((a) => a.itemId === item.id && a.status !== "STALE")
+      .slice(-1)[0];
+    return acc + (asset ? asset.durationMs / 1000 : 0);
+  }, 0);
+
+  const readinessPct =
+    selectedItems.length > 0
+      ? Math.round((scenesWithAudio.length / selectedItems.length) * 100)
+      : 0;
 
   return (
-    <div className="v2-workspace" data-testid="production-queue-workspace">
-      <div className="v2-page-header">
-        <div>
-          <span className="v2-eyebrow">
-            SEQUENTIAL FIFO JOB ORCHESTRATOR · PERSISTED EXECUTION HISTORY
-          </span>
-          <h2>Production Queue & Draft Outputs</h2>
+    <div
+      className="v2-workspace s2-queue-workspace"
+      data-testid="production-queue-workspace"
+    >
+      {/* Hero Banner with 3D Film Clapperboard Art & Primary Action */}
+      <div className="s2-hero-banner s2-hero-queue">
+        <div className="s2-hero-copy">
+          <div className="v3-eyebrow-row">
+            <span className="v3-prov-pill prov-real">
+              ● {completedRenders.length} MP4 ĐÃ XUẤT
+            </span>
+            <span className="v3-prov-pill prov-review">
+              🎞 {selectedItems.length} CẢNH ĐANG DỰNG ({readinessPct}% SẴN SÀNG)
+            </span>
+            <span className="v3-prov-pill prov-real">
+              ⚙ {jobs.length} TÁC VỤ KỸ THUẬT
+            </span>
+          </div>
+          <h2>Kho Video & Điều phối Sản xuất</h2>
           <p>
-            Track active and historical pipeline jobs across Source Extraction,
-            AI/Offline Script Normalization, Kokoro Voice Synthesis, Preview
-            Preparation, and Local MP4 Rendering.
+            Quản lý trực quan toàn bộ quy trình sản xuất: tách biệt rõ{" "}
+            <strong>Video MP4 đã xuất</strong>,{" "}
+            <strong>Dự án video đang dựng</strong> và{" "}
+            <strong>Nhật ký tác vụ kỹ thuật</strong>. Mọi thao tác thử lại đều
+            bảo toàn nguyên vẹn dữ liệu dự án.
           </p>
         </div>
-        <div className="v2-header-actions">
-          <button disabled={busy} onClick={() => onOpenStep("Voice")}>
-            Voice Batch Studio
-          </button>
-          <button
-            className="primary"
-            disabled={busy}
-            onClick={() => onOpenStep("Render")}
-          >
-            Open MP4 Render Console
-          </button>
+
+        <div className="s2-hero-visual-right">
+          <div className="s2-hero-3d-art" aria-hidden="true">
+            <svg viewBox="0 0 96 80" fill="none">
+              <rect
+                x="14"
+                y="18"
+                width="68"
+                height="48"
+                rx="12"
+                fill="#7ce8c8"
+              />
+              <rect
+                x="20"
+                y="10"
+                width="56"
+                height="12"
+                rx="6"
+                transform="rotate(-6 20 10)"
+                fill="#fce068"
+              />
+              <circle cx="48" cy="42" r="14" fill="#12131a" />
+              <path d="M44 35.5L55 42L44 48.5V35.5Z" fill="#ff8ad8" />
+            </svg>
+          </div>
+          <div className="s2-hero-actions">
+            <button
+              type="button"
+              className="s2-btn-secondary"
+              disabled={busy}
+              onClick={() => onOpenStep("Voice")}
+            >
+              🎙 Tạo Giọng đọc Hàng loạt
+            </button>
+            <button
+              type="button"
+              className="s2-btn-primary"
+              disabled={busy}
+              onClick={() => onOpenStep("Render")}
+              data-testid="queue-open-render-btn"
+            >
+              🎬 Mở Phòng Xuất Video MP4 →
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Retained Video Drafts */}
-      <section className="v2-card">
-        <div className="v2-card-header">
-          <div>
-            <h3>Retained Video Drafts ({renders.length})</h3>
-            <small>
-              Verified local MP4 outputs from .studio-data/renders (not approved
-              for publishing)
-            </small>
+      {/* 3-Zone Visual Switcher Bar */}
+      <div
+        className="s2-zone-tabs"
+        role="tablist"
+        aria-label="Phân loại hàng đợi sản xuất"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={zoneFilter === "ALL"}
+          className={`s2-zone-tab ${zoneFilter === "ALL" ? "active" : ""}`}
+          onClick={() => setZoneFilter("ALL")}
+        >
+          <span>⊞ Tất cả khu vực</span>
+          <b>{renders.length + 1 + jobs.length}</b>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={zoneFilter === "MP4_OUTPUTS"}
+          className={`s2-zone-tab ${zoneFilter === "MP4_OUTPUTS" ? "active" : ""}`}
+          onClick={() => setZoneFilter("MP4_OUTPUTS")}
+          data-testid="zone-tab-mp4"
+        >
+          <span>🎬 Video MP4 Đã xuất</span>
+          <b>{renders.length}</b>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={zoneFilter === "ACTIVE_PRODUCTION"}
+          className={`s2-zone-tab ${zoneFilter === "ACTIVE_PRODUCTION" ? "active" : ""}`}
+          onClick={() => setZoneFilter("ACTIVE_PRODUCTION")}
+          data-testid="zone-tab-production"
+        >
+          <span>🎞 Video Đang Sản xuất</span>
+          <b>{selectedItems.length} cảnh</b>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={zoneFilter === "TECH_JOBS"}
+          className={`s2-zone-tab ${zoneFilter === "TECH_JOBS" ? "active" : ""}`}
+          onClick={() => setZoneFilter("TECH_JOBS")}
+          data-testid="zone-tab-jobs"
+        >
+          <span>⚙ Tác vụ Kỹ thuật</span>
+          <b>{jobs.length}</b>
+        </button>
+      </div>
+
+      {/* ZONE 1: Exported MP4 Videos & Failed Render Recovery */}
+      {(zoneFilter === "ALL" || zoneFilter === "MP4_OUTPUTS") && (
+        <section
+          className="s2-queue-section"
+          aria-label="Kho Video MP4 đã xuất"
+          data-testid="zone-mp4-outputs"
+        >
+          <div className="s2-section-title-row">
+            <div>
+              <span className="s2-zone-pill pill-mint">
+                KHU VỰC 1 · THÀNH PHẨM BẢN NHÁP
+              </span>
+              <h3>
+                Video MP4 Đã Xuất ({completedRenders.length} hoàn chỉnh ·{" "}
+                {failedOrCancelledRenders.length} lỗi/đã hủy)
+              </h3>
+              <p>
+                Các file MP4 thật lưu tại <code>.studio-data/renders</code>. Bản
+                nháp phục vụ kiểm duyệt nội bộ, không tự động đăng công khai.
+              </p>
+            </div>
           </div>
-          <span className="v2-status-pill status-review">
-            {renders.filter((r) => r.status === "COMPLETED").length} COMPLETED
-          </span>
-        </div>
-        {renders.length === 0 ? (
-          <p className="v2-muted">No render manifests recorded for this session yet.</p>
-        ) : (
-          <div className="v2-drafts-grid">
-            {renders.map((m) => (
-              <article className="v2-draft-card" key={m.jobId}>
-                <div className="v2-draft-head">
-                  <span
-                    className={`v2-status-pill status-${m.status === "COMPLETED" ? "success" : "warning"}`}
+
+          {renders.length === 0 ? (
+            <div className="s2-empty-card">
+              <p>
+                Chưa có bản xuất MP4 nào cho dự án này. Hãy nhấn{" "}
+                <strong>Mở Phòng Xuất Video MP4</strong> để kết xuất bản nháp
+                đầu tiên.
+              </p>
+            </div>
+          ) : (
+            <div className="s2-mp4-grid">
+              {renders.map((m, idx) => {
+                const isCompleted = m.status === "COMPLETED";
+                const isPlaying = playingRenderId === m.jobId;
+                const isInspected = inspectedRenderId === m.jobId;
+                const previewPoster =
+                  session?.sourceImages?.[selectedItems[idx % Math.max(1, selectedItems.length)]?.id]?.uri ||
+                  undefined;
+
+                return (
+                  <article
+                    key={m.jobId}
+                    className={`s2-mp4-card status-${m.status.toLowerCase()}`}
+                    data-testid={`mp4-card-${m.jobId.slice(0, 8)}`}
                   >
-                    {m.mode} · {m.status}
-                  </span>
-                  <code className="v2-mono">{m.jobId.slice(0, 8)}</code>
-                </div>
+                    {/* Visual 9:16 Video Thumbnail Header */}
+                    <div className="s2-mp4-thumb-wrap">
+                      {isCompleted ? (
+                        isPlaying ? (
+                          <video
+                            src={m.downloadUrl}
+                            controls
+                            autoPlay
+                            playsInline
+                            className="s2-mp4-video-player"
+                          />
+                        ) : (
+                          <div
+                            className="s2-mp4-thumb-preview"
+                            onClick={() => setPlayingRenderId(m.jobId)}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setPlayingRenderId(m.jobId);
+                              }
+                            }}
+                            aria-label={`Phát thử video ${m.jobId.slice(0, 8)}`}
+                          >
+                            <video
+                              src={`${m.downloadUrl}#t=1.0`}
+                              preload="metadata"
+                              muted
+                              playsInline
+                              poster={previewPoster}
+                              className="s2-mp4-video-Still"
+                            />
+                            <div className="s2-mp4-thumb-overlay">
+                              <span className="s2-play-circle">▶</span>
+                              <span className="s2-res-pill">
+                                {m.width}×{m.height} · {m.fps}fps
+                              </span>
+                              <span className="s2-dur-pill">
+                                ⏱ {m.expectedDurationSeconds.toFixed(1)}s
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      ) : (
+                        <div className="s2-mp4-thumb-failed">
+                          <span className="s2-failed-icon">
+                            {m.status === "CANCELLED" ? "⏹" : "⚠"}
+                          </span>
+                          <strong>
+                            {m.status === "CANCELLED"
+                              ? "Đã dừng theo yêu cầu"
+                              : "Lượt xuất MP4 bị gián đoạn"}
+                          </strong>
+                          <small>
+                            {m.width}×{m.height} ·{" "}
+                            {m.expectedDurationSeconds.toFixed(1)}s
+                          </small>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Card Details */}
+                    <div className="s2-mp4-card-body">
+                      <div className="s2-mp4-head-row">
+                        <span
+                          className={`s2-status-badge ${
+                            isCompleted
+                              ? "badge-qualified"
+                              : m.status === "CANCELLED"
+                                ? "badge-review"
+                                : "badge-rejected"
+                          }`}
+                        >
+                          {isCompleted
+                            ? "✓ MP4 Hoàn chỉnh"
+                            : m.status === "CANCELLED"
+                              ? "⏹ Đã hủy"
+                              : "✕ Lỗi xuất"}
+                        </span>
+                        <code className="s2-mono-id">#{m.jobId.slice(0, 8)}</code>
+                      </div>
+
+                      <strong className="s2-mp4-title">
+                        Bản dựng {m.width === 1080 ? "Full HD 9:16" : "HD 9:16"} ·{" "}
+                        {formatBytes(m.bytes)}
+                      </strong>
+
+                      <div className="s2-mp4-meta-list">
+                        <span>
+                          Thời lượng: <b>{m.expectedDurationSeconds.toFixed(1)} giây</b>
+                        </span>
+                        <span>·</span>
+                        <span>
+                          Chế độ: <b>{m.mode}</b>
+                        </span>
+                      </div>
+
+                      {/* Expandable Warnings / Error Diagnostics */}
+                      {m.warnings.length > 0 && (
+                        <div className="s2-mp4-diag-box">
+                          <button
+                            type="button"
+                            className="s2-diag-toggle"
+                            onClick={() =>
+                              setInspectedRenderId(
+                                isInspected ? null : m.jobId,
+                              )
+                            }
+                          >
+                            {isInspected
+                              ? "▾ Ẩn ghi chú kỹ thuật"
+                              : `▸ Xem ${m.warnings.length} ghi chú khi kết xuất`}
+                          </button>
+                          {isInspected && (
+                            <ul className="s2-diag-list">
+                              {m.warnings.slice(0, 5).map((w, wi) => (
+                                <li key={wi}>{w}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="s2-mp4-actions">
+                        {isCompleted ? (
+                          <>
+                            <button
+                              type="button"
+                              className="s2-btn-secondary"
+                              onClick={() =>
+                                setPlayingRenderId(
+                                  isPlaying ? null : m.jobId,
+                                )
+                              }
+                            >
+                              {isPlaying ? "⏹ Thu gọn trình phát" : "▶ Phát thử"}
+                            </button>
+                            <a
+                              className="s2-btn-primary s2-link-btn"
+                              href={m.downloadUrl + "?download=1"}
+                            >
+                              ⬇ Tải MP4 ({formatBytes(m.bytes)})
+                            </a>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="s2-btn-primary"
+                            onClick={() => onOpenStep("Render")}
+                          >
+                            ↺ Mở Phòng Render để thử lại an toàn
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ZONE 2: Active Video Production Storyboard & Readiness */}
+      {(zoneFilter === "ALL" || zoneFilter === "ACTIVE_PRODUCTION") && (
+        <section
+          className="s2-queue-section"
+          aria-label="Video đang trong quá trình sản xuất"
+          data-testid="zone-active-production"
+        >
+          <div className="s2-section-title-row">
+            <div>
+              <span className="s2-zone-pill pill-periwinkle">
+                KHU VỰC 2 · VIDEO ĐANG SẢN XUẤT
+              </span>
+              <h3>
+                Bản dựng Hiện tại: {session?.title || "Untitled project"} (
+                {selectedItems.length} cảnh nối tiếp)
+              </h3>
+              <p>
+                Tiến trình chuẩn bị nguyên liệu của dự án hiện tại trước khi
+                xuất bản nháp MP4 mới.
+              </p>
+            </div>
+            <div className="s2-row-btns">
+              <button
+                type="button"
+                className="s2-btn-secondary"
+                onClick={() => onOpenStep("Video Editor")}
+              >
+                🖼 Mở Bàn dựng 9:16
+              </button>
+              <button
+                type="button"
+                className="s2-btn-primary"
+                onClick={() => onOpenStep("Render")}
+              >
+                🎬 Xuất bản nháp MP4 mới
+              </button>
+            </div>
+          </div>
+
+          <div className="s2-active-prod-card">
+            <div className="s2-prod-progress-head">
+              <div>
                 <strong>
-                  {m.width}×{m.height} · {m.fps} FPS ·{" "}
-                  {m.expectedDurationSeconds.toFixed(2)}s
+                  Tiến độ sẵn sàng: {scenesWithAudio.length}/
+                  {selectedItems.length} cảnh đã có giọng đọc Kokoro · Tổng thời
+                  lượng dự kiến ~{totalAudioSec.toFixed(1)}s
                 </strong>
                 <small>
-                  Size: {formatBytes(m.bytes)} · Timeline hash{" "}
-                  {m.timelineHash.slice(0, 10)}
+                  {runningJobs.length > 0
+                    ? `Đang chạy ${runningJobs.length} tác vụ nền...`
+                    : "Tất cả cảnh đã sẵn sàng để tinh chỉnh trên Timeline hoặc xuất MP4."}
                 </small>
-                {m.warnings.length > 0 && (
-                  <small className="v2-warning-text">
-                    {m.warnings.length} render warnings logged
-                  </small>
-                )}
-                {m.status === "COMPLETED" && (
-                  <div className="v2-row-actions">
-                    <a
-                      className="v2-btn-link"
-                      href={m.downloadUrl + "?download=1"}
-                    >
-                      ⬇ Download MP4
-                    </a>
-                    <a
-                      className="v2-btn-link"
-                      href={m.downloadUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      ▶ Open Stream
-                    </a>
-                  </div>
-                )}
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+              </div>
+              <span className="s2-status-badge badge-qualified">
+                {readinessPct}% SẴN SÀNG
+              </span>
+            </div>
 
-      {/* Persisted Jobs Table */}
-      <section className="v2-card">
-        <div className="v2-card-header">
-          <div>
-            <h3>FIFO Job Queue ({filteredJobs.length})</h3>
-            <small>
-              Session {session?.id.slice(0, 8) || "—"} · Related to{" "}
-              {session?.items.filter((i) => i.selected).length ?? 0} selected
-              source posts
-            </small>
-          </div>
-          <div className="v2-segmented">
-            {stages.map((st) => (
-              <button
-                key={st}
-                className={stageFilter === st ? "active" : ""}
-                onClick={() => setStageFilter(st)}
-              >
-                {st}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="v2-table-scroll">
-          <table className="v2-table" data-testid="production-jobs-table">
-            <thead>
-              <tr>
-                <th>Job ID</th>
-                <th>Stage / Operation</th>
-                <th>Status</th>
-                <th>Current Step / Progress</th>
-                <th>Elapsed</th>
-                <th>Diagnostics</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredJobs.map((j) => {
-                const isRunning = ["QUEUED", "RUNNING"].includes(j.status);
+            <div className="v3-striped-progress-track">
+              <div
+                className="v3-striped-progress-fill"
+                style={{ width: `${Math.max(8, readinessPct)}%` }}
+              />
+            </div>
+
+            <div className="s2-storyboard-strip">
+              {selectedItems.map((item, idx) => {
+                const avatar =
+                  session?.sourceImages?.[item.id]?.uri ||
+                  item.metadata?.avatar ||
+                  null;
+                const asset = (session?.voiceAssets || [])
+                  .filter((a) => a.itemId === item.id && a.status !== "STALE")
+                  .slice(-1)[0];
+
                 return (
-                  <tr key={j.jobId}>
-                    <td>
-                      <code className="v2-mono">{j.jobId.slice(0, 8)}</code>
-                    </td>
-                    <td>
-                      <strong>{j.currentStage}</strong>
-                      <small className="v2-block-sub v2-mono">
-                        {j.operation}
-                      </small>
-                    </td>
-                    <td>
+                  <div key={item.id} className="s2-story-scene-card">
+                    <div className="s2-story-scene-top">
+                      <span className="s2-scene-badge">Cảnh #{idx + 1}</span>
                       <span
-                        className={`v2-status-pill status-${
+                        className={`s2-audio-dot ${asset ? "is-ready" : "is-missing"}`}
+                      >
+                        {asset
+                          ? `🎙 ${(asset.durationMs / 1000).toFixed(1)}s`
+                          : "○ Chưa có âm thanh"}
+                      </span>
+                    </div>
+                    <div className="s2-story-author">
+                      {avatar ? (
+                        <img
+                          src={avatar}
+                          alt={item.author.displayName}
+                          className="s2-story-avatar"
+                        />
+                      ) : (
+                        <span className="s2-story-avatar-fallback">
+                          {item.author.displayName.slice(0, 1).toUpperCase()}
+                        </span>
+                      )}
+                      <div>
+                        <strong>{item.author.displayName}</strong>
+                        <small>@{item.metadata?.handle || item.author.handle}</small>
+                      </div>
+                    </div>
+                    <p className="s2-story-excerpt">
+                      {item.displayText.slice(0, 85)}
+                      {item.displayText.length > 85 ? "..." : ""}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ZONE 3: Technical Pipeline Jobs & Safe Error Recovery */}
+      {(zoneFilter === "ALL" || zoneFilter === "TECH_JOBS") && (
+        <section
+          className="s2-queue-section"
+          aria-label="Nhật ký tác vụ kỹ thuật"
+          data-testid="zone-tech-jobs"
+        >
+          <div className="s2-section-title-row">
+            <div>
+              <span className="s2-zone-pill pill-buttercup">
+                KHU VỰC 3 · TÁC VỤ KỸ THUẬT HỆ THỐNG
+              </span>
+              <h3>Nhật ký Tác vụ Kỹ thuật ({filteredJobs.length})</h3>
+              <p>
+                Các tác vụ chạy tuần tự (FIFO) phục vụ trích xuất nguồn, chuẩn
+                hóa kịch bản, tạo giọng đọc và kết xuất. Có thể xem cảnh báo/lỗi
+                chi tiết và thử lại mà không làm mất dữ liệu.
+              </p>
+            </div>
+
+            <div
+              className="s2-stage-filter-pills"
+              role="group"
+              aria-label="Lọc theo giai đoạn kỹ thuật"
+            >
+              {stages.map((st) => (
+                <button
+                  key={st}
+                  type="button"
+                  className={stageFilter === st ? "active" : ""}
+                  onClick={() => setStageFilter(st)}
+                >
+                  {st === "ALL"
+                    ? `Tất cả (${jobs.length})`
+                    : `${STAGE_META[st]?.icon || "⚙"} ${st}`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div
+            className="s2-tech-jobs-list"
+            data-testid="production-jobs-table"
+          >
+            {filteredJobs.map((j) => {
+              const isRunning = ["QUEUED", "RUNNING"].includes(j.status);
+              const isFailed = j.status === "FAILED";
+              const meta = STAGE_META[j.currentStage] || {
+                icon: "⚙",
+                label: j.currentStage,
+                stepTarget: "Source",
+                colorClass: "stage-default",
+              };
+              const pct =
+                j.total !== null && j.completed !== null && j.total > 0
+                  ? Math.min(100, Math.floor((j.completed / j.total) * 100))
+                  : isRunning
+                    ? 40
+                    : 100;
+              const isExpanded = expandedJobId === j.jobId;
+              const hasDiagnostics = Boolean(j.error || j.warnings.length > 0);
+
+              return (
+                <article
+                  key={j.jobId}
+                  className={`s2-job-card ${isFailed ? "is-failed" : ""} ${
+                    isRunning ? "is-running" : ""
+                  }`}
+                >
+                  <div className="s2-job-main-row">
+                    {/* Left: Visual Stage Thumbnail Badge + Operation Name */}
+                    <div className="s2-job-identity">
+                      <span className={`s2-job-icon-box ${meta.colorClass}`}>
+                        {meta.icon}
+                      </span>
+                      <div>
+                        <div className="s2-job-title-line">
+                          <strong>{meta.label}</strong>
+                          <code className="s2-mono-id">
+                            #{j.jobId.slice(0, 8)}
+                          </code>
+                        </div>
+                        <small className="s2-job-op-sub">
+                          Thao tác: <code>{j.operation}</code> · Bước:{" "}
+                          {j.currentStep}
+                        </small>
+                      </div>
+                    </div>
+
+                    {/* Center: Progress Bar & Timing */}
+                    <div className="s2-job-progress-col">
+                      <div className="s2-job-progress-top">
+                        <span>
+                          {j.total !== null && j.completed !== null
+                            ? `${j.completed} / ${j.total} đơn vị (${pct}%)`
+                            : j.currentStep}
+                        </span>
+                        <b>⏱ {(j.elapsedMs / 1000).toFixed(1)}s</b>
+                      </div>
+                      <div className="s2-job-bar-track">
+                        <div
+                          className={`s2-job-bar-fill ${
+                            isFailed
+                              ? "fill-failed"
+                              : isRunning
+                                ? "fill-running"
+                                : "fill-ok"
+                          }`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Right: Status Badge + Diagnostics Toggle + Safe Retry / Open Button */}
+                    <div className="s2-job-actions-col">
+                      <span
+                        className={`s2-status-badge ${
                           isRunning
-                            ? "running"
-                            : j.status === "FAILED"
-                              ? "failed"
-                              : "success"
+                            ? "badge-queued"
+                            : isFailed
+                              ? "badge-rejected"
+                              : "badge-qualified"
                         }`}
                       >
-                        {j.status}
+                        {isRunning
+                          ? "⏳ Đang chạy"
+                          : isFailed
+                            ? "✕ Thất bại"
+                            : "✓ Hoàn tất"}
                       </span>
-                    </td>
-                    <td>
-                      <div>{j.currentStep}</div>
-                      {j.total !== null && j.completed !== null && (
-                        <small className="v2-mono">
-                          {j.completed} / {j.total} units (
-                          {Math.floor((j.completed / Math.max(1, j.total)) * 100)}
-                          %)
-                        </small>
+
+                      {hasDiagnostics && (
+                        <button
+                          type="button"
+                          className="s2-btn-ghost"
+                          onClick={() =>
+                            setExpandedJobId(isExpanded ? null : j.jobId)
+                          }
+                          data-testid={`job-diag-btn-${j.jobId.slice(0, 8)}`}
+                        >
+                          {isExpanded
+                            ? "Ẩn chi tiết"
+                            : j.error
+                              ? "⚠ Xem lỗi"
+                              : `ℹ ${j.warnings.length} ghi chú`}
+                        </button>
                       )}
-                    </td>
-                    <td>
-                      <span className="v2-mono">
-                        {(j.elapsedMs / 1000).toFixed(1)}s
-                      </span>
-                    </td>
-                    <td>
-                      {j.error ? (
-                        <span className="v2-error-text">{j.error}</span>
-                      ) : j.warnings.length > 0 ? (
-                        <span className="v2-warning-text">
-                          {j.warnings.length} warning(s)
-                        </span>
-                      ) : (
-                        <span className="v2-muted">Clean</span>
-                      )}
-                    </td>
-                    <td>
+
                       {isRunning ? (
                         <button
+                          type="button"
+                          className="s2-btn-secondary"
                           disabled={j.cancelRequested}
                           onClick={() => onCancelJob(j.jobId)}
                         >
-                          {j.cancelRequested ? "Cancelling…" : "Cancel Job"}
+                          {j.cancelRequested ? "Đang dừng..." : "⏹ Dừng tác vụ"}
                         </button>
                       ) : (
                         <button
-                          onClick={() =>
-                            onOpenStep(
-                              j.currentStage === "RENDER"
-                                ? "Render"
-                                : j.currentStage === "VOICE"
-                                  ? "Voice"
-                                  : j.currentStage === "SCRIPT"
-                                    ? "Script"
-                                    : j.currentStage === "EDITOR"
-                                      ? "Video Editor"
-                                      : "Source",
-                            )
-                          }
+                          type="button"
+                          className="s2-btn-secondary"
+                          onClick={() => onOpenStep(meta.stepTarget)}
                         >
-                          Open Stage
+                          {isFailed
+                            ? "↺ Mở bước này để thử lại"
+                            : "Mở công cụ →"}
                         </button>
                       )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                    </div>
+                  </div>
+
+                  {/* Expandable Error & Warning Inspector */}
+                  {isExpanded && hasDiagnostics && (
+                    <div
+                      className="s2-job-diagnostics-drawer"
+                      data-testid={`job-diag-drawer-${j.jobId.slice(0, 8)}`}
+                    >
+                      {j.error && (
+                        <div className="s2-job-error-box">
+                          <strong>Nguyên nhân lỗi:</strong>
+                          <p>{j.error}</p>
+                        </div>
+                      )}
+                      {j.warnings.length > 0 && (
+                        <div className="s2-job-warn-box">
+                          <strong>
+                            Ghi chú kỹ thuật ({j.warnings.length}) — Dữ liệu dự
+                            án vẫn an toàn:
+                          </strong>
+                          <ul>
+                            {j.warnings.map((w, idx) => (
+                              <li key={idx}>{w}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      <div className="s2-job-recovery-foot">
+                        <small>
+                          💡 Mọi chỉnh sửa kịch bản, giọng đọc và bố cục của bạn
+                          vẫn được giữ nguyên.
+                        </small>
+                        <button
+                          type="button"
+                          className="s2-btn-primary"
+                          onClick={() => onOpenStep(meta.stepTarget)}
+                        >
+                          ↺ Chuyển tới {meta.label} để kiểm tra / chạy lại
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -277,10 +809,10 @@ export function SettingsWorkspace({
           <span className="v2-eyebrow">
             STUDIO CONFIGURATION · RUNTIME, VOICE, PRESETS & SAFETY THRESHOLDS
           </span>
-          <h2>Studio Settings & System Configuration</h2>
+          <h2>Cấu hình Hệ thống & Giọng đọc</h2>
           <p>
-            Inspect local Kokoro TTS voicepacks, public asset inventory,
-            low-RAM resource limits, and SERIOUS content presets.
+            Kiểm tra trạng thái Kokoro TTS cục bộ, kho tài nguyên nền, giới hạn
+            RAM an toàn và chế độ giao diện Sáng / Tối.
           </p>
         </div>
         <div className="v2-header-actions">
@@ -288,13 +820,13 @@ export function SettingsWorkspace({
             disabled={busy || !session}
             onClick={onCheckVoiceRuntime}
           >
-            Run Local Runtime Preflight
+            Kiểm tra Runtime Kokoro
           </button>
           <button
             className="primary"
             onClick={() => onChangeTheme(theme === "DARK" ? "LIGHT" : "DARK")}
           >
-            Switch to {theme === "DARK" ? "Light" : "Dark"} Theme
+            Chuyển sang giao diện {theme === "DARK" ? "Sáng" : "Tối"}
           </button>
         </div>
       </div>
@@ -420,7 +952,7 @@ export function SettingsWorkspace({
               <div className="v2-kv-row" key={s.id}>
                 <span>{s.queryOrSource}</span>
                 <strong>
-                  {s.cadence} · {s.lastRunStatus}
+                  {s.cadence} · {s.rateLimit}
                 </strong>
               </div>
             ))}
