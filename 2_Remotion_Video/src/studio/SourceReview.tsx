@@ -284,7 +284,9 @@ export function MetadataEditor({
             onChange={(e) => patch({ parentReference: e.target.value || null })}
           />
         </label>
-        {(["likeCount", "replyCount", "repostCount"] as const).map((key) => (
+        {(
+          ["likeCount", "replyCount", "repostCount", "shareCount"] as const
+        ).map((key) => (
           <label key={key}>
             {key} (blank = unavailable)
             <input

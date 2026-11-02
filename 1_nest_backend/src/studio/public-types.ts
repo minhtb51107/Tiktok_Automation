@@ -1,4 +1,9 @@
 export interface PublicRecord {
+  topic?:string|null;
+  bodyText?:string;
+  topicEvidence?:{href:string;label:string};
+  shareCount?:number|null;
+  fields?:Record<string,import('./metadata-fields').ObservedField>;
   text: string;
   author: string;
   handle: string | null;

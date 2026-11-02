@@ -7,11 +7,33 @@ export type StageName =
   | 'RENDER'
   | 'PUBLISH';
 export interface StageReport {
+  voice?: {
+    runtime: import('./voice.types').VoiceRuntime | null;
+    items: unknown[];
+  };
+  normalizationQuality?: unknown;
+  scriptItems?: {
+    itemId: string;
+    order: number;
+    originalText: string;
+    displayText: string;
+    spokenText: string;
+    revision: number;
+    manualLocks: string[];
+  }[];
+  reportGenerationElapsedMs?: number;
+  script?: import('./normalization.types').TextProposal[];
   projectId: string;
   sessionId: string;
   stageName: StageName;
   runId: string;
-  status: 'READY' | 'PARTIAL' | 'ERROR' | 'NOT_RUN';
+  status:
+    | 'READY'
+    | 'PARTIAL'
+    | 'ERROR'
+    | 'NOT_RUN'
+    | 'BLOCKED_BILLING'
+    | 'BLOCKED_RUNTIME';
   startedAt: string | null;
   completedAt: string | null;
   elapsedMs: number | null;
@@ -38,6 +60,8 @@ export interface StageReport {
     author: string | null;
     originalText: string | null;
     metadataAvailability: Record<string, boolean>;
+    metadataValues?: Record<string, unknown>;
+    fieldStates?: Record<string, import('./metadata-fields').ObservedField>;
     mediaReferences: string[];
     excludedContextCount: number;
     excludedReason: string;
@@ -62,6 +86,8 @@ export function sourceReport(s: StudioSession): StageReport {
   for (const a of attempts) unique.set(a.canonicalUrl || a.originalUrl, a);
   const sources = [...unique.values()].map((a) => {
     const raw = a.matchedTargetId ? a.records[0] : undefined;
+    const item = s.items.find((i) => i.sourceUrl === a.canonicalUrl);
+    const meta = item?.metadata || raw;
     return {
       originalUrl: safeUrl(a.originalUrl) || '',
       resolvedUrl: safeUrl(a.resolvedUrl),
@@ -69,20 +95,60 @@ export function sourceReport(s: StudioSession): StageReport {
       matchedTargetId: a.matchedTargetId || null,
       matchMethod: a.matchMethod || 'UNVERIFIED',
       author: raw?.author || null,
+      metadataValues: meta
+        ? {
+            topic:item?.contentMapping?.topic??meta.topic??null,
+            bodyText:item?.contentMapping?.bodyText??meta.bodyText??null,
+            topicEvidence:item?.contentMapping?.evidence??meta.topicEvidence??null,
+            createdAt: meta.createdAt,
+            avatar: meta.avatar,
+            likeCount: meta.likeCount,
+            replyCount: meta.replyCount,
+            repostCount: meta.repostCount,
+            shareCount: meta.shareCount ?? null,
+            media: meta.media,
+            observedAt:
+              item?.metadataObservations?.slice(-1)[0]?.observedAt ??
+              a.retrievedAt,
+          }
+        : undefined,
+      fieldStates: {
+        ...Object.fromEntries(
+          [
+            'likeCount',
+            'replyCount',
+            'repostCount',
+            'shareCount',
+            'createdAt',
+            'avatar',
+            'media',
+          ].map((key) => [
+            key,
+            {
+              status: 'UNVERIFIED' as const,
+              value: null,
+              raw: null,
+              source: 'No labelled observation stored for this field',
+            },
+          ]),
+        ),
+        ...meta?.fields,
+      },
       originalText: raw?.text || null,
       metadataAvailability: {
         text: !!raw?.text,
         handle: !!raw?.handle,
-        avatar: !!raw?.avatar,
-        createdAt: !!raw?.createdAt,
-        media: !!raw?.media.length,
-        likeCount: raw?.likeCount != null,
-        replyCount: raw?.replyCount != null,
-        repostCount: raw?.repostCount != null,
+        avatar: !!meta?.avatar,
+        createdAt: !!meta?.createdAt,
+        media: !!meta?.media.length,
+        likeCount: meta?.likeCount != null,
+        replyCount: meta?.replyCount != null,
+        repostCount: meta?.repostCount != null,
+        shareCount: meta?.shareCount != null,
         parent: !!raw?.parentReference,
       },
       mediaReferences:
-        raw?.media.map((m) => safeUrl(m.url) || '').filter(Boolean) || [],
+        meta?.media.map((m) => safeUrl(m.url) || '').filter(Boolean) || [],
       excludedContextCount:
         a.contextCandidates?.filter(
           (c) => !s.items.some((i) => i.sourceUrl === c.url),
@@ -173,6 +239,8 @@ export function reportMarkdown(r: StageReport): string {
       `- Matched ID: ${s.matchedTargetId ?? 'UNRESOLVED'} (${s.matchMethod})`,
       `- Author: ${s.author ?? 'unavailable'}`,
       `- Metadata availability: ${JSON.stringify(s.metadataAvailability)}`,
+      `- Metadata values: ${JSON.stringify(s.metadataValues ?? {})}`,
+      `- Field states: ${JSON.stringify(s.fieldStates ?? {})}`,
       `- Excluded context: ${s.excludedContextCount}; ${s.excludedReason}`,
       '',
       'Original text:',
@@ -183,6 +251,49 @@ export function reportMarkdown(r: StageReport): string {
       ...s.mediaReferences.map((u) => `- Media: ${u}`),
       '',
     ]),
+    ...(r.scriptItems || []).flatMap((i) => [
+      `## Selected script content ${i.order + 1}`,
+      `Item: ${i.itemId} | Revision: ${i.revision} | Locks: ${i.manualLocks.join(', ') || 'none'}`,
+      'Original text:',
+      ...i.originalText.split('\n').map((l) => '> ' + l),
+      'Display text:',
+      ...i.displayText.split('\n').map((l) => '> ' + l),
+      'Spoken text:',
+      ...i.spokenText.split('\n').map((l) => '> ' + l),
+      '',
+    ]),
+    ...(r.script || []).flatMap((p) => [
+      `## Script item ${p.itemId}`,
+      `Run: ${p.runId} | Approval: ${p.approval} | Provider/model: ${p.provider} / ${p.model}`,
+      `Mode: ${p.mode || 'LIVE'} | Execution: ${p.executionStatus || 'unclassified'} | Labels: ${JSON.stringify(p.labels || [])}`,
+      ...(p.diagnostic
+        ? [`Provider diagnostic (redacted): ${JSON.stringify(p.diagnostic)}`]
+        : []),
+      `Explicit approval replacing locked text: ${p.explicitLockedTextApproval === true}`,
+      'Original text:',
+      ...p.originalText.split('\n').map((l) => '> ' + l),
+      'AI proposal:',
+      ...(p.proposedSpokenText || 'No proposal')
+        .split('\n')
+        .map((l) => '> ' + l),
+      `Changes: ${JSON.stringify(p.changes)}`,
+      `Ambiguous terms: ${JSON.stringify(p.ambiguousTerms)}`,
+      `Latency: ${p.latencyMs} ms | Token usage: ${JSON.stringify(p.tokenUsage)} | Estimated cost: ${p.estimatedCost ?? 'unavailable'}`,
+      `Warnings: ${JSON.stringify(p.warnings)} | Error: ${p.error ?? 'none'}`,
+      '',
+    ]),
+    ...(r.normalizationQuality
+      ? [
+          '## Normalization quality (OFFLINE; not live AI)',
+          JSON.stringify(r.normalizationQuality, null, 2),
+        ]
+      : []),
+    ...(r.voice
+      ? [
+          '## Voice runtime and scene manifest',
+          JSON.stringify(r.voice, null, 2),
+        ]
+      : []),
     `## Warnings / errors`,
     ...r.warnings.concat(r.errors).map((x) => '- ' + x),
     '',

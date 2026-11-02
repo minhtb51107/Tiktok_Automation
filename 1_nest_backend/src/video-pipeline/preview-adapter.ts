@@ -29,6 +29,8 @@ export const createRemotionPreviewRequest = (
       audioAssets: project.audioAssets,
       mediaAssets: project.mediaAssets,
       previewMode: true,
+      backgroundMusic:project.backgroundMusic,
+      backgroundTracks:project.backgroundTracks,
     },
   };
 };

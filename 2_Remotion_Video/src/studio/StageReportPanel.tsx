@@ -4,20 +4,23 @@ export function StageReportPanel({
   id,
   revision,
   dirty,
+  stage = "SOURCE",
 }: {
   id: string;
   revision: number;
   dirty: boolean;
+  stage?: "SOURCE" | "SCRIPT" | "VOICE";
 }) {
   const [data, setData] = useState<{
       report: StageReport;
       markdown: string;
+      reportGenerationElapsedMs?: number;
     } | null>(null),
     [message, setMessage] = useState("");
   useEffect(() => {
     let active = true;
     setData(null);
-    fetch(`/api/studio/sessions/${id}/report`)
+    fetch(`/api/studio/sessions/${id}/report?stage=${stage}`)
       .then(async (r) => {
         if (!r.ok) throw Error("Report unavailable");
         const j = await r.json();
@@ -29,7 +32,7 @@ export function StageReportPanel({
     return () => {
       active = false;
     };
-  }, [id, revision]);
+  }, [id, revision, stage]);
   const download = () => {
     if (!data) return;
     const url = URL.createObjectURL(
@@ -39,26 +42,27 @@ export function StageReportPanel({
     );
     const a = document.createElement("a");
     a.href = url;
-    a.download = `source-report-${id}.json`;
+    a.download = `${stage.toLowerCase()}-report-${id}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
   return (
     <section className="panel">
       <div className="panel-top">
-        <h3>Source stage report</h3>
+        <h3>{stage} stage report</h3>
         <span>Persisted revision {data?.report.revision ?? "…"}</span>
       </div>
       {data && (
         <div className="actions">
           {Object.entries(data.report.counts)
-            .filter(([k]) =>
-              [
-                "inputUrls",
-                "resolvedTargets",
-                "unresolvedTargets",
-                "excludedContext",
-              ].includes(k),
+            .filter(
+              ([k]) =>
+                [
+                  "inputUrls",
+                  "resolvedTargets",
+                  "unresolvedTargets",
+                  "excludedContext",
+                ].includes(k) || stage !== "SOURCE",
             )
             .map(([k, v]) => (
               <span className="badge" key={k}>
@@ -92,7 +96,12 @@ export function StageReportPanel({
       </div>
       {data && (
         <details>
-          <summary>Readable Source Report</summary>
+          <summary>Readable {stage} Report</summary>
+          <small>
+            Stage processing: {data.report.elapsedMs ?? "not run"} ms · Report
+            generation including local read:{" "}
+            {data.reportGenerationElapsedMs ?? "unavailable"} ms
+          </small>
           <pre className="report-text">{data.markdown}</pre>
         </details>
       )}

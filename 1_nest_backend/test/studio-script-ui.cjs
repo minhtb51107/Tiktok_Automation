@@ -1,0 +1,21 @@
+const puppeteer=require('puppeteer');const assert=require('node:assert/strict');const fs=require('node:fs/promises');
+(async()=>{
+ const id='a6e7cbe3-f086-4039-9ef3-d16a03a79b12',base='http://127.0.0.1:3000';
+ const session=(await(await fetch(`${base}/api/studio/sessions/${id}`)).json()).data;
+ const target=session.items.find(i=>i.sourceUrl.includes('twice_._not'));assert.equal(target.metadata.shareCount,147);assert.equal(session.items.length,5);
+ await fs.mkdir('.studio-data/reports',{recursive:true});for(const stage of ['SOURCE','SCRIPT']){const data=(await(await fetch(`${base}/api/studio/sessions/${id}/report?stage=${stage}`)).json()).data;await fs.writeFile(`.studio-data/reports/ui013-${stage.toLowerCase()}.json`,JSON.stringify(data.report,null,2));await fs.writeFile(`.studio-data/reports/ui013-${stage.toLowerCase()}.md`,data.markdown);}
+ const browser=await puppeteer.launch({headless:true,executablePath:'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'});
+ let mocked=structuredClone(session),calls=0;const first=mocked.items[0];
+ try{
+  const p=await browser.newPage();await p.setViewport({width:1440,height:1100});await p.setRequestInterception(true);
+  p.on('request',r=>{const url=r.url();if(url.endsWith('/script/'+first.id+'/propose')){calls++;mocked.revision++;mocked.scriptProposals=[{runId:'OFFLINE-UI-MOCK',itemId:first.id,baseRevision:first.revision,inputText:first.spokenText,originalText:first.originalText,proposedSpokenText:first.spokenText.replace(/tphcm/g,'Thành phố Hồ Chí Minh'),changes:[{before:'tphcm',after:'Thành phố Hồ Chí Minh',reason:'OFFLINE MOCK abbreviation expansion'}],ambiguousTerms:[],warnings:['OFFLINE UI MOCK — no provider called'],error:null,approval:'PENDING',decidedAt:null,provider:'OFFLINE MOCK',model:'fixture',latencyMs:0,tokenUsage:{input:null,output:null,total:null},estimatedCost:null}];void r.respond({status:200,contentType:'application/json',body:JSON.stringify({success:true,data:mocked})});return;}
+   try{const u=new URL(url);const allowed=url.startsWith(base+'/')||u.protocol==='https:'&&['cdninstagram.com','fbcdn.net'].some(d=>u.hostname===d||u.hostname.endsWith('.'+d));void(allowed?r.continue():r.abort());}catch{void r.abort();}
+  });
+  const errors=[];p.on('pageerror',e=>errors.push(e.message));await p.goto(base+'/studio',{waitUntil:'networkidle0'});await p.waitForSelector('.sessions button');await p.evaluate(()=>[...document.querySelectorAll('.sessions button')].find(b=>b.textContent.includes('5 exact targets')).click());await p.waitForSelector('.threads-preview');assert.equal(await p.$$eval('.content-card',n=>n.length),5);
+  const card=await p.evaluateHandle(()=>[...document.querySelectorAll('.content-card')].find(n=>n.querySelector('.threads-identity strong')?.textContent==='twice_._not'));await card.evaluate(n=>n.scrollIntoView());assert((await card.evaluate(n=>n.textContent)).includes('147'));await p.screenshot({path:process.argv[2]});
+  await p.evaluate(()=>[...document.querySelectorAll('nav button')].find(b=>b.textContent.endsWith('Script')).click());await p.waitForSelector('.script-item');assert.equal(await p.$$eval('.script-item',n=>n.length),5);assert.equal(calls,0);await p.$eval('.script-item',n=>n.scrollIntoView());await p.screenshot({path:process.argv[3]});
+  await p.evaluate(()=>[...document.querySelectorAll('.script-item button')].find(b=>b.textContent==='AI sửa chính tả').click());await p.waitForSelector('.ai-proposal');assert.equal(calls,1);assert.equal(await p.$eval('.script-item textarea:last-child',e=>e.value).catch(()=>first.spokenText),first.spokenText);
+  await p.evaluate(()=>{const banner=document.createElement('div');banner.textContent='OFFLINE UI TEST — PROPOSAL MOCKED; NO AI PROVIDER CALLED';banner.style='position:fixed;top:0;left:0;right:0;padding:12px;background:#fff1b6;color:#664c00;z-index:9999;text-align:center';document.body.append(banner);});await p.$eval('.ai-proposal',n=>n.scrollIntoView());await p.screenshot({path:process.argv[4]});assert.deepEqual(errors,[]);
+  console.log(JSON.stringify({PASS:true,realTargets:5,realMetadataVerified:true,automaticAiRequests:0,explicitMockButtonRequests:calls,realAiRequests:0,runtimeErrors:errors}));
+ }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

@@ -8,10 +8,50 @@ import type { VideoPreviewProps } from "../../../1_nest_backend/src/video-pipeli
 import "./studio.css";
 import { UrlRows, MetadataEditor, MediaPreview } from "./SourceReview";
 import { StageReportPanel } from "./StageReportPanel";
+import { ThreadsPreview } from "./ThreadsPreview";
+import { ScriptWorkspace } from "./ScriptWorkspace";
+import { VoiceWorkspace } from "./VoiceWorkspace";
+import { ProgressPanel } from "./ProgressPanel";
+import { EditorWorkspace } from "./EditorWorkspace";
 
 // Future editor passes this boundary to the existing SeriousTimelinePreview + Player.
 export type StudioPreviewInput = VideoPreviewProps;
 async function api<T>(url: string, method = "GET", body?: unknown): Promise<T> {
+  const match = url.match(/^\/([a-f0-9-]{36})\/(.+)$/);
+  if (
+    method === "POST" &&
+    match &&
+    /^(fetch|voice-runtime|voice-batch|voice\/[^/]+|metadata\/[^/]+|script\/[^/]+\/propose|script\/propose-offline-all|editor\/prepare)$/.test(
+      match[2],
+    )
+  ) {
+    const started = await fetch(`/api/studio/sessions/${match[1]}/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operation: match[2], input: body || {} }),
+    });
+    const envelope = await started.json();
+    if (!started.ok)
+      throw Error(envelope.error?.message || "Could not start job");
+    let job = envelope.data ?? envelope;
+    while (["QUEUED", "RUNNING"].includes(job.status)) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const r = await fetch(`/api/studio/jobs/${job.jobId}`);
+      if (!r.ok) throw Error("Progress polling failed; refresh to recover job");
+      const j = await r.json();
+      job = j.data ?? j;
+    }
+    const result = await fetch(`/api/studio/sessions/${match[1]}`);
+    const j = await result.json();
+    if (job.status === "FAILED")
+      window.dispatchEvent(
+        new CustomEvent("studio-job-error", {
+          detail: job.error || "Job failed; open the progress report.",
+        }),
+      );
+    // Stage errors remain visible in the session and persisted job report.
+    return (j.data ?? j) as T;
+  }
   const r = await fetch("/api/studio/sessions" + url, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -30,10 +70,14 @@ function App() {
   const [sessions, setSessions] = useState<{ id: string; title: string }[]>([]),
     [session, setSession] = useState<StudioSession | null>(null);
   const [step, setStep] = useState("Source"),
-    [busy, setBusy] = useState(false),
+    [localBusy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [dirty, setDirty] = useState(false);
+  const [jobActive, setJobActive] = useState(false);
+  const [editorDirty,setEditorDirty]=useState(false);
+  useEffect(()=>{if(!session)return;const u=new URL(window.location.href);u.searchParams.set('session',session.id);u.searchParams.set('step',step);window.history.replaceState(null,'',u.pathname+u.search);},[session?.id,step]);
+  const busy = localBusy || jobActive;
   const [manual, setManual] = useState(false),
     [manualUrl, setManualUrl] = useState(""),
     [text, setText] = useState(""),
@@ -42,17 +86,22 @@ function App() {
   const refresh = async () => setSessions(await api(""));
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
+    const query=new URLSearchParams(window.location.search),id=query.get('session');
+    if(id&&/^[a-f0-9-]{36}$/.test(id))void api<StudioSession>('/'+id).then(s=>{setSession(s);const requested=query.get('step');if(['Source','Script','Voice','Video Editor'].includes(requested||''))setStep(requested!);}).catch(e=>setError(e.message));
+    const failed = (e: Event) => setError((e as CustomEvent<string>).detail);
+    window.addEventListener("studio-job-error", failed);
+    return () => window.removeEventListener("studio-job-error", failed);
   }, []);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
-      if (dirty) {
+      if (dirty || editorDirty) {
         event.preventDefault();
         event.returnValue = "";
       }
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  }, [dirty,editorDirty]);
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
     setError("");
@@ -66,10 +115,11 @@ function App() {
     }
   };
   const accept = (s: StudioSession) => {
+    const u=new URL(window.location.href);u.searchParams.set('session',s.id);window.history.replaceState(null,'',u.pathname+u.search);
     setSession(s);
     setDirty(false);
   };
-  const canLeave = () => !dirty || window.confirm("Discard unsaved edits?");
+  const canLeave = () => !(dirty||editorDirty) || window.confirm("Discard unsaved edits?");
   const save = async () => {
     if (!session) return;
     accept(
@@ -112,7 +162,7 @@ function App() {
     setDirty(true);
   };
   return (
-    <div className="studio">
+    <div className={'studio '+(step==='Video Editor'&&session?'is-editor':'')}>
       <aside>
         <a className="brand" href="/studio">
           <span>◈</span> Content Studio
@@ -159,7 +209,7 @@ function App() {
               }}
             >
               {s.title}
-              <small>SERIOUS · local project</small>
+              <small>SERIOUS · {s.id.slice(0,8)}</small>
             </button>
           ))}
         </div>
@@ -175,7 +225,7 @@ function App() {
             <div className="eyebrow">THREADS / SERIOUS</div>
             <h1>{session?.title || "Your next story starts here"}</h1>
           </div>
-          <span className="badge">● Local studio</span>
+          <span className="badge">● Local studio {session&&<small data-testid="active-session">Session {session.id} · revision {session.revision}</small>}</span>
         </header>
         <nav aria-label="Workflow steps">
           {[
@@ -188,7 +238,7 @@ function App() {
           ].map((name, n) => (
             <button
               className={step === name ? "current" : ""}
-              onClick={() => setStep(name)}
+              onClick={() => {if(name===step||canLeave())setStep(name);}}
               key={name}
             >
               <b>{n + 1}</b>
@@ -208,10 +258,110 @@ function App() {
         )}
         {busy && (
           <div role="status" className="alert">
-            Processing… Please keep this page open.
+            Đang xử lý. Tác vụ có Job ID vẫn tiếp tục và xem lại được sau
+            refresh.
           </div>
         )}
-        {step !== "Source" ? (
+        {session && (step==='Video Editor'?<details className="editor-jobs"><summary>Jobs</summary><ProgressPanel id={session.id} onActive={setJobActive} onCompleted={()=>{if(!dirty&&!editorDirty)void api<StudioSession>('/'+session.id).then(accept).catch(e=>setError(e.message));}}/></details>:(
+          <ProgressPanel
+            id={session.id}
+            onActive={setJobActive}
+            onCompleted={() => {
+              if (!dirty && !editorDirty)
+                void api<StudioSession>("/" + session.id)
+                  .then(accept)
+                  .catch((e) => setError(e.message));
+            }}
+          />
+        ))}
+        {step === "Script" && session ? (
+          <ScriptWorkspace
+            session={session}
+            busy={busy}
+            dirty={dirty}
+            edit={update}
+            save={() => void run(save)}
+            propose={(itemId, mode = "LIVE") =>
+              void run(async () => {
+                accept(
+                  await api(
+                    "/" + session.id + "/script/" + itemId + "/propose",
+                    "POST",
+                    { revision: session.revision, mode },
+                  ),
+                );
+              })
+            }
+            proposeAll={() =>
+              void run(async () => {
+                accept(
+                  await api(
+                    "/" + session.id + "/script/propose-offline-all",
+                    "POST",
+                    { revision: session.revision },
+                  ),
+                );
+              })
+            }
+            decide={(runId, action) =>
+              void run(async () => {
+                accept(
+                  await api("/" + session.id + "/script/decision", "POST", {
+                    revision: session.revision,
+                    runId,
+                    action,
+                  }),
+                );
+              })
+            }
+          />
+        ) : step === "Voice" && session ? (
+          <VoiceWorkspace
+            session={session}
+            busy={busy}
+            dirty={dirty}
+            check={() =>
+              void run(async () => {
+                accept(await api("/" + session.id + "/voice-runtime", "POST"));
+              })
+            }
+            act={async (itemId, body) => {
+              await run(async () => {
+                accept(
+                  await api("/" + session.id + "/voice/" + itemId, "POST", {
+                    ...body,
+                    revision: session.revision,
+                  }),
+                );
+              });
+            }}
+            batch={async (body) => {
+              await run(async () => {
+                accept(
+                  await api("/" + session.id + "/voice-batch", "POST", {
+                    ...body,
+                    revision: session.revision,
+                  }),
+                );
+              });
+            }}
+          />
+        ) : step === "Video Editor" && session ? (
+          <EditorWorkspace
+            onNavigate={setStep}
+            onDirty={setEditorDirty}
+            session={session}
+            busy={busy || dirty}
+            accept={accept}
+            prepare={async () => {
+              accept(
+                await api("/" + session.id + "/editor/prepare", "POST", {
+                  revision: session.revision,
+                }),
+              );
+            }}
+          />
+        ) : step !== "Source" ? (
           <section className="empty">
             <span className="hero-icon">◇</span>
             <h2>{step} workspace</h2>
@@ -518,7 +668,21 @@ function App() {
                         {i.sourceUrl}
                       </a>
                     )}
-                    <p className="original">{i.displayText}</p>
+                    <ThreadsPreview
+                      item={i}
+                      disabled={busy || dirty}
+                      onRefresh={() =>
+                        void run(async () => {
+                          accept(
+                            await api(
+                              "/" + session.id + "/metadata/" + i.id,
+                              "POST",
+                              { revision: session.revision },
+                            ),
+                          );
+                        })
+                      }
+                    />
                     <details>
                       <summary>
                         Review original, metadata, media & edit text

@@ -52,7 +52,7 @@ export interface ContentCandidate {
   selectedBy?: 'USER' | 'RULE' | 'AI_FIXTURE';
 }
 
-export type VoiceProvider = 'EDGE' | 'GOOGLE' | 'OPENAI' | 'FIXTURE';
+export type VoiceProvider = 'EDGE' | 'GOOGLE' | 'OPENAI' | 'FIXTURE' | 'KOKORO';
 
 export interface VoiceSelection {
   provider: VoiceProvider;
@@ -64,6 +64,7 @@ export type AssetAvailability = 'AVAILABLE' | 'MISSING';
 export type DurationSource = 'MEASURED' | 'FIXTURE' | 'MANUAL';
 
 export interface AudioAsset {
+  approvalStatus?: 'PENDING' | 'APPROVED';
   id: string;
   role: 'NARRATION' | 'SFX' | 'BGM';
   uri: string;
@@ -132,6 +133,16 @@ export interface SceneTimingRequest {
 }
 
 export interface StoryboardScene {
+  visual?:import('./scene-visual').SceneVisual;
+  sfxLayer?:{assetId:string;startMs:number;volume:number;durationMs?:number;sourceInMs?:number};
+  threadsCard?: {
+    topic?:string|null;
+    countLabels?:Record<string,string|null>;
+    author: string; handle: string | null; avatarUrl: string | null;
+    createdAt: string | null; dateLabel: string | null; sourceUrl: string;
+    counts: {likes:number|null;replies:number|null;reposts:number|null;shares:number|null};
+    fieldStates: Record<string,string>;
+  };
   id: string;
   order: number;
   sourceReferences: SourceReference[];
@@ -189,6 +200,9 @@ export interface PublishingMetadata {
 }
 
 export interface VideoProject {
+  backgroundTracks?:import('./editing').BackgroundClip[];
+  editorSettings?:unknown;
+  backgroundMusic?:import('./scene-visual').BackgroundMusic;
   contractVersion: typeof VIDEO_PIPELINE_CONTRACT_VERSION;
   id: string;
   style: ContentStyle;
@@ -205,6 +219,8 @@ export interface VideoProject {
 }
 
 export interface VideoPreviewProps extends Record<string, unknown> {
+  backgroundTracks?:import('./editing').BackgroundClip[];
+  backgroundMusic?:import('./scene-visual').BackgroundMusic;
   contractVersion: typeof VIDEO_PIPELINE_CONTRACT_VERSION;
   timeline: VideoTimeline;
   audioAssets: AudioAsset[];

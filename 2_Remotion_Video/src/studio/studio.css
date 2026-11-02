@@ -37,7 +37,7 @@ textarea:focus-visible {
 }
 .studio {
   display: grid;
-  grid-template-columns: 255px 1fr;
+  grid-template-columns: 255px minmax(0, 1fr);
   min-height: 100vh;
 }
 aside {
@@ -114,6 +114,7 @@ footer span {
   color: #8190a9;
 }
 main {
+  min-width: 0;
   padding: 32px 5%;
   max-width: 1500px;
   width: 100%;
@@ -417,3 +418,144 @@ pre.report-text {
 .context-candidate small {
   display: block;
 }
+.threads-preview {
+  margin: 18px 0;
+  border: 1px solid #d9dfe8;
+  border-radius: 14px;
+  padding: 24px;
+  background: #fff;
+  color: #172033;
+}
+.threads-identity {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.threads-identity > span:last-child {
+  margin-left: auto;
+}
+.threads-identity img {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.threads-identity div div {
+  font-size: 12px;
+  color: #778298;
+}
+.avatar-missing {
+  font-size: 9px;
+  width: 48px;
+  overflow-wrap: anywhere;
+}
+.threads-original {
+  white-space: pre-wrap;
+  font-size: 16px;
+  line-height: 1.7;
+  color: #202c41;
+  margin: 20px 0;
+}
+.threads-metrics {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid #eee;
+  margin-top: 15px;
+  padding: 16px 0;
+  flex-wrap: wrap;
+}
+.threads-metrics > div {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  min-width: 80px;
+}
+.threads-metrics b {
+  color: #202c41;
+}
+.threads-media img,
+.threads-media video {
+  max-width: 100%;
+  max-height: 350px;
+  object-fit: contain;
+  border-radius: 10px;
+}
+.threads-preview > a {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.threads-preview .actions {
+  margin-top: 15px;
+}
+.script-item blockquote {
+  margin: 10px 0 20px;
+  padding: 14px;
+  background: #f5f6fb;
+  border-left: 3px solid #c5bddf;
+  white-space: pre-wrap;
+}
+.voice-scene select,
+.actions select {
+  display: block;
+  font: inherit;
+  width: 100%;
+  max-width: 100%;
+  margin: 6px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #dce2ed;
+  border-radius: 8px;
+  background: #fcfdff;
+  color: #28344b;
+}
+.voice-scene audio { max-width: 100%; }
+.voice-scene { min-width: 0; overflow-wrap: anywhere; }
+.voice-scene .edit-grid { min-width: 0; }
+.voice-scene small { overflow-wrap: anywhere; }
+.voice-scene blockquote { margin: 16px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.actions > label { max-width: 100%; }
+.ai-proposal {
+  border: 1px solid #d6cdef;
+  background: #faf8ff;
+  border-radius: 12px;
+  margin-top: 20px;
+  padding: 20px;
+}
+.proposal-text {
+  white-space: pre-wrap;
+  color: #253044;
+}
+.change-list del {
+  color: #9c4148;
+  background: #fff0ef;
+}
+.change-list mark {
+  background: #e1f3e8;
+  color: #226943;
+}
+.warning {
+  font-size: 12px;
+  color: #886818;
+}
+.progress-panel { margin-bottom: 20px; overflow-wrap: anywhere; }
+.progress-panel progress { width: 100%; accent-color: #7460db; margin: 12px 0; }
+.progress-panel details { margin: 12px 0; padding: 10px; background: #f6f7fb; border-radius: 8px; }
+.editor-layout { display: grid; grid-template-columns: minmax(230px, 0.8fr) minmax(0, 1.2fr); gap: 20px; margin-top: 20px; }
+.editor-scene { padding: 16px 0; border-bottom: 1px solid #e4e7ef; overflow-wrap: anywhere; }
+.editor-scene.active { border-left: 3px solid #7460db; padding-left: 12px; }
+.scene-select { width: 100%; text-align: left; margin: 8px 0; }
+.scene-select small { display: block; }
+.editor-player { display: flex; flex-direction: column; align-items: center; min-width: 0; }
+.editor-media { display: flex; flex-wrap: wrap; gap: 12px; }
+.editor-media label { width: 180px; overflow-wrap: anywhere; }
+.editor-media img { width: 180px; max-height: 140px; object-fit: contain; display: block; }
+.editor-controls { margin-top: 20px; }
+.visual-controls select { display: block; width: 100%; padding: 10px; margin: 6px 0 16px; border: 1px solid #dce2ed; border-radius: 8px; }
+.library-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(180px,1fr)); gap: 14px; margin: 16px 0; }
+.library-grid article { border: 1px solid #e1e4ed; border-radius: 10px; padding: 12px; min-width: 0; overflow-wrap: anywhere; }
+.library-grid img,.library-grid video { display: block; width: 100%; height: 130px; object-fit: contain; margin: 12px 0; }
+.library-grid audio { width: 100%; }
+.library-grid small { display: block; }
+.visual-controls { margin-bottom: 20px; }
+.editor-player-column { min-width: 0; overflow-wrap: anywhere; }
+@media(max-width: 1000px) { .editor-layout { grid-template-columns: minmax(0,1fr); } }

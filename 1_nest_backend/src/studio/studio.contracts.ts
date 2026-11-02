@@ -4,6 +4,13 @@ import type {
   ContentAuthor,
 } from '../video-pipeline/contracts';
 export interface StudioItem {
+  contentMapping?:{topic:string|null;bodyText:string;status:'VERIFIED'|'REVIEW_REQUIRED';evidence:{type:'DOM'|'USER_CONFIRMED';detail:string;sourceUrl:string};includeTopicInTts:boolean};
+  spokenApproval?:import('./voice.types').SpokenApproval;
+  voiceSettings?:import('./voice.types').VoiceSettings;
+  metadataObservations?: {
+    observedAt: string;
+    record: import('./public-types').PublicRecord;
+  }[];
   inclusion?: 'TARGET' | 'EXPLICIT_CONTEXT' | 'MANUAL';
   sourceId?: string;
   rawExtraction?: import('./public-types').PublicRecord;
@@ -22,6 +29,14 @@ export interface StudioItem {
   manualLocks: string[];
 }
 export interface StudioSession {
+  editor?: import('./editor.types').EditorSettings;
+  studioMedia?: import('./editor.types').StudioMediaAsset[];
+  aiBillingBlocked?:boolean;
+  voiceRuntime?:import('./voice.types').VoiceRuntime;
+  voiceAssets?:import('./voice.types').VoiceAsset[];
+  voiceJobs?:import('./voice.types').VoiceJob[];
+  voiceBatch?:import('./voice.types').VoiceBatch;
+  scriptProposals?: import('./normalization.types').TextProposal[];
   scope?: 'TARGET_ONLY' | 'WITH_CONTEXT';
   derivedFrom?: string;
   archivedItems?: StudioItem[];

@@ -3,6 +3,7 @@ import { request } from 'https';
 import { lookup } from 'dns/promises';
 import { existsSync } from 'fs';
 import puppeteer from 'puppeteer';
+import {labelledCounts} from './metadata-fields';
 import { matchExactTarget } from './target-identity';
 
 const hosts = [
@@ -43,6 +44,8 @@ const decode = (s: string) =>
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
 export interface PublicRecord {
+  shareCount?:number|null;
+  fields?:Record<string,import('./metadata-fields').ObservedField>;
   text: string;
   author: string;
   handle: string | null;
@@ -306,6 +309,9 @@ export async function extractPublicThreads(
             const visibleMetrics = spans.filter((s) =>
               /^[\d.,]+[KkMm]?$/.test(s),
             );
+            const controls=[...node.querySelectorAll('[role="button"],button')].map(c=>({label:c.querySelector('svg title')?.textContent||c.getAttribute('aria-label')||'',text:c.textContent||''}));
+            const topicLinks=[...node.querySelectorAll('a[href]')].filter(a=>{try{const u=new URL(a.getAttribute('href')||'',location.origin);return u.pathname==='/search'&&u.searchParams.get('serp_type')==='tags'&&!!u.searchParams.get('tag_id');}catch{return false;}});
+            const topicEvidence=topicLinks.length===1?{label:topicLinks[0].textContent?.trim()||'',href:topicLinks[0].getAttribute('href')||''}:null;
             const content = spans
               .filter(
                 (s) =>
@@ -316,10 +322,14 @@ export async function extractPublicThreads(
               )
               .join('\n');
             return {
+              topicEvidence,
+              bodyText:topicEvidence&&content.startsWith(topicEvidence.label+'\n')?content.slice(topicEvidence.label.length+1):content,
               spans,
               content,
               permalink,
               visibleMetrics,
+              controls,
+              timestampLabel:time?.textContent||null,
               avatar,
               createdAt: time?.getAttribute('datetime') || null,
               media: [
@@ -379,6 +389,9 @@ export async function extractPublicThreads(
             out.records = [anchor];
           }
           anchor.text = row.content;
+          anchor.topic=row.topicEvidence?.label||null;
+          anchor.bodyText=row.bodyText;
+          if(row.topicEvidence)anchor.topicEvidence=row.topicEvidence;
           anchor.author = targetHandle;
           anchor.handle = targetHandle;
           anchor.url = 'https://www.threads.com' + row.permalink;
@@ -387,6 +400,8 @@ export async function extractPublicThreads(
           anchor.provenance.identity = 'exact DOM permalink /post/' + targetId;
         }
         if (row) {
+          anchor.fields={...labelledCounts(row.controls),createdAt:{status:row.createdAt?'AVAILABLE':'UNAVAILABLE',value:row.createdAt,raw:row.timestampLabel,source:'exact target time[datetime]'},avatar:{status:row.avatar?'AVAILABLE':'UNAVAILABLE',value:row.avatar,raw:null,source:'exact target DOM image'},media:{status:row.media.length?'AVAILABLE':'NOT_PRESENT',value:row.media.length,raw:null,source:'exact target visible media elements; hidden media not assessed'}};
+          for(const key of ['likeCount','replyCount','repostCount','shareCount'])anchor[key]=anchor.fields[key].value;
           anchor.avatar = row.avatar;
           anchor.createdAt = row.createdAt;
           anchor.media = row.media;
