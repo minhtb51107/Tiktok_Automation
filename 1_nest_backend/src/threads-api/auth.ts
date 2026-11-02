@@ -26,6 +26,7 @@ interface AuthRecord {
   scopes: string[];
   missingScopes: string[];
   appBindingVerified: boolean;
+  appBindingMethod?: 'DEBUG_APP_ID' | 'OAUTH_EXCHANGE_RECEIPT';
   tokenSource: string;
   reason: string;
   retryAfterMs?: number;
@@ -89,12 +90,17 @@ export class ThreadsAuth {
     if (c.accessToken) {
       if (c.accessToken === c.appSecret || c.accessToken.startsWith('TH|'))
         return null;
-      return { value: c.accessToken, source: 'ENV' };
+      return { value: c.accessToken, source: 'ENV', exchangeBound: false };
     }
     try {
       const v = await this.vault().read(accountId);
       if (v.appHash !== digest(c.appId)) throw Error('App mismatch');
-      return { value: String(v.accessToken), source: 'OAUTH_VAULT' };
+      return {
+        value: String(v.accessToken),
+        source: 'OAUTH_VAULT',
+        exchangeBound:
+          v.appBindingEvidence === 'AUTHORIZATION_CODE_AND_SECRET_EXCHANGE',
+      };
     } catch {
       return null;
     }
@@ -106,7 +112,12 @@ export class ThreadsAuth {
     const valid = t && r?.fingerprint === digest(c.appId + ':' + t.value);
     const { fingerprint, ...safe } = r || { fingerprint: '' };
     return {
-      config: this.config(),
+      config: {
+        ...this.config(),
+        ...(valid && r!.status === 'READY' && (r!.expiresAt || 0) > this.now()
+          ? { oauthStatus: 'AUTHORIZED' }
+          : {}),
+      },
       ...(valid
         ? safe
         : {
@@ -144,18 +155,26 @@ export class ThreadsAuth {
     try {
       const j = await this.provider.debug(t.value, hooks),
         d = j.data;
+      // Threads introspection can omit app_id. An explicit mismatch never passes.
+      // Only our encrypted OAuth exchange receipt establishes the missing binding;
+      // arbitrary ENV tokens cannot use this fallback.
+      const appMatches =
+        d?.app_id !== undefined
+          ? String(d.app_id) === c.appId
+          : t.source === 'OAUTH_VAULT' && t.exchangeBound === true;
       r.verificationChecks = {
         tokenValid: d?.is_valid === true,
-        appMatches: String(d?.app_id) === c.appId,
+        appMatches,
         expiryValid:
           Number.isFinite(d?.expires_at) && d.expires_at * 1000 > this.now(),
         scopesArray: Array.isArray(d?.scopes),
         identityPresent: !!d?.user_id,
+        appIdReturned: d?.app_id !== undefined,
       };
       if (
         !d ||
         d.is_valid !== true ||
-        String(d.app_id) !== c.appId ||
+        !appMatches ||
         !Number.isFinite(d.expires_at) ||
         d.expires_at * 1000 <= this.now() ||
         !Array.isArray(d.scopes) ||
@@ -169,6 +188,8 @@ export class ThreadsAuth {
       r.scopes = d.scopes;
       r.missingScopes = THREADS_SCOPES.filter((s) => !d.scopes.includes(s));
       r.appBindingVerified = true;
+      r.appBindingMethod =
+        d.app_id !== undefined ? 'DEBUG_APP_ID' : 'OAUTH_EXCHANGE_RECEIPT';
       if (r.missingScopes.length) {
         r.status = 'BLOCKED_PERMISSION';
         r.reason = 'Missing granted read/search scopes';
@@ -180,7 +201,7 @@ export class ThreadsAuth {
           throw new ThreadsApiError('BLOCKED_AUTH');
         r.status = 'READY';
         r.reason =
-          'Debug-token app binding, expiry, scopes and /me identity verified; App Review search coverage still requires checking';
+          'App binding, token validity/expiry/scopes and /me identity verified; App Review search coverage still requires checking';
       }
     } catch (e) {
       if (e instanceof ThreadsApiError) {
@@ -366,6 +387,7 @@ export class ThreadsAuth {
       this.vault().write(accountId, {
         accessToken: long.access_token,
         appHash: digest(c.appId),
+        appBindingEvidence: 'AUTHORIZATION_CODE_AND_SECRET_EXCHANGE',
         expiresAt: this.now() + long.expires_in * 1000,
       }),
     );
@@ -391,7 +413,9 @@ export class ThreadsAuth {
     if (this.completing) throw Error('OAuth busy');
     this.completing = true;
     try {
-      if (await this.token()) return this.verify();
+      const current = await this.token();
+      if (current && (current.source === 'ENV' || current.exchangeBound))
+        return this.verify();
       const pending = await this.vault().read(
         '00000000-0000-4000-8000-000000000003',
       );

@@ -173,8 +173,12 @@ export class ThreadsProvider {
   longLived(token: string, secret: string) {
     return this.request(
       'access_token',
-      { grant_type: 'th_exchange_token', client_secret: secret },
-      token,
+      {
+        grant_type: 'th_exchange_token',
+        client_secret: secret,
+        access_token: token,
+      },
+      null,
     );
   }
   debug(token: string, hooks?: ApiHooks) {

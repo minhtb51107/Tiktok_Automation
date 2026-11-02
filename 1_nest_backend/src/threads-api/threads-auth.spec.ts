@@ -75,6 +75,34 @@ afterEach(async () => {
   }
 });
 describe('Threads OAuth / provider — MOCK ONLY, SYNTHETIC TEST DATA', () => {
+  it('requires an encrypted exchange receipt when actual Threads introspection omits app_id', async () => {
+    const f = await fixture();
+    const debug = {
+      data: {
+        is_valid: true,
+        user_id: 'test-user',
+        expires_at: now / 1000 + 3600,
+        scopes: ['threads_basic', 'threads_keyword_search'],
+      },
+    };
+    jest.spyOn(f.auth.provider, 'debug').mockResolvedValue(debug);
+    expect((await f.auth.verify()).status).toBe('BLOCKED_AUTH'); // arbitrary ENV token: no proof
+    f.cfg.accessToken = '';
+    const b = await f.auth.begin('threads-studio.test:3443'),
+      state = new URL(b.url).searchParams.get('state')!;
+    expect(
+      (await f.auth.callback('synthetic-code', state, b.binding)).status,
+    ).toBe('READY');
+    expect(await f.auth.status()).toMatchObject({
+      appBindingVerified: true,
+      appBindingMethod: 'OAUTH_EXCHANGE_RECEIPT',
+      config: { oauthStatus: 'AUTHORIZED' },
+    });
+    jest
+      .spyOn(f.auth.provider, 'debug')
+      .mockResolvedValue({ data: { ...debug.data, app_id: 'different-app' } });
+    expect((await f.auth.verify()).status).toBe('BLOCKED_AUTH'); // explicit mismatch never falls back
+  });
   it.each(['numeric', 'string', 'absent', 'null'])(
     'handles %s user_id without treating it as the verification authority',
     async (kind) => {
@@ -189,7 +217,8 @@ describe('Threads OAuth / provider — MOCK ONLY, SYNTHETIC TEST DATA', () => {
     );
     expect(calls[1].u.pathname).toBe('/v1.0/access_token');
     expect(calls[1].u.searchParams.get('grant_type')).toBe('th_exchange_token');
-    expect(calls[1].i.headers.Authorization).toBe('Bearer ' + token);
+    expect(calls[1].u.searchParams.get('access_token')).toBe(token);
+    expect(calls[1].i.headers.Authorization).toBeUndefined();
     const bad = new ThreadsProvider((async () => {
       throw Object.assign(Error(secret), {
         cause: { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' },
