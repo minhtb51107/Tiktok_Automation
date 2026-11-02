@@ -26,6 +26,7 @@ export function validateRenderRequest(body: RenderRequest, props: VideoPreviewPr
 }
 export function renderValidation(s: StudioSession, props: VideoPreviewProps) {
   const warnings: string[] = [], blockers: string[] = [], finalBlockers: string[] = [];
+  if(s.productionOrigin?.mode==='DRAFT_ONLY')finalBlockers.push('DATA03_DRAFT_ONLY_PROJECT: production preparation is not FINAL approval');
   for (const t of props.timeline.scenes) {
     const item = s.items.find(i=>i.id===t.scene.id && i.selected);
     const a = s.voiceAssets?.find(a=>a.id===t.scene.audioAssetId && a.itemId===item?.id);

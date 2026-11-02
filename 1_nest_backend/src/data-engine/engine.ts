@@ -523,6 +523,7 @@ export class DataEngine {
       if (!e || e.revision !== revision) throw Error('STALE_REVISION');
       if (e.state !== 'QUALIFIED' || e.gold?.eligibility !== 'ELIGIBLE')
         throw Error('Only qualified content can enter the production queue');
+      if (e.review?.decision !== 'ACCEPT') throw Error('Explicit ACCEPT review required before enqueue');
       if (b!.itemType === 'UNKNOWN' && !e.review?.confirmedType)
         throw Error('Target entity type requires manual confirmation');
       e.queue = {
@@ -563,6 +564,9 @@ export class DataEngine {
       synthetic: b!.provenance.synthetic,
     };
     return {
+      postId: e.postId,
+      evaluationId: e.id,
+      revision: e.revision,
       queue: e.queue,
       candidate,
       source,
@@ -572,5 +576,20 @@ export class DataEngine {
       rightsStatus: 'UNKNOWN',
       publishingAllowed: false,
     };
+  }
+  /** Hold the existing single-writer lock through snapshot validation/materialization. */
+  async withQueuedProduction<T>(id:string,evaluationId:string,queueId:string,revision:number,action:(snapshot:{bronze:Bronze;evaluation:Evaluation;input:Awaited<ReturnType<DataEngine['productionInput']>>})=>Promise<T>):Promise<T>{
+    return this.serial(async()=>{
+      const {bronze:b,evaluation:e}=await this.detail(id);
+      if(!b||!e||e.id!==evaluationId||e.revision!==revision)throw Error('STALE_REVISION');
+      if(e.state!=='QUEUED'||e.queue?.id!==queueId||e.queue.workflow!=='THREADS_SERIOUS'||e.queue.mode!=='DRAFT_ONLY')throw Error('PRODUCTION_NOT_QUEUED');
+      if(e.review?.decision!=='ACCEPT'||!e.review.reason?.trim()||!e.review.at)throw Error('PRODUCTION_REQUIRES_ACCEPT');
+      if(e.silver?.status!=='VALIDATED'||e.gold?.eligibility!=='ELIGIBLE'||e.gold.queueState!=='WAITING_MANUAL_PRODUCTION')throw Error('PRODUCTION_NOT_ELIGIBLE');
+      if(e.configHash!==this.configHash||e.inputHash!==b.inputHash||e.bronzeId!==b.id||e.silver.bronzeId!==b.id)throw Error('PRODUCTION_SNAPSHOT_MISMATCH');
+      if(validate(b,this.config).status!=='VALIDATED')throw Error('PRODUCTION_INVALID_SOURCE');
+      if(!['POST','COMMENT'].includes(b.itemType==='UNKNOWN'?e.review.confirmedType||'':b.itemType))throw Error('PRODUCTION_TARGET_UNCONFIRMED');
+      if(b.itemType!=='UNKNOWN'&&e.review.confirmedType&&e.review.confirmedType!==b.itemType)throw Error('PRODUCTION_TARGET_CONFLICT');
+      return action(JSON.parse(JSON.stringify({bronze:b,evaluation:e,input:await this.productionInput(id)})));
+    });
   }
 }

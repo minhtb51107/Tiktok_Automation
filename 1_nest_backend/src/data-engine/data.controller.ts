@@ -14,10 +14,12 @@ import {
 import { StudioService } from '../studio/studio.service';
 import { DataEngine } from './engine';
 import { savedSessionInputs } from './studio-adapter';
+import { ProductionConsumer } from './production-consumer';
 @Injectable()
 export class DataStudioService {
   readonly engine = new DataEngine();
-  constructor(readonly studio: StudioService) {}
+  readonly production: ProductionConsumer;
+  constructor(readonly studio: StudioService) { this.production = new ProductionConsumer(this.engine,studio); }
   async importSession(id: string) {
     const s = await this.studio.load(id);
     return this.engine.import(savedSessionInputs(s));
@@ -35,13 +37,19 @@ export class DataController {
       return await fn();
     } catch (e) {
       const message = (e as Error).message;
-      if (message === 'STALE_REVISION') throw new ConflictException(message);
+      if (message === 'STALE_REVISION' || /CONFLICT|COLLISION/.test(message)) throw new ConflictException(message);
       throw new BadRequestException(message);
     }
   }
   @Get() list(@Query('state') state?: string, @Query('page') page?: string) {
     return this.call(() => this.data.engine.catalog(state, Number(page || 0)));
   }
+  @Get('production/ready') ready(@Query('page') page?:string){return this.call(()=>this.data.production.ready(Number(page||0)));}
+  @Get('production/jobs') jobs(){return this.call(async()=> (await this.data.production.list()).map(({snapshot,...job})=>({...job,source:{sourceUrl:snapshot.bronze.sourceUrl,author:snapshot.bronze.author,bronzeId:snapshot.bronze.id,evaluationId:snapshot.evaluation.id}})));}
+  @Get('production/jobs/:id') job(@Param('id') id:string){return this.call(()=>this.data.production.get(id));}
+  @Get('production/jobs/:id/readiness') readiness(@Param('id') id:string){return this.call(()=>this.data.production.readiness(id));}
+  @Post('production/jobs') createProject(@Body() b:any,@Headers('origin') o?:string){this.origin(o);return this.call(()=>this.data.production.start(b));}
+  @Post('production/jobs/:id/resume') resumeProject(@Param('id') id:string,@Headers('origin') o?:string){this.origin(o);return this.call(()=>this.data.production.resume(id));}
   @Get('posts/:id') detail(@Param('id') id: string) {
     return this.call(() => this.data.engine.detail(id));
   }

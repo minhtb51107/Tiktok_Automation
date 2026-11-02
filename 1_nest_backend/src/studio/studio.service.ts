@@ -653,6 +653,18 @@ export class StudioService {
       }),
     );
   }
+  /** Idempotent DATA-03 materialization. Never overwrites an existing session. */
+  async ensureProductionSession(seed: StudioSession) {
+    return this.exclusive(async()=>{
+      if(!seed.productionOrigin||seed.project.style!=='SERIOUS'||seed.project.id!==seed.id||JSON.stringify(seed.project.productionOrigin)!==JSON.stringify(seed.productionOrigin))throw new BadRequestException('Invalid production seed');
+      try {
+        const existing=await this.load(seed.id);
+        if(existing.productionOrigin?.jobId!==seed.productionOrigin.jobId||existing.productionOrigin.snapshotHash!==seed.productionOrigin.snapshotHash||existing.project.productionOrigin?.jobId!==seed.productionOrigin.jobId)throw new ConflictException('PRODUCTION_SESSION_COLLISION');
+        return existing;
+      }catch(e:any){if(e.code!=='ENOENT')throw e;}
+      return this.persist(seed);
+    });
+  }
   async mutate(id: string, body: any, fetchSource = false) {
     return this.exclusive(async () => {
       const s = await this.load(id);

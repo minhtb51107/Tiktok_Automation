@@ -1,4 +1,8 @@
 export const VIDEO_PIPELINE_CONTRACT_VERSION = '1.0' as const;
+export interface ProductionOrigin {
+  jobId:string;postId:string;bronzeId:string;silverId:string;evaluationId:string;
+  evaluationRevision:number;queueId:string;snapshotHash:string;mode:'DRAFT_ONLY';
+}
 
 export type ContentStyle = 'FUNNY' | 'SERIOUS';
 export type ContentEntityType = 'POST' | 'COMMENT';
@@ -200,6 +204,7 @@ export interface PublishingMetadata {
 }
 
 export interface VideoProject {
+  productionOrigin?: ProductionOrigin;
   backgroundTracks?:import('./editing').BackgroundClip[];
   editorSettings?:unknown;
   backgroundMusic?:import('./scene-visual').BackgroundMusic;
