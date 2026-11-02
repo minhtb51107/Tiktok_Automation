@@ -102,6 +102,13 @@ export function validate(b: Bronze, cfg: DataConfig = DATA_CONFIG): Silver {
     flags: string[] = [],
     url = permalink(b.sourceUrl);
   if (b.sourcePlatform !== 'THREADS') errors.push('UNSUPPORTED_PLATFORM');
+  if (b.provenance?.identityEvidence === 'OFFICIAL_THREADS_API' && !/^\d{6,30}$/.test(b.nativeSourceId || ''))
+    errors.push('INVALID_NATIVE_API_ID');
+  if (b.provenance?.discoveryReviewRequired) {
+    flags.push('DISCOVERY_REQUIRES_MANUAL_REVIEW');
+    if (typeof b.originalBody === 'string' && /\d|https?:\/\/|[A-Z]{3,}/u.test(b.originalBody))
+      flags.push('VOICE_TEXT_REVIEW_REQUIRED');
+  }
   if (!b.sourcePostId || !/^[A-Za-z0-9_-]{3,128}$/.test(b.sourcePostId))
     errors.push('INVALID_SOURCE_ID');
   if (!url) errors.push('MALFORMED_CANONICAL_URL');
@@ -156,7 +163,7 @@ export function validate(b: Bronze, cfg: DataConfig = DATA_CONFIG): Silver {
   if (b.itemType === 'UNKNOWN') flags.push('UNKNOWN_ENTITY_TYPE');
   if (
     !b.provenance?.synthetic &&
-    !['DOM_PERMALINK', 'PUBLIC_CANONICAL_METADATA'].includes(
+      !['DOM_PERMALINK', 'PUBLIC_CANONICAL_METADATA', 'OFFICIAL_THREADS_API'].includes(
       b.provenance?.identityEvidence || '',
     )
   )

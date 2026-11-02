@@ -20,6 +20,7 @@ export type Label =
   | 'POLICY_RISK'
   | 'NEEDS_REVIEW';
 export interface SourceInput {
+  nativeSourceId?: string | null;
   sourcePlatform: string;
   sourcePostId: string | null;
   sourceUrl: string | null;
@@ -48,6 +49,8 @@ export interface SourceInput {
     sessionRevision?: number;
     identityEvidence?: string;
     synthetic: boolean;
+    collectionRunId?: string;
+    discoveryReviewRequired?: boolean;
     bodyMapping?: {
       body: string;
       topic: string | null;
@@ -150,6 +153,7 @@ export interface Evaluation {
   } | null;
 }
 export interface DataPost {
+  createdByRunId?: string;
   schemaVersion: typeof DATA_SCHEMA;
   id: string;
   ordinal: number;
@@ -180,5 +184,6 @@ export interface DataRun {
     bronzeId: string;
     state: DataState;
     reused: boolean;
+    newPost?: boolean;
   }[];
 }

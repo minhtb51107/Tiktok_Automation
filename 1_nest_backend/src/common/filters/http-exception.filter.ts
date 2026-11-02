@@ -22,7 +22,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       success: false,
       statusCode: status,
       timestamp: new Date().toISOString(),
-      path: request.url.startsWith('/api/studio/tiktok/oauth/') ? request.url.split('?')[0]+'?[redacted]' : request.url,
+      path: (/^\/api\/studio\/(?:tiktok\/oauth|threads)\//.test(request.url)) ? request.url.split('?')[0]+'?[redacted]' : request.url,
       error: message,
     });
   }

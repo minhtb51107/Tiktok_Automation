@@ -80,7 +80,8 @@ export class DataEngine {
   }
   private async ingest(
     input: SourceInput,
-  ): Promise<{ post: DataPost; bronze: Bronze }> {
+    runId: string,
+  ): Promise<{ post: DataPost; bronze: Bronze; created: boolean }> {
     const clean = JSON.parse(JSON.stringify(input)) as SourceInput;
     clean.rawPayload ??= null;
     const inputHash = hash(clean),
@@ -113,6 +114,7 @@ export class DataEngine {
         schemaVersion: DATA_SCHEMA,
         id: postId,
         ordinal: ordinal + 1,
+        createdByRunId: runId,
         sourcePostId: input.sourcePostId,
         sourceUrl: input.sourceUrl,
         observations: [],
@@ -140,7 +142,7 @@ export class DataEngine {
       post.sourceUrl = b.sourceUrl;
     }
     await this.store.write(key('posts', post.id), post);
-    return { post, bronze: b };
+    return { post, bronze: b, created: post.createdByRunId === runId };
   }
   private async findDuplicate(post: DataPost, s: Silver) {
     let near: Silver['duplicate'] = null;
@@ -328,13 +330,14 @@ export class DataEngine {
     await this.store.write(key('runs', run.id), run);
     try {
       while (run.cursor < run.inputs.length) {
-        const { post, bronze } = await this.ingest(run.inputs[run.cursor]),
+        const { post, bronze, created } = await this.ingest(run.inputs[run.cursor], run.id),
           { evaluation, reused } = await this.process(post, bronze, run.asOf);
         run.results[run.cursor] = {
           postId: post.id,
           bronzeId: bronze.id,
           state: evaluation.state,
           reused,
+          newPost: created && !run.results.slice(0, run.cursor).some(r => r.postId === post.id),
         };
         run.cursor++;
         sample();
