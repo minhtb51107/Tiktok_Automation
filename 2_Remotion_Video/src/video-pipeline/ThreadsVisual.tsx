@@ -1,4 +1,5 @@
 import React from "react";
+import { AnimatedGif } from './AnimatedGif';
 import {
   AbsoluteFill,
   Img,
@@ -19,14 +20,16 @@ const Image: React.FC<{
   uri: string;
   style: React.CSSProperties;
   avatar?: boolean;
-}> = ({ uri, style, avatar }) => {
+  animated?: boolean;
+  startMs?:number;
+}> = ({ uri, style, avatar, animated, startMs }) => {
   const [failed, setFailed] = React.useState(false);
   return failed ? (
     avatar ? (
       <div style={{ ...style, background: style.background ?? "#edf0f4" }} />
     ) : null
   ) : (
-    <Img src={uri} style={style} onError={() => setFailed(true)} />
+    animated ? <AnimatedGif key={uri} uri={uri} style={style} startMs={startMs}/> : <Img src={uri} style={style} onError={() => setFailed(true)} />
   );
 };
 export const ThreadsVisual: React.FC<{
@@ -77,6 +80,10 @@ export const ThreadsVisual: React.FC<{
       style={{
         background: transparent ? "transparent" : "#e9edf4",
         fontFamily: "Arial, Helvetica, sans-serif",
+        // Preserve the measured Editor base without inheriting its panel CSS.
+        fontSize: 12,
+        fontWeight: 400,
+        lineHeight: 1.45,
         color: palette.text,
       }}
     >
@@ -302,6 +309,8 @@ export const ThreadsVisual: React.FC<{
           <Image
             key={meme!.id}
             uri={meme!.uri}
+            animated={meme!.kind==='GIF'}
+            startMs={v.meme.startMs}
             style={{
               width: "100%",
               height: "100%",

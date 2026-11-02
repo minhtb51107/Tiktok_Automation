@@ -1,5 +1,8 @@
 import {uploadSignature,probeUpload,validCategory} from './uploaded-media';
 import { replaceFile } from './atomic-file';
+import { RenderStore } from './render-store';
+import { renderValidation, validateRenderRequest, snapshotHash } from './render-policy';
+import type { RenderRequest, RenderManifest } from './render.types';
 import {
   BadRequestException,
   ConflictException,
@@ -49,6 +52,30 @@ export function threadsUrl(value: unknown): string {
 }
 @Injectable()
 export class StudioService {
+  readonly renders = new RenderStore();
+  async renderInfo(id:string) {
+    const s=await this.load(id),preview=await this.preview(id);
+    return {revision:s.revision,title:s.title,request:preview.request,validation:renderValidation(s,preview.request.inputProps),renders:await this.renders.list(id)};
+  }
+  private async renderJob(id:string,input:RenderRequest,tick:ProgressSink,jobId:string) {
+    return this.exclusive(async()=>{
+      const s=await this.load(id);
+      if(s.revision!==input.revision)throw new ConflictException('Project changed; reload Render before exporting');
+      const built=prepareEditor(s,await this.visualAssets(s)),props=built.preview.request.inputProps;
+      const range=validateRenderRequest(input,props),validation=renderValidation(s,props);
+      if(validation.blockers.length || input.mode==='FINAL'&&validation.finalBlockers.length)
+        throw new BadRequestException([...validation.blockers,...(input.mode==='FINAL'?validation.finalBlockers:[])].join('; '));
+      // Close an idle retained Kokoro model before starting Chromium/encoding.
+      this.voice.close();
+      const candidates=[process.env.STUDIO_BROWSER,'C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].filter(Boolean) as string[];
+      let browserExecutable='';for(const f of candidates)if((await fs.stat(f).catch(()=>null))?.isFile()){browserExecutable=f;break;}
+      if(!browserExecutable)throw new BadRequestException('BLOCKED_RUNTIME: install/configure an existing browser; no automatic download');
+      const disk=await fs.statfs(this.root);if(disk.bavail*disk.bsize<3*1024**3)throw new BadRequestException('Less than 3 GiB free on project drive');
+      const manifest:RenderManifest={schemaVersion:1,jobId,sessionId:id,projectId:s.project.id,revision:s.revision,timelineHash:snapshotHash(props.timeline),previewHash:snapshotHash(props),mode:input.mode,publishable:false,status:'QUEUED',width:input.preset==='1080P'?1080:720,height:input.preset==='1080P'?1920:1280,fps:props.timeline.fps,totalFrames:props.timeline.totalFrames,frameRange:range,expectedDurationSeconds:(range[1]-range[0]+1)/props.timeline.fps,sceneCount:props.timeline.scenes.length,codec:'h264',audioCodec:'aac',pixelFormat:'yuv420p',concurrency:1,startedAt:new Date().toISOString(),completedAt:null,bytes:null,warnings:[...built.preview.warnings,...validation.warnings,...(input.mode==='DRAFT'?['DRAFT: not approved for publishing',...validation.finalBlockers]:[])],error:null,metrics:{}};
+      const result=await this.renders.run({props,manifest,browserExecutable,appOrigin:`http://127.0.0.1:${process.env.PORT||3000}`},this.jobs,tick);
+      return {revision:s.revision,warnings:result.warnings};
+    });
+  }
   readonly publicAssets = new PublicAssets();
   private async visualAssets(s: StudioSession) {
     const ids = new Set<string>();
@@ -193,7 +220,7 @@ export class StudioService {
       input = body?.input || {};
     if (
       typeof operation !== 'string' ||
-      !/^(fetch|voice-runtime|voice-batch|script\/propose-offline-all|editor\/prepare|voice\/[a-f0-9-]{36}|metadata\/[a-f0-9-]{36}|script\/[a-f0-9-]{36}\/propose)$/.test(
+      !/^(render|fetch|voice-runtime|voice-batch|script\/propose-offline-all|editor\/prepare|voice\/[a-f0-9-]{36}|metadata\/[a-f0-9-]{36}|script\/[a-f0-9-]{36}\/propose)$/.test(
         operation,
       )
     )
@@ -202,7 +229,8 @@ export class StudioService {
       id,
       operation,
       { ...input, revision: input.revision ?? snapshot.revision },
-      async (tick) => {
+      async (tick,jobId) => {
+        if(operation==='render')return this.renderJob(id,input,tick,jobId);
         this.progress = tick;
         this.voice.onStage = (step) => {
           void tick(step).catch(() => {});

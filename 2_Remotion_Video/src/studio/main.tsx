@@ -13,6 +13,7 @@ import { ScriptWorkspace } from "./ScriptWorkspace";
 import { VoiceWorkspace } from "./VoiceWorkspace";
 import { ProgressPanel } from "./ProgressPanel";
 import { EditorWorkspace } from "./EditorWorkspace";
+import { RenderWorkspace } from "./RenderWorkspace";
 
 // Future editor passes this boundary to the existing SeriousTimelinePreview + Player.
 export type StudioPreviewInput = VideoPreviewProps;
@@ -87,7 +88,7 @@ function App() {
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
     const query=new URLSearchParams(window.location.search),id=query.get('session');
-    if(id&&/^[a-f0-9-]{36}$/.test(id))void api<StudioSession>('/'+id).then(s=>{setSession(s);const requested=query.get('step');if(['Source','Script','Voice','Video Editor'].includes(requested||''))setStep(requested!);}).catch(e=>setError(e.message));
+    if(id&&/^[a-f0-9-]{36}$/.test(id))void api<StudioSession>('/'+id).then(s=>{setSession(s);const requested=query.get('step');if(['Source','Script','Voice','Video Editor','Render'].includes(requested||''))setStep(requested!);}).catch(e=>setError(e.message));
     const failed = (e: Event) => setError((e as CustomEvent<string>).detail);
     window.addEventListener("studio-job-error", failed);
     return () => window.removeEventListener("studio-job-error", failed);
@@ -262,7 +263,7 @@ function App() {
             refresh.
           </div>
         )}
-        {session && (step==='Video Editor'?<details className="editor-jobs"><summary>Jobs</summary><ProgressPanel id={session.id} onActive={setJobActive} onCompleted={()=>{if(!dirty&&!editorDirty)void api<StudioSession>('/'+session.id).then(accept).catch(e=>setError(e.message));}}/></details>:(
+        {session && (['Video Editor','Render'].includes(step)?<details className={step==='Video Editor'?'editor-jobs':'render-shared-jobs'}><summary>All stage jobs</summary><ProgressPanel id={session.id} onActive={setJobActive} onCompleted={()=>{if(!dirty&&!editorDirty)void api<StudioSession>('/'+session.id).then(accept).catch(e=>setError(e.message));}}/></details>:(
           <ProgressPanel
             id={session.id}
             onActive={setJobActive}
@@ -361,6 +362,8 @@ function App() {
               );
             }}
           />
+        ) : step === "Render" && session ? (
+          <RenderWorkspace session={session} busy={busy || dirty || editorDirty}/>
         ) : step !== "Source" ? (
           <section className="empty">
             <span className="hero-icon">◇</span>

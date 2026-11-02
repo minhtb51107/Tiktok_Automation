@@ -21,6 +21,14 @@ import { StudioService } from './studio.service';
 @Controller()
 export class StudioController {
   constructor(private readonly studio: StudioService) {}
+  @Get('api/studio/sessions/:id/render') renderInfo(@Param('id') id:string){return this.studio.renderInfo(id);}
+  @Get('api/studio/sessions/:id/renders/:jobId/manifest') renderManifest(@Param('id') id:string,@Param('jobId') job:string){return this.studio.renders.load(id,job);}
+  @Get('api/studio/sessions/:id/renders/:jobId/video') async renderVideo(@Param('id') id:string,@Param('jobId') job:string,@Query('download') download:string,@Res() res:Response){
+    const file=await this.studio.renders.output(id,job);
+    res.setHeader('X-Content-Type-Options','nosniff');
+    if(download==='1')res.attachment(`studio-${job}.mp4`);
+    return res.sendFile(file,{dotfiles:'allow'});
+  }
   @Get('api/studio/public-assets') publicInventory() {
     return this.studio.publicAssets.inventory();
   }

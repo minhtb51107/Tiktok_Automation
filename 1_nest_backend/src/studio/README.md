@@ -1,5 +1,9 @@
 # Content Studio
 
+Current local MP4 export: [UI-05 render architecture and API](../../../docs/studio-ui05-render.md).
+The Render workspace exports the saved SeriousTimelinePreview timeline; DRAFT is
+never publishing approval. Historical UI-01/preview-only notes below are retained.
+
 The UI-01 descriptions below are retained as historical baseline notes. Current Editor behavior is documented in **UI-04.3 — Professional Editor** at the end of this file. Script and Voice are now implemented as explicit user actions; opening the Editor does not call AI/TTS or start production workflows.
 
 ## UI-04.2 Threads visual, topic and public library

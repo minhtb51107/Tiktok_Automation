@@ -44,6 +44,12 @@ export type ProgressSink = (
 const active = (j: StudioJob) => ['QUEUED', 'RUNNING'].includes(j.status);
 export class JobCancelled extends Error {}
 export class StudioJobs {
+  private cancellers = new Map<string, () => void>();
+  onCancel(id: string, cancel: () => void) {
+    this.cancellers.set(id, cancel);
+    if (this.live.get(id)?.cancelRequested) cancel();
+    return () => { this.cancellers.delete(id); };
+  }
   private queue: Promise<unknown> = Promise.resolve();
   private writing: Promise<unknown> = Promise.resolve();
   private live = new Map<string, StudioJob>();
@@ -66,7 +72,12 @@ export class StudioJobs {
     return write;
   }
   async load(id: string) {
-    if (this.live.has(id)) return this.live.get(id)!;
+    if (this.live.has(id)) {
+      const live=this.live.get(id)!;
+      // Do not expose completion before its final atomic write is durable.
+      if(!active(live))await this.writing;
+      return live;
+    }
     const j: StudioJob = JSON.parse(await fs.readFile(this.file(id), 'utf8'));
     if (active(j)) {
       j.status = 'FAILED';
@@ -94,7 +105,7 @@ export class StudioJobs {
     sessionId: string,
     operation: string,
     input: unknown,
-    run: (tick: ProgressSink) => Promise<{
+    run: (tick: ProgressSink, jobId: string) => Promise<{
       revision?: number;
       review?: boolean;
       error?: string;
@@ -173,7 +184,7 @@ export class StudioJobs {
         j.status = 'RUNNING';
         j.startedAt = new Date().toISOString();
         await tick('Preparing');
-        const out = await run(tick);
+        const out = await run(tick, j.jobId);
         j.revision = out.revision ?? null;
         j.warnings = out.warnings || [];
         if (j.cancelRequested)
@@ -214,6 +225,7 @@ export class StudioJobs {
     const j = await this.load(id);
     if (active(j)) {
       j.cancelRequested = true;
+      this.cancellers.get(id)?.();
       j.warnings.push(
         'Queued jobs stop before starting. A running operation/batch finishes safely, retaining artifacts, then becomes CANCELLED; no rollback or forced worker kill.',
       );
