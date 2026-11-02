@@ -260,7 +260,7 @@ export function VoiceWorkspace({
   const [gc, setGc] = useState("");
   const [allSpeed, setAllSpeed] = useState<number>(VOICE_SPEED.default);
   const [allVoice, setAllVoice] = useState("");
-  const [chosen, setChosen] = useState<string[]>([]);
+  const [chosen, setChosen] = useState<string[]>([]), [focusId, setFocusId] = useState<string>("ALL");
   const runtime = session.voiceRuntime;
   const selected = session.items.filter((i) => i.selected);
   const names = new Map(session.items.map((i) => [i.id, i.author.displayName]));
@@ -455,8 +455,17 @@ export function VoiceWorkspace({
       {dirty && (
         <div className="alert">Save script edits before voice operations.</div>
       )}
+      {selected.length > 1 && (
+        <div className="v2-scene-jumpbar" role="toolbar" aria-label="Voice scene filter">
+          <span>SCENE FOCUS:</span>
+          <button className={focusId === "ALL" ? "active" : ""} onClick={() => setFocusId("ALL")}>All ({selected.length})</button>
+          {selected.slice().sort((a, b) => a.order - b.order).map((item) => (
+            <button key={item.id} className={focusId === item.id ? "active" : ""} onClick={() => setFocusId(item.id)}>#{item.order + 1} {item.author.displayName}</button>
+          ))}
+        </div>
+      )}
       {session.items
-        .filter((i) => i.selected)
+        .filter((i) => i.selected && (focusId === "ALL" || i.id === focusId))
         .sort((a, b) => a.order - b.order)
         .map((i) => (
           <VoiceScene

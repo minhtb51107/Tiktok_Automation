@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type {
   StudioSession,
   StudioItem,
@@ -50,6 +51,8 @@ export function ScriptWorkspace({
   busy: boolean;
   dirty: boolean;
 }) {
+  const [focusId, setFocusId] = useState<string>("ALL");
+  const selectedRows = session.items.filter((i) => i.selected).sort((a, b) => a.order - b.order);
   return (
     <>
       <section className="source-header">
@@ -86,9 +89,17 @@ export function ScriptWorkspace({
           rules.
         </div>
       )}
-      {session.items
-        .filter((i) => i.selected)
-        .sort((a, b) => a.order - b.order)
+      {selectedRows.length > 1 && (
+        <div className="v2-scene-jumpbar" role="toolbar" aria-label="Script scene filter">
+          <span>SCENE FOCUS:</span>
+          <button className={focusId === "ALL" ? "active" : ""} onClick={() => setFocusId("ALL")}>All ({selectedRows.length})</button>
+          {selectedRows.map((item) => (
+            <button key={item.id} className={focusId === item.id ? "active" : ""} onClick={() => setFocusId(item.id)}>#{item.order + 1} {item.author.displayName}</button>
+          ))}
+        </div>
+      )}
+      {selectedRows
+        .filter((i) => focusId === "ALL" || i.id === focusId)
         .map((item) => {
           const p = session.scriptProposals
             ?.filter((p) => p.itemId === item.id)

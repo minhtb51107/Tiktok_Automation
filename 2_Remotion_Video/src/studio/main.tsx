@@ -5,6 +5,9 @@ import type {
   StudioItem,
 } from "../../../1_nest_backend/src/studio/studio.contracts";
 import type { VideoPreviewProps } from "../../../1_nest_backend/src/video-pipeline/contracts";
+import type { StudioJob } from "../../../1_nest_backend/src/studio/progress";
+import type { RenderManifest } from "../../../1_nest_backend/src/studio/render.types";
+import type { LibraryAsset } from "../../../1_nest_backend/src/studio/public-assets";
 import "./studio.css";
 import { UrlRows, MetadataEditor, MediaPreview } from "./SourceReview";
 import { StageReportPanel } from "./StageReportPanel";
@@ -13,11 +16,39 @@ import { ScriptWorkspace } from "./ScriptWorkspace";
 import { VoiceWorkspace } from "./VoiceWorkspace";
 import { ProgressPanel } from "./ProgressPanel";
 import { EditorWorkspace } from "./EditorWorkspace";
-import {PublishingWorkspace} from "./PublishingWorkspace";
+import { PublishingWorkspace } from "./PublishingWorkspace";
 import { RenderWorkspace } from "./RenderWorkspace";
+import { DashboardWorkspace } from "./DashboardWorkspace";
+import { DataReviewWorkspace } from "./DataReviewWorkspace";
+import {
+  ProductionQueueWorkspace,
+  SettingsWorkspace,
+} from "./OperationsWorkspaces";
+import { TopicEditor } from "./VisualControls";
+import { SIMULATED_DISCOVERY_SCHEDULES } from "./studio-v2-adapter";
 
 // Future editor passes this boundary to the existing SeriousTimelinePreview + Player.
 export type StudioPreviewInput = VideoPreviewProps;
+
+const WORKFLOW_STEPS = [
+  "Source",
+  "Script",
+  "Voice",
+  "Video Editor",
+  "Render",
+  "Publish",
+] as const;
+
+const STUDIO_AREAS = [
+  "Dashboard",
+  "Discovery",
+  "Data Review",
+  "Production Queue",
+  "Video Studio",
+  "Settings",
+] as const;
+export type StudioArea = (typeof STUDIO_AREAS)[number];
+
 async function api<T>(url: string, method = "GET", body?: unknown): Promise<T> {
   const match = url.match(/^\/([a-f0-9-]{36})\/(.+)$/);
   if (
@@ -68,17 +99,43 @@ async function api<T>(url: string, method = "GET", body?: unknown): Promise<T> {
     );
   return json.data ?? json;
 }
+
 function App() {
-  const [sessions, setSessions] = useState<{ id: string; title: string }[]>([]),
+  const [sessions, setSessions] = useState<
+      { id: string; title: string; updatedAt?: string }[]
+    >([]),
     [session, setSession] = useState<StudioSession | null>(null);
   const [step, setStep] = useState("Source"),
+    [area, setArea] = useState<StudioArea>("Discovery"),
     [localBusy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [dirty, setDirty] = useState(false);
   const [jobActive, setJobActive] = useState(false);
-  const [editorDirty,setEditorDirty]=useState(false);
-  useEffect(()=>{if(!session)return;const u=new URL(window.location.href);u.searchParams.set('session',session.id);u.searchParams.set('step',step);window.history.replaceState(null,'',u.pathname+u.search);},[session?.id,step]);
+  const [editorDirty, setEditorDirty] = useState(false);
+  const [theme, setTheme] = useState<"DARK" | "LIGHT">(
+    () =>
+      (localStorage.getItem("studio-appearance") as "DARK" | "LIGHT") || "DARK",
+  );
+  const [sessionJobs, setSessionJobs] = useState<StudioJob[]>([]);
+  const [sessionRenders, setSessionRenders] = useState<RenderManifest[]>([]);
+  const [publicAssets, setPublicAssets] = useState<LibraryAsset[]>([]);
+  const [focusItemId, setFocusItemId] = useState<string>("ALL");
+
+  useEffect(() => {
+    document.documentElement.dataset.studioTheme = theme;
+    localStorage.setItem("studio-appearance", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    if (!session) return;
+    const u = new URL(window.location.href);
+    u.searchParams.set("session", session.id);
+    u.searchParams.set("step", step);
+    u.searchParams.set("area", area);
+    window.history.replaceState(null, "", u.pathname + u.search);
+  }, [session?.id, step, area]);
+
   const busy = localBusy || jobActive;
   const [manual, setManual] = useState(false),
     [manualUrl, setManualUrl] = useState(""),
@@ -86,14 +143,76 @@ function App() {
     [comments, setComments] = useState(""),
     [author, setAuthor] = useState("");
   const refresh = async () => setSessions(await api(""));
+
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
-    const query=new URLSearchParams(window.location.search),id=query.get('session');
-    if(id&&/^[a-f0-9-]{36}$/.test(id))void api<StudioSession>('/'+id).then(s=>{setSession(s);const requested=query.get('step');if(['Source','Script','Voice','Video Editor','Render','Publish'].includes(requested||''))setStep(requested!);}).catch(e=>setError(e.message));
+    fetch("/api/studio/public-assets")
+      .then((r) => r.json())
+      .then((j) => setPublicAssets(j.data ?? j ?? []))
+      .catch(() => {});
+
+    const query = new URLSearchParams(window.location.search),
+      id = query.get("session"),
+      requestedArea = query.get("area") as StudioArea | null,
+      requestedStep = query.get("step");
+    if (requestedArea && STUDIO_AREAS.includes(requestedArea)) {
+      setArea(requestedArea);
+    }
+    if (id && /^[a-f0-9-]{36}$/.test(id))
+      void api<StudioSession>("/" + id)
+        .then((s) => {
+          setSession(s);
+          if (
+            requestedStep &&
+            WORKFLOW_STEPS.includes(
+              requestedStep as (typeof WORKFLOW_STEPS)[number],
+            )
+          ) {
+            setStep(requestedStep);
+            if (!requestedArea) {
+              setArea(
+                requestedStep === "Video Editor"
+                  ? "Video Studio"
+                  : requestedStep === "Render" || requestedStep === "Publish"
+                    ? "Production Queue"
+                    : "Discovery",
+              );
+            }
+          }
+        })
+        .catch((e) => setError(e.message));
     const failed = (e: Event) => setError((e as CustomEvent<string>).detail);
     window.addEventListener("studio-job-error", failed);
     return () => window.removeEventListener("studio-job-error", failed);
   }, []);
+
+  useEffect(() => {
+    if (!session?.id) {
+      setSessionJobs([]);
+      setSessionRenders([]);
+      return;
+    }
+    let alive = true;
+    const loadTelemetry = async () => {
+      try {
+        const [jRes, rRes] = await Promise.all([
+          fetch(`/api/studio/sessions/${session.id}/jobs`),
+          fetch(`/api/studio/sessions/${session.id}/render`),
+        ]);
+        if (jRes.ok && alive) {
+          const j = await jRes.json();
+          setSessionJobs(j.data ?? j ?? []);
+        }
+        if (rRes.ok && alive) {
+          const r = await rRes.json();
+          const data = r.data ?? r;
+          setSessionRenders(data?.renders ?? []);
+        }
+      } catch {}
+    };
+    void loadTelemetry();
+  }, [session?.id, session?.revision, jobActive]);
+
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
       if (dirty || editorDirty) {
@@ -103,7 +222,8 @@ function App() {
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty,editorDirty]);
+  }, [dirty, editorDirty]);
+
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
     setError("");
@@ -117,11 +237,14 @@ function App() {
     }
   };
   const accept = (s: StudioSession) => {
-    const u=new URL(window.location.href);u.searchParams.set('session',s.id);window.history.replaceState(null,'',u.pathname+u.search);
+    const u = new URL(window.location.href);
+    u.searchParams.set("session", s.id);
+    window.history.replaceState(null, "", u.pathname + u.search);
     setSession(s);
     setDirty(false);
   };
-  const canLeave = () => !(dirty||editorDirty) || window.confirm("Discard unsaved edits?");
+  const canLeave = () =>
+    !(dirty || editorDirty) || window.confirm("Discard unsaved edits?");
   const save = async () => {
     if (!session) return;
     accept(
@@ -163,12 +286,78 @@ function App() {
     });
     setDirty(true);
   };
+
+  const navigateStep = (nextStep: string) => {
+    if (nextStep === step && ["Discovery", "Video Studio"].includes(area)) return;
+    if (!canLeave()) return;
+    setStep(nextStep);
+    if (nextStep === "Video Editor") {
+      setArea("Video Studio");
+    } else if (["Dashboard", "Data Review", "Settings"].includes(area)) {
+      setArea("Discovery");
+    }
+  };
+
+  const navigateArea = (nextArea: StudioArea) => {
+    if (nextArea === area) return;
+    if (!canLeave()) return;
+    setArea(nextArea);
+    if (nextArea === "Video Studio") {
+      setStep("Video Editor");
+    } else if (nextArea === "Discovery" && step === "Video Editor") {
+      setStep("Source");
+    }
+  };
+
+  const isEditorFull =
+    step === "Video Editor" &&
+    session !== null &&
+    !["Dashboard", "Data Review", "Settings"].includes(area);
+
+  const visibleSourceItems = (session?.items || []).filter(
+    (i) =>
+      (focusItemId === "ALL" || i.id === focusItemId) &&
+      (i.inclusion === "EXPLICIT_CONTEXT" ||
+        i.inclusion === "MANUAL" ||
+        !session?.attempts?.length ||
+        session.attempts.some(
+          (a) => !!a.matchedTargetId && a.canonicalUrl === i.sourceUrl,
+        )),
+  );
+
   return (
-    <div className={'studio '+(step==='Video Editor'&&session?'is-editor':'')}>
+    <div className={"studio " + (isEditorFull ? "is-editor" : "")}>
       <aside>
         <a className="brand" href="/studio">
-          <span>◈</span> Content Studio
+          <span>◈</span> Studio V2
         </a>
+        <div className="eyebrow">OPERATIONS & STUDIO</div>
+        <div className="v2-area-nav" role="navigation" aria-label="Primary areas">
+          {STUDIO_AREAS.map((a) => (
+            <button
+              key={a}
+              data-area={a}
+              className={"v2-area-btn " + (area === a ? "active" : "")}
+              onClick={() => navigateArea(a)}
+            >
+              <span>{a}</span>
+              <small>
+                {a === "Dashboard"
+                  ? "Ops"
+                  : a === "Discovery"
+                    ? session?.items.length ?? 0
+                    : a === "Data Review"
+                      ? "QA"
+                      : a === "Production Queue"
+                        ? sessionJobs.length
+                        : a === "Video Studio"
+                          ? "NLE"
+                          : "Cfg"}
+              </small>
+            </button>
+          ))}
+        </div>
+
         <div className="eyebrow">WORKFLOWS</div>
         <button className="workflow active">
           ◉ Threads SERIOUS <small>01</small>
@@ -176,11 +365,11 @@ function App() {
         {["FUNNY", "COMPILATION", "LYRICS"].map((w) => (
           <button className="workflow" disabled key={w}>
             {w}
-            <small>Soon</small>
+            <small>Legacy</small>
           </button>
         ))}
         <div className="project-heading">
-          <span className="eyebrow">YOUR PROJECTS</span>
+          <span className="eyebrow">YOUR PROJECTS ({sessions.length})</span>
           <button
             aria-label="New project"
             disabled={busy}
@@ -190,6 +379,7 @@ function App() {
                   accept(await api("", "POST"));
                   await refresh();
                   setStep("Source");
+                  setArea("Discovery");
                 });
             }}
           >
@@ -206,41 +396,58 @@ function App() {
                 if (canLeave())
                   void run(async () => {
                     accept(await api("/" + s.id));
-                    setStep("Source");
+                    if (step === "Video Editor") setStep("Source");
                   });
               }}
             >
               {s.title}
-              <small>SERIOUS · {s.id.slice(0,8)}</small>
+              <small>SERIOUS · {s.id.slice(0, 8)}</small>
             </button>
           ))}
         </div>
         <footer>
-          LOCAL WORKSPACE
+          LOCAL WORKSPACE · LOOPBACK
           <br />
           <span>Publishing automation is off</span>
         </footer>
       </aside>
       <main>
-        <header>
+        <header className="v2-topbar">
           <div>
-            <div className="eyebrow">THREADS / SERIOUS</div>
+            <div className="eyebrow">
+              THREADS / SERIOUS · {area.toUpperCase()}
+            </div>
             <h1>{session?.title || "Your next story starts here"}</h1>
           </div>
-          <span className="badge">● Local studio {session&&<small data-testid="active-session">Session {session.id} · revision {session.revision}</small>}</span>
+          <div className="v2-topbar-controls">
+            <span className="badge">
+              ● Local studio{" "}
+              {session && (
+                <small data-testid="active-session">
+                  Session {session.id} · revision {session.revision}
+                </small>
+              )}
+            </span>
+            <button
+              type="button"
+              className="v2-theme-toggle"
+              aria-label="Toggle Light or Dark theme"
+              onClick={() => setTheme(theme === "DARK" ? "LIGHT" : "DARK")}
+            >
+              {theme === "DARK" ? "☀ Light" : "☾ Dark"}
+            </button>
+          </div>
         </header>
         <nav aria-label="Workflow steps">
-          {[
-            "Source",
-            "Script",
-            "Voice",
-            "Video Editor",
-            "Render",
-            "Publish",
-          ].map((name, n) => (
+          {WORKFLOW_STEPS.map((name, n) => (
             <button
-              className={step === name ? "current" : ""}
-              onClick={() => {if(name===step||canLeave())setStep(name);}}
+              className={
+                step === name &&
+                !["Dashboard", "Data Review", "Settings"].includes(area)
+                  ? "current"
+                  : ""
+              }
+              onClick={() => navigateStep(name)}
               key={name}
             >
               <b>{n + 1}</b>
@@ -264,19 +471,120 @@ function App() {
             refresh.
           </div>
         )}
-        {session && (['Video Editor','Render'].includes(step)?<details className={step==='Video Editor'?'editor-jobs':'render-shared-jobs'}><summary>All stage jobs</summary><ProgressPanel id={session.id} onActive={setJobActive} onCompleted={()=>{if(!dirty&&!editorDirty)void api<StudioSession>('/'+session.id).then(accept).catch(e=>setError(e.message));}}/></details>:(
-          <ProgressPanel
-            id={session.id}
-            onActive={setJobActive}
-            onCompleted={() => {
-              if (!dirty && !editorDirty)
-                void api<StudioSession>("/" + session.id)
-                  .then(accept)
-                  .catch((e) => setError(e.message));
+        {session &&
+          (["Video Editor", "Render"].includes(step) ||
+          ["Dashboard", "Data Review", "Production Queue", "Settings"].includes(
+            area,
+          ) ? (
+            <details
+              className={
+                isEditorFull ? "editor-jobs" : "v2-jobs-drawer render-shared-jobs"
+              }
+              open={jobActive}
+            >
+              <summary>
+                <span>
+                  All stage jobs ({sessionJobs.length}){" "}
+                  {jobActive ? "· RUNNING" : "· Standby"}
+                </span>
+              </summary>
+              <ProgressPanel
+                id={session.id}
+                onActive={setJobActive}
+                onCompleted={() => {
+                  if (!dirty && !editorDirty)
+                    void api<StudioSession>("/" + session.id)
+                      .then(accept)
+                      .catch((e) => setError(e.message));
+                }}
+              />
+            </details>
+          ) : (
+            <details className="v2-jobs-drawer" open={jobActive}>
+              <summary>
+                <span>
+                  Tiến trình & lịch sử tác vụ ({sessionJobs.length} jobs){" "}
+                  {jobActive ? "— ĐANG CHẠY" : "— Nhấn để mở rộng"}
+                </span>
+              </summary>
+              <ProgressPanel
+                id={session.id}
+                onActive={setJobActive}
+                onCompleted={() => {
+                  if (!dirty && !editorDirty)
+                    void api<StudioSession>("/" + session.id)
+                      .then(accept)
+                      .catch((e) => setError(e.message));
+                }}
+              />
+            </details>
+          ))}
+
+        {/* Primary Area Router: Dashboard / Data Review / Settings / Production Queue */}
+        {area === "Dashboard" ? (
+          <DashboardWorkspace
+            sessions={sessions}
+            session={session}
+            jobs={sessionJobs}
+            renders={sessionRenders}
+            busy={busy}
+            onNavigateArea={(a) => navigateArea(a as StudioArea)}
+            onNavigateStep={navigateStep}
+            onSelectSession={(id) => {
+              if (canLeave())
+                void run(async () => {
+                  accept(await api("/" + id));
+                });
+            }}
+            onCreateSession={() => {
+              if (canLeave())
+                void run(async () => {
+                  accept(await api("", "POST"));
+                  await refresh();
+                  setStep("Source");
+                  setArea("Discovery");
+                });
             }}
           />
-        ))}
-        {step === "Script" && session ? (
+        ) : area === "Data Review" ? (
+          <DataReviewWorkspace
+            session={session}
+            busy={busy}
+            dirty={dirty}
+            onUpdateItem={update}
+            onMoveItem={move}
+            onSaveSession={() => void run(save)}
+            onOpenStep={navigateStep}
+          />
+        ) : area === "Settings" ? (
+          <SettingsWorkspace
+            session={session}
+            publicAssets={publicAssets}
+            theme={theme}
+            onChangeTheme={setTheme}
+            busy={busy}
+            onCheckVoiceRuntime={() => {
+              if (!session) return;
+              void run(async () => {
+                accept(await api("/" + session.id + "/voice-runtime", "POST"));
+              });
+            }}
+          />
+        ) : area === "Production Queue" &&
+          !["Render", "Publish"].includes(step) ? (
+          <ProductionQueueWorkspace
+            session={session}
+            jobs={sessionJobs}
+            renders={sessionRenders}
+            busy={busy}
+            onCancelJob={(jobId) => {
+              void fetch(`/api/studio/jobs/${jobId}/cancel`, {
+                method: "POST",
+              }).then(() => setNotice("Cancellation requested."));
+            }}
+            onOpenStep={navigateStep}
+          />
+        ) : step === "Script" && session ? (
           <ScriptWorkspace
             session={session}
             busy={busy}
@@ -350,7 +658,7 @@ function App() {
           />
         ) : step === "Video Editor" && session ? (
           <EditorWorkspace
-            onNavigate={setStep}
+            onNavigate={navigateStep}
             onDirty={setEditorDirty}
             session={session}
             busy={busy || dirty}
@@ -364,8 +672,18 @@ function App() {
             }}
           />
         ) : step === "Render" && session ? (
-          <RenderWorkspace session={session} busy={busy || dirty || editorDirty}/>
-        ) : step === "Publish" && session ? (<PublishingWorkspace key={session.id} session={session} busy={busy||dirty||editorDirty} onSession={accept}/>) : step !== "Source" ? (
+          <RenderWorkspace
+            session={session}
+            busy={busy || dirty || editorDirty}
+          />
+        ) : step === "Publish" && session ? (
+          <PublishingWorkspace
+            key={session.id}
+            session={session}
+            busy={busy || dirty || editorDirty}
+            onSession={accept}
+          />
+        ) : step !== "Source" ? (
           <section className="empty">
             <span className="hero-icon">◇</span>
             <h2>{step} workspace</h2>
@@ -400,16 +718,27 @@ function App() {
           <>
             <section className="source-header">
               <div>
-                <h2>01 / Source material</h2>
+                <span className="v2-eyebrow">
+                  DISCOVERY & SOURCE COLLECTION · IMMUTABLE PROVENANCE
+                </span>
+                <h2>01 / Discovery & Source Material</h2>
                 <p>Collect the original. Shape your version. Keep both.</p>
               </div>
-              <button
-                className="primary"
-                disabled={busy}
-                onClick={() => void run(save)}
-              >
-                {dirty ? "Save changes" : "Save project"}
-              </button>
+              <div className="actions">
+                <button
+                  disabled={busy}
+                  onClick={() => navigateArea("Data Review")}
+                >
+                  Open Medallion Data Review
+                </button>
+                <button
+                  className="primary"
+                  disabled={busy}
+                  onClick={() => void run(save)}
+                >
+                  {dirty ? "Save changes" : "Save project"}
+                </button>
+              </div>
             </section>
             <label className="title-field">
               Project name
@@ -425,7 +754,7 @@ function App() {
             <section className="panel">
               <div className="panel-top">
                 <h3>Add Threads content</h3>
-                <span>Up to 5 public URLs</span>
+                <span>Up to 5 public URLs · Rate-limited sequential fetch</span>
               </div>
               <UrlRows
                 key={session.id}
@@ -517,6 +846,26 @@ function App() {
                   </button>
                 </div>
               )}
+              <details>
+                <summary>
+                  Discovery scheduling & rate limits ·{" "}
+                  <span className="v2-status-pill status-needs-review">
+                    [SIMULATED / CONTRACT PREVIEW]
+                  </span>
+                </summary>
+                <div className="v2-kv-list">
+                  {SIMULATED_DISCOVERY_SCHEDULES.map((sc) => (
+                    <div className="v2-kv-row" key={sc.id}>
+                      <span>
+                        {sc.queryOrSource} ({sc.category})
+                      </span>
+                      <strong>
+                        {sc.cadence} · {sc.rateLimit}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              </details>
             </section>
             {session.errors
               .filter(
@@ -615,139 +964,163 @@ function App() {
                   : ""}
               </span>
             </section>
+            {session.items.length > 1 && (
+              <div className="v2-scene-jumpbar" role="toolbar" aria-label="Scene focus filter">
+                <span>FOCUS VIEW:</span>
+                <button
+                  className={focusItemId === "ALL" ? "active" : ""}
+                  onClick={() => setFocusItemId("ALL")}
+                >
+                  All ({session.items.length})
+                </button>
+                {session.items.map((item, idx) => (
+                  <button
+                    key={item.id}
+                    className={focusItemId === item.id ? "active" : ""}
+                    onClick={() => setFocusItemId(item.id)}
+                  >
+                    #{idx + 1} {item.author.displayName}
+                  </button>
+                ))}
+              </div>
+            )}
             {session.items.length === 0 ? (
               <div className="panel empty-small">
                 Add a Threads URL or paste source material to begin.
               </div>
             ) : (
-              session.items
-                .filter(
-                  (i) =>
-                    i.inclusion === "EXPLICIT_CONTEXT" ||
-                    i.inclusion === "MANUAL" ||
-                    !session.attempts?.length ||
-                    session.attempts.some(
-                      (a) =>
-                        !!a.matchedTargetId && a.canonicalUrl === i.sourceUrl,
-                    ),
-                )
-                .map((i, index) => (
-                  <article
-                    className={"content-card " + (i.selected ? "selected" : "")}
-                    key={i.id}
-                  >
-                    <div className="card-head">
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={i.selected}
-                          onChange={(e) =>
-                            update(i.id, { selected: e.target.checked })
-                          }
-                        />
-                        <strong>{i.author.displayName}</strong>
-                        <span className="badge">
-                          {i.metadata?.type || i.sourceReference.entityType}
-                        </span>
-                      </label>
-                      <div>
-                        <button
-                          aria-label="Move up"
-                          disabled={index === 0}
-                          onClick={() => move(i.id, -1)}
-                        >
-                          ↑
-                        </button>
-                        <button
-                          aria-label="Move down"
-                          disabled={index === session.items.length - 1}
-                          onClick={() => move(i.id, 1)}
-                        >
-                          ↓
-                        </button>
-                      </div>
+              visibleSourceItems.map((i, index) => (
+                <article
+                  className={"content-card " + (i.selected ? "selected" : "")}
+                  key={i.id}
+                >
+                  <div className="card-head">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={i.selected}
+                        onChange={(e) =>
+                          update(i.id, { selected: e.target.checked })
+                        }
+                      />
+                      <strong>{i.author.displayName}</strong>
+                      <span className="badge">
+                        {i.metadata?.type || i.sourceReference.entityType}
+                      </span>
+                    </label>
+                    <div>
+                      <button
+                        aria-label="Move up"
+                        disabled={index === 0}
+                        onClick={() => move(i.id, -1)}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        aria-label="Move down"
+                        disabled={index === session.items.length - 1}
+                        onClick={() => move(i.id, 1)}
+                      >
+                        ↓
+                      </button>
                     </div>
-                    {i.sourceUrl && (
-                      <a href={i.sourceUrl} target="_blank" rel="noreferrer">
-                        {i.sourceUrl}
-                      </a>
-                    )}
-                    <ThreadsPreview
+                  </div>
+                  {i.sourceUrl && (
+                    <a href={i.sourceUrl} target="_blank" rel="noreferrer">
+                      {i.sourceUrl}
+                    </a>
+                  )}
+                  <ThreadsPreview
+                    item={i}
+                    disabled={busy || dirty}
+                    onRefresh={() =>
+                      void run(async () => {
+                        accept(
+                          await api(
+                            "/" + session.id + "/metadata/" + i.id,
+                            "POST",
+                            { revision: session.revision },
+                          ),
+                        );
+                      })
+                    }
+                  />
+                  <details>
+                    <summary>
+                      Review original, metadata, topic mapping, media & edit text
+                    </summary>
+                    <details>
+                      <summary>Original source · read only</summary>
+                      <p className="original">{i.originalText}</p>
+                      {i.mediaReferences.map((m, n) => (
+                        <p className="media" key={n}>
+                          Media reference: {m}
+                        </p>
+                      ))}
+                    </details>
+                    <TopicEditor
                       item={i}
                       disabled={busy || dirty}
-                      onRefresh={() =>
-                        void run(async () => {
+                      save={async (body) => {
+                        await run(async () => {
                           accept(
                             await api(
-                              "/" + session.id + "/metadata/" + i.id,
+                              "/" + session.id + "/topic/" + i.id,
                               "POST",
-                              { revision: session.revision },
+                              { ...(body as object), revision: session.revision },
                             ),
                           );
-                        })
-                      }
+                        });
+                      }}
                     />
-                    <details>
-                      <summary>
-                        Review original, metadata, media & edit text
-                      </summary>
-                      <details>
-                        <summary>Original source · read only</summary>
-                        <p className="original">{i.originalText}</p>
-                        {i.mediaReferences.map((m, n) => (
-                          <p className="media" key={n}>
-                            Media reference: {m}
-                          </p>
-                        ))}
-                      </details>
-                      <MetadataEditor
-                        item={i}
-                        onChange={(patch) => update(i.id, patch)}
-                      />
-                      <MediaPreview item={i} />
-                      <div className="edit-grid">
-                        <label>
-                          Display text
-                          <textarea
-                            rows={4}
-                            value={i.displayText}
-                            onChange={(e) =>
-                              update(i.id, { displayText: e.target.value })
-                            }
-                          />
-                        </label>
-                        <label>
-                          Spoken text
-                          <textarea
-                            rows={4}
-                            value={i.spokenText}
-                            onChange={(e) =>
-                              update(i.id, { spokenText: e.target.value })
-                            }
-                          />
-                        </label>
-                      </div>
-                      <div className="card-bottom">
-                        <small>
-                          #{index + 1} · Revision {i.revision} ·{" "}
-                          {i.manualLocks.length
-                            ? "Manual text locks"
-                            : "Original text"}{" "}
-                        </small>
-                        <button
-                          onClick={() =>
-                            update(i.id, {
-                              displayText: i.originalText,
-                              spokenText: i.originalText,
-                            })
+                    <MetadataEditor
+                      item={i}
+                      onChange={(patch) => update(i.id, patch)}
+                    />
+                    <MediaPreview item={i} />
+                    <div className="edit-grid">
+                      <label>
+                        Display text
+                        <textarea
+                          rows={4}
+                          value={i.displayText}
+                          onChange={(e) =>
+                            update(i.id, { displayText: e.target.value })
                           }
-                        >
-                          Restore original text
-                        </button>
-                      </div>
-                    </details>
-                  </article>
-                ))
+                        />
+                      </label>
+                      <label>
+                        Spoken text
+                        <textarea
+                          rows={4}
+                          value={i.spokenText}
+                          onChange={(e) =>
+                            update(i.id, { spokenText: e.target.value })
+                          }
+                        />
+                      </label>
+                    </div>
+                    <div className="card-bottom">
+                      <small>
+                        #{index + 1} · Revision {i.revision} ·{" "}
+                        {i.manualLocks.length
+                          ? "Manual text locks"
+                          : "Original text"}{" "}
+                      </small>
+                      <button
+                        onClick={() =>
+                          update(i.id, {
+                            displayText: i.originalText,
+                            spokenText: i.originalText,
+                          })
+                        }
+                      >
+                        Restore original text
+                      </button>
+                    </div>
+                  </details>
+                </article>
+              ))
             )}
           </>
         )}
