@@ -13,6 +13,7 @@ import { ScriptWorkspace } from "./ScriptWorkspace";
 import { VoiceWorkspace } from "./VoiceWorkspace";
 import { ProgressPanel } from "./ProgressPanel";
 import { EditorWorkspace } from "./EditorWorkspace";
+import {PublishingWorkspace} from "./PublishingWorkspace";
 import { RenderWorkspace } from "./RenderWorkspace";
 
 // Future editor passes this boundary to the existing SeriousTimelinePreview + Player.
@@ -88,7 +89,7 @@ function App() {
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
     const query=new URLSearchParams(window.location.search),id=query.get('session');
-    if(id&&/^[a-f0-9-]{36}$/.test(id))void api<StudioSession>('/'+id).then(s=>{setSession(s);const requested=query.get('step');if(['Source','Script','Voice','Video Editor','Render'].includes(requested||''))setStep(requested!);}).catch(e=>setError(e.message));
+    if(id&&/^[a-f0-9-]{36}$/.test(id))void api<StudioSession>('/'+id).then(s=>{setSession(s);const requested=query.get('step');if(['Source','Script','Voice','Video Editor','Render','Publish'].includes(requested||''))setStep(requested!);}).catch(e=>setError(e.message));
     const failed = (e: Event) => setError((e as CustomEvent<string>).detail);
     window.addEventListener("studio-job-error", failed);
     return () => window.removeEventListener("studio-job-error", failed);
@@ -364,7 +365,7 @@ function App() {
           />
         ) : step === "Render" && session ? (
           <RenderWorkspace session={session} busy={busy || dirty || editorDirty}/>
-        ) : step !== "Source" ? (
+        ) : step === "Publish" && session ? (<PublishingWorkspace key={session.id} session={session} busy={busy||dirty||editorDirty} onSession={accept}/>) : step !== "Source" ? (
           <section className="empty">
             <span className="hero-icon">◇</span>
             <h2>{step} workspace</h2>

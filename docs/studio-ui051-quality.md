@@ -70,6 +70,10 @@ The interrupted render completed; it was not restarted or duplicated.
 | Sampled worker/browser tree peak private memory | 1,147,965,440 bytes |
 | Minimum sampled available physical memory | 197,552 KiB |
 
+FFprobe reports full-range `yuvj420p` for the retained H.264 stream although the
+renderer preset requests `yuv420p`. Browser decoding/playback passed; this is not
+reported as an exact pixel-format-tag match. AAC is 48 kHz stereo.
+
 Low-RAM CPU render used the existing Chrome runtime and concurrency 1. Samples are
 periodic observations, not an exhaustive operating-system peak or a GPU benchmark.
 
@@ -91,6 +95,12 @@ Editor layout match the pre-task backup; eight other session hashes are unchange
 Runtime evidence remains in ignored `.studio-data/reports/ui051/`; output remains
 in ignored `.studio-data/renders/<session>/<job>/video.mp4`. No runtime file,
 source post text, model, credential or output video belongs in the Git commit.
+
+Final local validation: backend/frontend TypeScript, backend build, Studio bundle,
+Remotion bundle and `git diff --check` exit 0; offline Jest 23 suites / 92 tests.
+The final frontend typecheck overlapped briefly with the last Jest pass by mistake;
+available RAM dipped to about 176 MiB. Both completed without OOM. Builds, Kokoro
+inference and MP4 rendering were not overlapped; later browser checks ran alone.
 
 ## Remaining publication blockers
 
