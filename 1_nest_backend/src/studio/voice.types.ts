@@ -10,6 +10,9 @@ export interface SpokenApproval {
   valid: boolean;
 }
 export interface VoiceAsset {
+  ttsInputText?: string;
+  ttsInputHash?: string;
+  numberReadingVersion?: string;
   purpose?: 'DRAFT' | 'APPROVED_TEXT';
   id: string;
   itemId: string;

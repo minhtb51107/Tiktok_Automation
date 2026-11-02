@@ -1,5 +1,5 @@
 """Local-only Kokoro bridge. Preflight never loads a model; worker forbids network."""
-import sys, os, json, ast, pathlib, importlib.util, importlib.metadata, threading, time, contextlib
+import sys, os, json, ast, pathlib, importlib.util, importlib.metadata, threading, time, contextlib, re
 os.environ['HF_HUB_OFFLINE']='1'
 os.environ['TRANSFORMERS_OFFLINE']='1'
 import socket
@@ -95,7 +95,8 @@ for line in sys.stdin:
                 current_voice=req['voice']
             import soundfile as sf
             stage('Synthesizing')
-            audio,_=tts.synthesize(req['text'],speed=1.0)
+            if re.search(r'\d',req['text']): raise RuntimeError('UNNORMALIZED_NUMERIC_INPUT')
+            audio,phonemes=tts.synthesize(req['text'],speed=1.0)
             if len(audio)==0: raise RuntimeError('EMPTY_AUDIO')
             sf.write(req['output'],audio,24000)
         print('@STUDIO@'+json.dumps({'ok':True}),flush=True)

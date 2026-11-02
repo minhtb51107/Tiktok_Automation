@@ -26,6 +26,12 @@ export interface BackgroundClip extends ClipRange {
   seed?: number;
   offsetMs?: number;
 }
+export function fitBackground(c:BackgroundClip,totalMs:number,sourceMs:number,mode:'FIT'|'TRIM'|'LOOP'):BackgroundClip {
+  if(!Number.isInteger(totalMs)||totalMs<34||!Number.isFinite(sourceMs)||sourceMs<=c.sourceInMs)throw Error('Measured timeline/source durations required');
+  if(mode==='TRIM')return {...c,loop:false,durationMs:Math.min(c.durationMs,c.sourceOutMs-c.sourceInMs),offsetMs:0};
+  if(mode==='LOOP')return {...c,startMs:0,durationMs:totalMs,loop:true,offsetMs:0};
+  return {...c,startMs:0,durationMs:totalMs,sourceOutMs:Math.min(Math.floor(sourceMs),c.sourceInMs+totalMs),loop:sourceMs-c.sourceInMs<totalMs,offsetMs:0};
+}
 export function frameRange(startMs:number,durationMs:number,fps:number){
   const start=Math.ceil(startMs*fps/1000),end=Math.max(start+1,Math.ceil((startMs+durationMs)*fps/1000));
   return {start,end,duration:end-start};

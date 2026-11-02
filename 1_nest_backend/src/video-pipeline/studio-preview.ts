@@ -158,7 +158,8 @@ export function buildStudioPreview(
         ),
         author: meta?.author || i.author.displayName,
         handle: meta?.handle ?? i.author.handle ?? null,
-        avatarUrl: meta?.avatar ?? i.author.avatarUrl ?? null,
+        avatarUrl: s.sourceImages?.[i.id]?.status==='READY' && s.sourceImages[i.id].sourceUrl===(meta?.avatar??i.author.avatarUrl)
+          ? s.sourceImages[i.id].uri : meta?.avatar ?? i.author.avatarUrl ?? null,
         createdAt: meta?.createdAt ?? null,
         dateLabel: meta?.fields?.createdAt?.raw ?? null,
         sourceUrl: i.sourceUrl,

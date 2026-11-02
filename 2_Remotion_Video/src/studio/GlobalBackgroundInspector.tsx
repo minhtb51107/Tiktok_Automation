@@ -1,5 +1,6 @@
 import type { BackgroundClip } from "../../../1_nest_backend/src/video-pipeline/editing";
 import { autoSegment } from "../../../1_nest_backend/src/video-pipeline/editing";
+import { fitBackground } from "../../../1_nest_backend/src/video-pipeline/editing";
 export function GlobalBackgroundInspector({
   clips,
   id,
@@ -80,6 +81,8 @@ export function GlobalBackgroundInspector({
           Independent track · later overlapping clips override earlier clips.
           Cover/crop 9:16.
         </small>
+        <div className="actions">{(['FIT','TRIM','LOOP'] as const).map(mode=><button key={mode} onClick={()=>update(clips.map(x=>x.id===c.id?fitBackground(c,Math.ceil(totalMs),sourceMs,mode):x))}>{mode==='FIT'?'Fit whole timeline':mode==='TRIM'?'Trim to source range':'Loop whole timeline'}</button>)}</div>
+        <small>Changes stay in the Editor draft until Save. Fit uses measured timeline duration.</small>
         {number(
           "Background start (ms)",
           c.startMs,

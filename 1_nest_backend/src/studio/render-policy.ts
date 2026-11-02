@@ -5,6 +5,14 @@ import type { VideoPreviewProps } from '../video-pipeline/contracts';
 import type { RenderRequest } from './render.types';
 import { textHash } from './kokoro-runtime';
 import { spokenAmbiguities } from './voice-settings';
+import { fitBackground } from '../video-pipeline/editing';
+export function renderBackground(props:VideoPreviewProps,mode:'SAVED'|'FIT'|'LOOP'='SAVED'):VideoPreviewProps {
+  if(!['SAVED','FIT','LOOP'].includes(mode))throw new BadRequestException('Invalid background mode');
+  if(mode==='SAVED')return props;
+  const out=structuredClone(props),total=Math.ceil(props.timeline.totalFrames*1000/props.timeline.fps);
+  out.backgroundTracks=(out.backgroundTracks||[]).map(c=>{const a=out.mediaAssets.find(a=>a.id===c.assetId);return c.enabled?fitBackground(c,total,a?.durationMs||c.sourceOutMs,mode):c;});
+  return out;
+}
 
 export const snapshotHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function validateRenderRequest(body: RenderRequest, props: VideoPreviewProps) {

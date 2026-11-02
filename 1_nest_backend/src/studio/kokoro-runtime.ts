@@ -6,6 +6,10 @@ import type { VoiceRuntime } from './voice.types';
 import { atempoFilter } from './voice-settings';
 export const textHash = (text: string) =>
   createHash('sha256').update(text).digest('hex');
+export function ttsCacheKeys(text:string,voice:string,speed:number,runtime:VoiceRuntime,context?:{itemId:string;normalizationVersion:string}) {
+  const baseKey=textHash(JSON.stringify({text,voice,version:runtime.packageVersion,model:runtime.modelVersion,device:runtime.device,context:context||null,synthesisRate:1}));
+  return {baseKey,cacheKey:textHash(baseKey+':'+speed)};
+}
 export class KokoroRuntime {
   onStage?: (step:string)=>void;
   private worker?: ChildProcessWithoutNullStreams;
@@ -216,6 +220,7 @@ export class KokoroRuntime {
     speed: number,
     runtime: VoiceRuntime,
     force = false,
+    context?:{itemId:string;normalizationVersion:string},
   ) {
     const filter = atempoFilter(speed);
     if (
@@ -230,15 +235,7 @@ export class KokoroRuntime {
     const temp = path.join(root, 'temp');
     await fs.mkdir(assets, { recursive: true });
     await fs.mkdir(temp, { recursive: true });
-    const baseKey = textHash(
-      JSON.stringify({
-        text,
-        voice,
-        version: runtime.packageVersion,
-        model: runtime.modelVersion,
-      }),
-    );
-    const cacheKey = textHash(baseKey + ':' + speed);
+    const {baseKey,cacheKey}=ttsCacheKeys(text,voice,speed,runtime,context);
     const suffix = force ? '-' + Date.now() : '';
     const file = path.join(assets, cacheKey + suffix + '.wav');
     let cacheHit = false;

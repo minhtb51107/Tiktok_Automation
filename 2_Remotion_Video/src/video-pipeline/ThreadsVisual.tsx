@@ -212,6 +212,9 @@ export const ThreadsVisual: React.FC<{
           style={{
             fontSize: layout.font,
             fontWeight:400,
+            textAlign:'left',
+            wordSpacing:'normal',
+            letterSpacing:'normal',
             lineHeight: c.lineHeight ?? 1.45,
             width: "100%",
             minWidth: 0,

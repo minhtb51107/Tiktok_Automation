@@ -4,12 +4,14 @@ export interface RenderRequest {
   revision: number;
   mode: RenderMode;
   preset: '1080P' | '720P';
+  backgroundMode?:'SAVED'|'FIT'|'LOOP';
   /** Inclusive frame range into the unchanged saved timeline; null means full. */
   frameRange?: [number, number];
   requestId: string;
 }
 export interface RenderManifest {
   schemaVersion: 1;
+  backgroundMode?:'SAVED'|'FIT'|'LOOP';
   jobId: string;
   sessionId: string;
   projectId: string;

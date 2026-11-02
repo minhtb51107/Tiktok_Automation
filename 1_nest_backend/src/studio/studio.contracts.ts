@@ -29,6 +29,8 @@ export interface StudioItem {
   manualLocks: string[];
 }
 export interface StudioSession {
+  sourceImages?: Record<string,import('./source-images').LocalSourceImage>;
+  mediaRights?: Record<string,{status:'UNKNOWN'|'OWNED'|'LICENSED'|'PERMISSION';evidence:string;at:string}>;
   editor?: import('./editor.types').EditorSettings;
   studioMedia?: import('./editor.types').StudioMediaAsset[];
   aiBillingBlocked?:boolean;

@@ -183,7 +183,7 @@ function VoiceScene({
       )}
       {asset && (
         <section>
-          <audio controls preload="none" src={asset.uri} />
+          <audio controls preload="none" src={asset.uri} /><details><summary>Actual TTS input / number reading</summary><p>{asset.ttsInputText||asset.spokenText}</p><small>{asset.numberReadingVersion||"Legacy input"} · {asset.ttsInputHash?.slice(0,12)}</small></details>
           <p>
             {asset.purpose === "DRAFT" ? "DRAFT · chưa duyệt nội dung/audio · " : ""}FFprobe duration: {(asset.durationMs / 1000).toFixed(3)}s ·{" "}
             {asset.voice} · {asset.speed}× ·{" "}

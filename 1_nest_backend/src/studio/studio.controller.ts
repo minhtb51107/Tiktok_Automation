@@ -21,6 +21,8 @@ import { StudioService } from './studio.service';
 @Controller()
 export class StudioController {
   constructor(private readonly studio: StudioService) {}
+  @Post('api/studio/sessions/:id/source-images/cache') cacheAvatars(@Param('id') id:string,@Body() body:any,@Headers('origin') origin?:string){this.check(origin);return this.studio.cacheAvatars(id,body.revision);}
+  @Get('api/studio/sessions/:id/source-images/:sha') async sourceImage(@Param('id') id:string,@Param('sha') sha:string,@Res() res:Response){res.setHeader('X-Content-Type-Options','nosniff');return res.sendFile(await this.studio.sourceImageFile(id,sha),{dotfiles:'allow'});}
   @Get('api/studio/sessions/:id/render') renderInfo(@Param('id') id:string){return this.studio.renderInfo(id);}
   @Get('api/studio/sessions/:id/renders/:jobId/manifest') renderManifest(@Param('id') id:string,@Param('jobId') job:string){return this.studio.renders.load(id,job);}
   @Get('api/studio/sessions/:id/renders/:jobId/video') async renderVideo(@Param('id') id:string,@Param('jobId') job:string,@Query('download') download:string,@Res() res:Response){

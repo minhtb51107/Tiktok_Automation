@@ -1,7 +1,9 @@
 import {uploadSignature,probeUpload,validCategory} from './uploaded-media';
 import { replaceFile } from './atomic-file';
+import { normalizeSpokenNumbers, NUMBER_READING_VERSION } from './spoken-numbers';
+import { cacheSourceImage } from './source-images';
 import { RenderStore } from './render-store';
-import { renderValidation, validateRenderRequest, snapshotHash } from './render-policy';
+import { renderValidation, validateRenderRequest, snapshotHash,renderBackground } from './render-policy';
 import type { RenderRequest, RenderManifest } from './render.types';
 import {
   BadRequestException,
@@ -53,6 +55,32 @@ export function threadsUrl(value: unknown): string {
 @Injectable()
 export class StudioService {
   readonly renders = new RenderStore();
+  async saveRights(id:string,body:any){return this.exclusive(async()=>{
+    const s=await this.load(id);if(s.revision!==body.revision)throw new ConflictException('Session changed before rights declaration');
+    if(typeof body.assetId!=='string'||body.assetId.length>160||!['UNKNOWN','OWNED','LICENSED','PERMISSION'].includes(body.status)||typeof body.evidence!=='string'||body.evidence.length>2000||body.status!=='UNKNOWN'&&!body.evidence.trim())throw new BadRequestException('Rights need an explicit status and evidence reference');
+    s.mediaRights??={};s.mediaRights[body.assetId]={status:body.status,evidence:body.evidence,at:new Date().toISOString()};return this.persist(s);
+  });}
+  async cacheAvatars(id:string,revision:number) {
+    return this.exclusive(async()=>{
+      const s=await this.load(id);if(s.revision!==revision)throw new ConflictException('Session changed');
+      s.sourceImages??={};
+      for(const i of s.items.filter(i=>i.selected)){
+        const url=i.metadata?.avatar??i.author.avatarUrl;
+        if(!url)continue;
+        const old=s.sourceImages[i.id];
+        if(old?.status==='READY'&&old.sourceUrl===url&&(await fs.stat(path.join(this.root,'source-images',id,old.fileName!)).catch(()=>null))?.size)continue;
+        await this.tick('Caching original avatar: '+i.author.displayName);
+        s.sourceImages[i.id]=await cacheSourceImage(id,i.id,url,path.join(this.root,'source-images'));
+      }
+      return this.persist(s);
+    });
+  }
+  async sourceImageFile(id:string,sha:string){
+    if(!/^[a-f0-9]{64}$/.test(sha))throw new BadRequestException('Invalid image hash');
+    const s=await this.load(id),a=Object.values(s.sourceImages||{}).find(a=>a.status==='READY'&&a.sha256===sha);
+    if(!a?.fileName||path.basename(a.fileName)!==a.fileName)throw new BadRequestException('Unknown session avatar');
+    return path.join(this.root,'source-images',id,a.fileName);
+  }
   async renderInfo(id:string) {
     const s=await this.load(id),preview=await this.preview(id);
     return {revision:s.revision,title:s.title,request:preview.request,validation:renderValidation(s,preview.request.inputProps),renders:await this.renders.list(id)};
@@ -61,7 +89,7 @@ export class StudioService {
     return this.exclusive(async()=>{
       const s=await this.load(id);
       if(s.revision!==input.revision)throw new ConflictException('Project changed; reload Render before exporting');
-      const built=prepareEditor(s,await this.visualAssets(s)),props=built.preview.request.inputProps;
+      const built=prepareEditor(s,await this.visualAssets(s)),props=renderBackground(built.preview.request.inputProps,input.backgroundMode);
       const range=validateRenderRequest(input,props),validation=renderValidation(s,props);
       if(validation.blockers.length || input.mode==='FINAL'&&validation.finalBlockers.length)
         throw new BadRequestException([...validation.blockers,...(input.mode==='FINAL'?validation.finalBlockers:[])].join('; '));
@@ -71,7 +99,7 @@ export class StudioService {
       let browserExecutable='';for(const f of candidates)if((await fs.stat(f).catch(()=>null))?.isFile()){browserExecutable=f;break;}
       if(!browserExecutable)throw new BadRequestException('BLOCKED_RUNTIME: install/configure an existing browser; no automatic download');
       const disk=await fs.statfs(this.root);if(disk.bavail*disk.bsize<3*1024**3)throw new BadRequestException('Less than 3 GiB free on project drive');
-      const manifest:RenderManifest={schemaVersion:1,jobId,sessionId:id,projectId:s.project.id,revision:s.revision,timelineHash:snapshotHash(props.timeline),previewHash:snapshotHash(props),mode:input.mode,publishable:false,status:'QUEUED',width:input.preset==='1080P'?1080:720,height:input.preset==='1080P'?1920:1280,fps:props.timeline.fps,totalFrames:props.timeline.totalFrames,frameRange:range,expectedDurationSeconds:(range[1]-range[0]+1)/props.timeline.fps,sceneCount:props.timeline.scenes.length,codec:'h264',audioCodec:'aac',pixelFormat:'yuv420p',concurrency:1,startedAt:new Date().toISOString(),completedAt:null,bytes:null,warnings:[...built.preview.warnings,...validation.warnings,...(input.mode==='DRAFT'?['DRAFT: not approved for publishing',...validation.finalBlockers]:[])],error:null,metrics:{}};
+      const manifest:RenderManifest={schemaVersion:1,backgroundMode:input.backgroundMode||'SAVED',jobId,sessionId:id,projectId:s.project.id,revision:s.revision,timelineHash:snapshotHash(props.timeline),previewHash:snapshotHash(props),mode:input.mode,publishable:false,status:'QUEUED',width:input.preset==='1080P'?1080:720,height:input.preset==='1080P'?1920:1280,fps:props.timeline.fps,totalFrames:props.timeline.totalFrames,frameRange:range,expectedDurationSeconds:(range[1]-range[0]+1)/props.timeline.fps,sceneCount:props.timeline.scenes.length,codec:'h264',audioCodec:'aac',pixelFormat:'yuv420p',concurrency:1,startedAt:new Date().toISOString(),completedAt:null,bytes:null,warnings:[...built.preview.warnings,...validation.warnings,...(input.mode==='DRAFT'?['DRAFT: not approved for publishing',...validation.finalBlockers]:[])],error:null,metrics:{}};
       const result=await this.renders.run({props,manifest,browserExecutable,appOrigin:`http://127.0.0.1:${process.env.PORT||3000}`},this.jobs,tick);
       return {revision:s.revision,warnings:result.warnings};
     });
@@ -1122,7 +1150,12 @@ export class StudioService {
       const settings = item.voiceSettings;
       if (!settings?.voice)
         throw Error('Select a locally available Kokoro voice');
-      const existing = regenerate ? undefined : this.currentAsset(s, item);
+      const normalizedInput=normalizeSpokenNumbers(item.spokenText);
+      if(normalizedInput.warnings.length)throw Error(normalizedInput.warnings.join('; '));
+      const oldAsset=this.currentAsset(s,item);
+      const inputStale=/\d/.test(item.spokenText) && (oldAsset?.numberReadingVersion!==NUMBER_READING_VERSION || oldAsset?.ttsInputHash!==textHash(normalizedInput.text));
+      const modelStale=oldAsset&&oldAsset.modelVersion!==s.voiceRuntime.modelVersion+' / '+s.voiceRuntime.packageVersion;
+      const existing = regenerate || inputStale || modelStale ? undefined : oldAsset;
       let usable = false;
       if (existing) {
         try {
@@ -1137,11 +1170,12 @@ export class StudioService {
       } else {
         const result = await this.voice.generate(
           s.id,
-          item.spokenText,
+          normalizedInput.text,
           settings.voice,
           settings.speed,
           s.voiceRuntime,
           regenerate,
+          {itemId:item.id,normalizationVersion:NUMBER_READING_VERSION},
         );
         await this.tick('Saving asset');
         // Returning to cached settings reuses the existing manifest, not another ID.
@@ -1178,6 +1212,9 @@ export class StudioService {
             itemRevision: item.revision,
             textHash: textHash(item.spokenText),
             spokenText: item.spokenText,
+            ttsInputText: normalizedInput.text,
+            ttsInputHash: textHash(normalizedInput.text),
+            numberReadingVersion: NUMBER_READING_VERSION,
             voice: settings.voice,
             speed: settings.speed,
             model: s.voiceRuntime.model || 'Kokoro',
