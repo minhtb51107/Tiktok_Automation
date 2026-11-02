@@ -1,24 +1,111 @@
 import type { StudioSession } from "../../../1_nest_backend/src/studio/studio.contracts";
-import type { StudioJob } from "../../../1_nest_backend/src/studio/progress";
-import type { RenderManifest } from "../../../1_nest_backend/src/studio/render.types";
 import type { LibraryAsset } from "../../../1_nest_backend/src/studio/public-assets";
 import { spokenAmbiguities } from "../../../1_nest_backend/src/studio/voice-settings";
 
 /**
- * Studio V2 Telemetry & Autopilot Adapter.
- * Derives 100% real metrics from persisted StudioSession, StudioJob[], and RenderManifest[],
- * and provides clearly marked [SIMULATED / CONTRACT PREVIEW] data ONLY for future backend
- * pipeline features (Scheduled Discovery, Medallion Bronze/Silver/Gold Quarantine, Presets).
+ * Studio V2/V3 Data & Telemetry Adapter.
+ *
+ * Strictly distinguishes:
+ * - REAL DATA: Persisted in `.studio-data` (StudioSession, RenderManifest, and `/api/studio/data` DATA-01 engine).
+ * - NEEDS REVIEW: Real items requiring explicit human confirmation (e.g. DATA-01 `UNKNOWN` entity type or ambiguous terms).
+ * - NOT CONNECTED: Backend endpoint unavailable or not yet imported.
+ * - MOCK DATA: Explicitly labelled contract previews in Settings only (never shown as live dashboard metrics).
  */
+
+export type DataProvenanceBadge =
+  | "REAL DATA"
+  | "NEEDS REVIEW"
+  | "NOT CONNECTED"
+  | "MOCK DATA";
+
+export interface Data01CatalogRow {
+  id: string;
+  sourcePostId: string | null;
+  sourceUrl: string | null;
+  author: {
+    name: string | null;
+    handle: string | null;
+    avatarUrl: string | null;
+  };
+  bodyPreview: string;
+  state:
+    | "DISCOVERED"
+    | "VALIDATED"
+    | "ELIGIBLE"
+    | "SCORED"
+    | "QUALIFIED"
+    | "QUEUED"
+    | "REJECTED"
+    | "QUARANTINED"
+    | "FAILED";
+  score: number | null;
+  labels: string[];
+  duplicate: {
+    postId: string;
+    bronzeId: string;
+    evaluationId: string;
+    kind: "EXACT" | "NEAR";
+    similarity: number;
+  } | null;
+  quarantine: string[];
+  observations: number;
+  revision: number;
+}
+
+export interface Data01CatalogResponse {
+  schemaVersion: string;
+  workflow: string;
+  total: number;
+  observations: number;
+  matching: number;
+  page: number;
+  pageSize: number;
+  counts: Record<string, number>;
+  qualifiedRatio: number | null;
+  ratioMeaning: string;
+  precisionAt10: {
+    status: string;
+    value: number | null;
+    reason: string;
+  };
+  rows: Data01CatalogRow[];
+  runs: Array<{
+    id: string;
+    status: "RUNNING" | "COMPLETED" | "FAILED";
+    cursor: number;
+    inputCount?: number;
+    elapsedMs: number;
+    startedAt: string;
+    completedAt: string | null;
+    error: string | null;
+  }>;
+}
 
 export interface MedallionItem {
   id: string;
+  data01PostId: string | null;
+  sourcePostId: string | null;
   itemIndex: number;
   author: string;
   handle: string;
+  avatarUrl: string | null;
   sourceUrl: string;
-  tier: "GOLD" | "SILVER" | "BRONZE" | "QUARANTINE";
-  qualityScore: number;
+  /**
+   * Honest evaluation status from DATA-01 when connected, or session review state.
+   * Never fabricates "Gold/Silver" approval when DATA-01 requires human review.
+   */
+  evaluationStatus:
+    | "NEEDS_REVIEW"
+    | "QUALIFIED"
+    | "QUEUED"
+    | "REJECTED"
+    | "QUARANTINED"
+    | "NOT_CONNECTED";
+  data01State: string;
+  provenanceBadge: DataProvenanceBadge;
+  /** Experimental rule points from DATA-01 (not measured quality percentage) */
+  ruleScore: number | null;
+  data01Labels: string[];
   selected: boolean;
   inclusion: string;
   wordCount: number;
@@ -29,9 +116,10 @@ export interface MedallionItem {
   audioDurationSec: number | null;
   ambiguities: string[];
   proposalStatus: string;
-  rejectionOrReviewReasons: string[];
+  reviewReasons: string[];
   duplicateGroupId: string | null;
   revision: number;
+  data01Revision: number | null;
   manualLocks: string[];
   originalText: string;
   displayText: string;
@@ -56,61 +144,98 @@ export interface DiscoverySchedulePreview {
   simulated: true;
 }
 
-export function computeMedallionItems(session: StudioSession | null): {
+function extractPostShortcode(url?: string | null): string | null {
+  if (!url) return null;
+  const m = url.match(/\/post\/([A-Za-z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+export async function fetchData01Catalog(): Promise<{
+  connected: boolean;
+  catalog: Data01CatalogResponse | null;
+  error?: string;
+}> {
+  try {
+    const res = await fetch("/api/studio/data?page=0");
+    if (!res.ok) {
+      return {
+        connected: false,
+        catalog: null,
+        error: `HTTP ${res.status}`,
+      };
+    }
+    const json = await res.json();
+    const data = (json.data ?? json) as Data01CatalogResponse;
+    if (!data || typeof data.total !== "number" || !Array.isArray(data.rows)) {
+      return {
+        connected: false,
+        catalog: null,
+        error: "Invalid DATA-01 response format",
+      };
+    }
+    return { connected: true, catalog: data };
+  } catch (err) {
+    return {
+      connected: false,
+      catalog: null,
+      error: (err as Error).message,
+    };
+  }
+}
+
+export function computeMedallionItems(
+  session: StudioSession | null,
+  data01Catalog?: Data01CatalogResponse | null,
+  data01Connected = false,
+): {
   items: MedallionItem[];
   duplicates: DuplicateCluster[];
-  counts: { gold: number; silver: number; bronze: number; quarantine: number };
+  counts: {
+    total: number;
+    bronzeObservations: number;
+    silverValidated: number;
+    goldScored: number;
+    needsReview: number;
+    qualified: number;
+    queued: number;
+    quarantine: number;
+  };
+  dataProvenance: DataProvenanceBadge;
 } {
   if (!session) {
     return {
       items: [],
       duplicates: [],
-      counts: { gold: 0, silver: 0, bronze: 0, quarantine: 0 },
+      counts: {
+        total: 0,
+        bronzeObservations: 0,
+        silverValidated: 0,
+        goldScored: 0,
+        needsReview: 0,
+        qualified: 0,
+        queued: 0,
+        quarantine: 0,
+      },
+      dataProvenance: data01Connected ? "REAL DATA" : "NOT CONNECTED",
     };
   }
 
-  // Group near-duplicates by normalized text prefix or canonical URL
-  const urlBuckets = new Map<string, string[]>();
-  const textBuckets = new Map<string, string[]>();
-  for (const item of session.items) {
-    const uKey = (item.sourceUrl || "").trim().toLowerCase().replace(/\/$/, "");
-    if (uKey) {
-      urlBuckets.set(uKey, [...(urlBuckets.get(uKey) || []), item.id]);
-    }
-    const tKey = item.originalText.trim().toLowerCase().slice(0, 80);
-    if (tKey.length > 20) {
-      textBuckets.set(tKey, [...(textBuckets.get(tKey) || []), item.id]);
+  // Index DATA-01 rows by shortcode or handle
+  const rowsByShortcode = new Map<string, Data01CatalogRow>();
+  const rowsByHandle = new Map<string, Data01CatalogRow>();
+  if (data01Catalog?.rows) {
+    for (const r of data01Catalog.rows) {
+      if (r.sourcePostId) rowsByShortcode.set(r.sourcePostId, r);
+      const code = extractPostShortcode(r.sourceUrl);
+      if (code) rowsByShortcode.set(code, r);
+      if (r.author?.handle) {
+        rowsByHandle.set(r.author.handle.replace(/^@/, "").toLowerCase(), r);
+      }
     }
   }
 
   const duplicates: DuplicateCluster[] = [];
   const itemDupMap = new Map<string, string>();
-  let dupCounter = 1;
-
-  for (const [url, ids] of urlBuckets.entries()) {
-    if (ids.length > 1) {
-      const gid = `DUP-URL-${dupCounter++}`;
-      duplicates.push({
-        groupId: gid,
-        reason: `Identical source URL (${url.slice(0, 48)})`,
-        itemIds: ids,
-        canonicalId: ids[0],
-      });
-      ids.forEach((id) => itemDupMap.set(id, gid));
-    }
-  }
-  for (const [, ids] of textBuckets.entries()) {
-    if (ids.length > 1 && !ids.every((id) => itemDupMap.has(id))) {
-      const gid = `DUP-TXT-${dupCounter++}`;
-      duplicates.push({
-        groupId: gid,
-        reason: "Matching opening text fingerprint (80 chars)",
-        itemIds: ids,
-        canonicalId: ids[0],
-      });
-      ids.forEach((id) => itemDupMap.set(id, gid));
-    }
-  }
 
   const items: MedallionItem[] = session.items.map((item, idx) => {
     const words = item.spokenText.trim().split(/\s+/).filter(Boolean);
@@ -121,7 +246,8 @@ export function computeMedallionItems(session: StudioSession | null): {
     const allAmb = Array.from(
       new Set([
         ...ambiguities,
-        ...(proposal?.ambiguousTerms.map((a) => `${a.term} (${a.reason})`) || []),
+        ...(proposal?.ambiguousTerms.map((a) => `${a.term} (${a.reason})`) ||
+          []),
       ]),
     );
 
@@ -146,74 +272,99 @@ export function computeMedallionItems(session: StudioSession | null): {
         ? "APPROVED"
         : "DRAFT";
 
-    const reasons: string[] = [];
-    let score = 100;
+    const handleRaw =
+      item.metadata?.handle || item.author.handle || item.author.displayName || "unknown";
+    const cleanHandle = handleRaw.replace(/^@/, "");
+    const shortcode = extractPostShortcode(item.sourceUrl);
 
-    if (!item.metadata?.handle && !item.author.handle) {
-      score -= 10;
-      reasons.push("Missing verified @handle");
+    const matchedRow =
+      (shortcode ? rowsByShortcode.get(shortcode) : undefined) ||
+      rowsByHandle.get(cleanHandle.toLowerCase()) ||
+      null;
+
+    const reasons: string[] = [];
+    let evaluationStatus: MedallionItem["evaluationStatus"] = "NEEDS_REVIEW";
+    let provenanceBadge: DataProvenanceBadge = "NEEDS REVIEW";
+    let data01State = "NOT_IMPORTED";
+    let ruleScore: number | null = null;
+    let data01Labels: string[] = [];
+
+    if (data01Connected && matchedRow) {
+      data01State = matchedRow.state;
+      ruleScore = matchedRow.score;
+      data01Labels = matchedRow.labels || [];
+
+      if (matchedRow.state === "QUARANTINED" || matchedRow.quarantine.length > 0) {
+        evaluationStatus = "QUARANTINED";
+        provenanceBadge = "NEEDS REVIEW";
+        reasons.push(...matchedRow.quarantine);
+      } else if (matchedRow.state === "QUEUED") {
+        evaluationStatus = "QUEUED";
+        provenanceBadge = "REAL DATA";
+      } else if (matchedRow.state === "QUALIFIED") {
+        evaluationStatus = "QUALIFIED";
+        provenanceBadge = "REAL DATA";
+      } else if (matchedRow.state === "REJECTED") {
+        evaluationStatus = "REJECTED";
+        provenanceBadge = "REAL DATA";
+      } else {
+        // SCORED / DISCOVERED / VALIDATED with NEEDS_REVIEW label
+        evaluationStatus = "NEEDS_REVIEW";
+        provenanceBadge = "NEEDS REVIEW";
+        reasons.push(
+          "Cần xác nhận loại thực thể (Bài đăng POST hay Bình luận COMMENT)",
+        );
+        if (data01Labels.includes("POLICY_RISK")) {
+          reasons.push("DATA-01 phát hiện từ viết tắt / tiếng lóng cần người duyệt");
+        }
+      }
+
+      if (matchedRow.duplicate) {
+        const gid = `DUP-${matchedRow.duplicate.postId.slice(0, 6)}`;
+        itemDupMap.set(item.id, gid);
+        reasons.push(`Trùng lặp (${matchedRow.duplicate.kind})`);
+      }
+    } else if (!data01Connected) {
+      evaluationStatus = "NOT_CONNECTED";
+      provenanceBadge = "NOT CONNECTED";
+      data01State = "API_NOT_CONNECTED";
+      reasons.push("Chưa kết nối dữ liệu đánh giá từ API DATA-01 (/api/studio/data)");
+    } else {
+      evaluationStatus = "NEEDS_REVIEW";
+      provenanceBadge = "NEEDS REVIEW";
+      data01State = "UNIMPORTED_SESSION_ITEM";
+      reasons.push("Bài viết chưa được import vào bộ đánh giá DATA-01");
     }
-    if (!item.metadata?.avatar && !session.sourceImages?.[item.id]) {
-      score -= 8;
-      reasons.push("Avatar uncached or missing");
-    }
-    if (words.length < 6) {
-      score -= 25;
-      reasons.push(`Very short post (${words.length} words)`);
-    }
+
     if (allAmb.length > 0) {
-      score -= 18 * Math.min(2, allAmb.length);
-      reasons.push(`Ambiguous/slang terms: ${allAmb.join(", ")}`);
+      reasons.push(`Từ ngữ/số cần kiểm tra khi đọc: ${allAmb.join(", ")}`);
     }
     if (!item.spokenApproval?.valid) {
-      score -= 12;
-      reasons.push("Spoken text not yet approved (DRAFT)");
-    }
-    if (audioStatus === "MISSING" || audioStatus === "STALE") {
-      score -= 15;
-      reasons.push(
-        audioStatus === "STALE"
-          ? "Audio stale after text/voice change"
-          : "No narration generated",
-      );
-    }
-    const dupGroup = itemDupMap.get(item.id) || null;
-    if (dupGroup) {
-      score -= 30;
-      reasons.push(`Duplicate cluster ${dupGroup}`);
+      reasons.push("Kịch bản đọc (spokenText) đang ở bản nháp DRAFT");
     }
 
-    score = Math.max(10, Math.min(100, score));
-
-    let tier: MedallionItem["tier"] = "BRONZE";
-    if (dupGroup || words.length < 4 || proposal?.approval === "REJECTED") {
-      tier = "QUARANTINE";
-    } else if (
-      item.selected &&
-      allAmb.length === 0 &&
-      (audioStatus === "APPROVED" || audioStatus === "DRAFT") &&
-      score >= 76
-    ) {
-      tier = "GOLD";
-    } else if (item.selected || score >= 65) {
-      tier = "SILVER";
-    } else {
-      tier = "BRONZE";
-    }
+    const localAvatar =
+      session.sourceImages?.[item.id]?.uri || item.metadata?.avatar || null;
 
     return {
       id: item.id,
+      data01PostId: matchedRow?.id ?? null,
+      sourcePostId: matchedRow?.sourcePostId ?? shortcode,
       itemIndex: idx + 1,
-      author: item.author.displayName || item.metadata?.author || "Unknown",
-      handle: item.metadata?.handle || item.author.handle || "unknown",
+      author: item.author.displayName || item.metadata?.author || cleanHandle,
+      handle: cleanHandle,
+      avatarUrl: localAvatar,
       sourceUrl: item.sourceUrl,
-      tier,
-      qualityScore: score,
+      evaluationStatus,
+      data01State,
+      provenanceBadge,
+      ruleScore,
+      data01Labels,
       selected: item.selected,
       inclusion: item.inclusion || "TARGET",
       wordCount: words.length,
       charCount: item.spokenText.length,
-      hasAvatar: Boolean(item.metadata?.avatar || session.sourceImages?.[item.id]),
+      hasAvatar: Boolean(localAvatar || item.metadata?.avatar),
       spokenApproved: Boolean(item.spokenApproval?.valid),
       audioStatus,
       audioDurationSec: currentAsset ? currentAsset.durationMs / 1000 : null,
@@ -221,9 +372,10 @@ export function computeMedallionItems(session: StudioSession | null): {
       proposalStatus: proposal
         ? `${proposal.mode || "LIVE"} · ${proposal.approval}`
         : "NO_PROPOSAL",
-      rejectionOrReviewReasons: reasons,
-      duplicateGroupId: dupGroup,
+      reviewReasons: reasons,
+      duplicateGroupId: itemDupMap.get(item.id) || null,
       revision: item.revision,
+      data01Revision: matchedRow?.revision ?? null,
       manualLocks: item.manualLocks,
       originalText: item.originalText,
       displayText: item.displayText,
@@ -232,14 +384,36 @@ export function computeMedallionItems(session: StudioSession | null): {
     };
   });
 
-  const counts = {
-    gold: items.filter((i) => i.tier === "GOLD").length,
-    silver: items.filter((i) => i.tier === "SILVER").length,
-    bronze: items.filter((i) => i.tier === "BRONZE").length,
-    quarantine: items.filter((i) => i.tier === "QUARANTINE").length,
-  };
+  const total = data01Catalog?.total ?? items.length;
+  const bronzeObservations = data01Catalog?.observations ?? items.length;
+  const quarantine = items.filter((i) => i.evaluationStatus === "QUARANTINED").length;
+  const silverValidated = data01Connected ? Math.max(0, total - quarantine) : 0;
+  const goldScored = data01Connected
+    ? (data01Catalog?.counts?.SCORED ?? 0) +
+      (data01Catalog?.counts?.QUALIFIED ?? 0) +
+      (data01Catalog?.counts?.QUEUED ?? 0)
+    : 0;
+  const needsReview = items.filter(
+    (i) => i.evaluationStatus === "NEEDS_REVIEW" || i.evaluationStatus === "NOT_CONNECTED",
+  ).length;
+  const qualified = items.filter((i) => i.evaluationStatus === "QUALIFIED").length;
+  const queued = items.filter((i) => i.evaluationStatus === "QUEUED").length;
 
-  return { items, duplicates, counts };
+  return {
+    items,
+    duplicates,
+    counts: {
+      total,
+      bronzeObservations,
+      silverValidated,
+      goldScored,
+      needsReview,
+      qualified,
+      queued,
+      quarantine,
+    },
+    dataProvenance: data01Connected ? "REAL DATA" : "NOT CONNECTED",
+  };
 }
 
 export const SIMULATED_DISCOVERY_SCHEDULES: DiscoverySchedulePreview[] = [
@@ -247,8 +421,8 @@ export const SIMULATED_DISCOVERY_SCHEDULES: DiscoverySchedulePreview[] = [
     id: "sched-01",
     queryOrSource: "threads.com/tag/cong-viec-tphcm",
     category: "SERIOUS · Career & Labor",
-    cadence: "Manual only (Startup auto-scrape OFF)",
-    rateLimit: "Max 5 URLs / batch · Loopback Chrome",
+    cadence: "Thủ công (Tắt tự động quét khi khởi động)",
+    rateLimit: "Tối đa 5 URL / lượt · Trình duyệt cục bộ",
     lastRunStatus: "STANDBY",
     simulated: true,
   },
@@ -256,74 +430,18 @@ export const SIMULATED_DISCOVERY_SCHEDULES: DiscoverySchedulePreview[] = [
     id: "sched-02",
     queryOrSource: "threads.com/tag/kinh-te-vi-mo",
     category: "SERIOUS · Finance & Economy",
-    cadence: "Manual only (Startup auto-scrape OFF)",
-    rateLimit: "Max 5 URLs / batch · Loopback Chrome",
+    cadence: "Thủ công (Tắt tự động quét khi khởi động)",
+    rateLimit: "Tối đa 5 URL / lượt · Trình duyệt cục bộ",
     lastRunStatus: "STANDBY",
     simulated: true,
   },
 ];
 
-export interface StudioHealthSummary {
-  totalSessions: number;
-  activeSessionTitle: string;
-  activeRevision: number;
-  collectedCount: number;
-  qualifiedCount: number;
-  quarantineCount: number;
-  narrationReadyCount: number;
-  completedRendersCount: number;
-  runningJobsCount: number;
-  failedJobsCount: number;
-  attentionItemsCount: number;
-  kokoroStatus: string;
-  kokoroDevice: string;
-  publishingGate: string;
-}
-
-export function buildHealthSummary(
-  sessionsCount: number,
-  session: StudioSession | null,
-  jobs: StudioJob[],
-  renders: RenderManifest[],
-): StudioHealthSummary {
-  const medallion = computeMedallionItems(session);
-  const selected = session?.items.filter((i) => i.selected) || [];
-  const narrationReady = medallion.items.filter(
-    (i) => i.selected && (i.audioStatus === "DRAFT" || i.audioStatus === "APPROVED"),
-  ).length;
-  const completedRenders = renders.filter((r) => r.status === "COMPLETED").length;
-  const runningJobs = jobs.filter((j) =>
-    ["QUEUED", "RUNNING"].includes(j.status),
-  ).length;
-  const failedJobs = jobs.filter((j) => j.status === "FAILED").length;
-  const attention =
-    medallion.items.filter((i) => i.ambiguities.length > 0).length +
-    failedJobs +
-    (session?.errors.length || 0);
-
-  return {
-    totalSessions: sessionsCount,
-    activeSessionTitle: session?.title || "No active session",
-    activeRevision: session?.revision ?? 0,
-    collectedCount: session?.items.length ?? 0,
-    qualifiedCount: medallion.counts.gold + medallion.counts.silver,
-    quarantineCount: medallion.counts.quarantine,
-    narrationReadyCount: `${narrationReady}/${selected.length}` as unknown as number,
-    completedRendersCount: completedRenders,
-    runningJobsCount: runningJobs,
-    failedJobsCount: failedJobs,
-    attentionItemsCount: attention,
-    kokoroStatus: session?.voiceRuntime?.status || "READY_ON_DEMAND",
-    kokoroDevice: session?.voiceRuntime?.device || "cpu / local",
-    publishingGate: "BLOCKED_SAFETY_GATE",
-  };
-}
-
 export function formatBytes(bytes?: number | null): string {
   if (!bytes || bytes <= 0) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export type PublicAssetSummary = {

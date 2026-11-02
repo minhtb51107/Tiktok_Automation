@@ -25,9 +25,12 @@ import {
   SettingsWorkspace,
 } from "./OperationsWorkspaces";
 import { TopicEditor } from "./VisualControls";
-import { SIMULATED_DISCOVERY_SCHEDULES } from "./studio-v2-adapter";
+import {
+  fetchData01Catalog,
+  SIMULATED_DISCOVERY_SCHEDULES,
+  type Data01CatalogResponse,
+} from "./studio-v2-adapter";
 
-// Future editor passes this boundary to the existing SeriousTimelinePreview + Player.
 export type StudioPreviewInput = VideoPreviewProps;
 
 const WORKFLOW_STEPS = [
@@ -39,6 +42,15 @@ const WORKFLOW_STEPS = [
   "Publish",
 ] as const;
 
+const STEP_LABELS: Record<(typeof WORKFLOW_STEPS)[number], string> = {
+  Source: "Nguồn bài",
+  Script: "Kịch bản",
+  Voice: "Giọng đọc",
+  "Video Editor": "Bàn dựng 9:16",
+  Render: "Kết xuất MP4",
+  Publish: "Kiểm duyệt",
+};
+
 const STUDIO_AREAS = [
   "Dashboard",
   "Discovery",
@@ -48,6 +60,23 @@ const STUDIO_AREAS = [
   "Settings",
 ] as const;
 export type StudioArea = (typeof STUDIO_AREAS)[number];
+
+type AreaSlug =
+  | "dashboard"
+  | "discovery"
+  | "data-review"
+  | "production-queue"
+  | "video-studio"
+  | "settings";
+
+const SLUG_TO_AREA: Record<AreaSlug, StudioArea> = {
+  dashboard: "Dashboard",
+  discovery: "Discovery",
+  "data-review": "Data Review",
+  "production-queue": "Production Queue",
+  "video-studio": "Video Studio",
+  settings: "Settings",
+};
 
 async function api<T>(url: string, method = "GET", body?: unknown): Promise<T> {
   const match = url.match(/^\/([a-f0-9-]{36})\/(.+)$/);
@@ -82,7 +111,6 @@ async function api<T>(url: string, method = "GET", body?: unknown): Promise<T> {
           detail: job.error || "Job failed; open the progress report.",
         }),
       );
-    // Stage errors remain visible in the session and persisted job report.
     return (j.data ?? j) as T;
   }
   const r = await fetch("/api/studio/sessions" + url, {
@@ -100,13 +128,135 @@ async function api<T>(url: string, method = "GET", body?: unknown): Promise<T> {
   return json.data ?? json;
 }
 
+function AreaIcon({ area }: { area: StudioArea }) {
+  switch (area) {
+    case "Dashboard":
+      return (
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <rect
+            x="2.5"
+            y="2.5"
+            width="6.5"
+            height="6.5"
+            rx="2"
+            fill="currentColor"
+          />
+          <rect
+            x="11"
+            y="2.5"
+            width="6.5"
+            height="6.5"
+            rx="2"
+            fill="currentColor"
+            fillOpacity="0.45"
+          />
+          <rect
+            x="2.5"
+            y="11"
+            width="6.5"
+            height="6.5"
+            rx="2"
+            fill="currentColor"
+            fillOpacity="0.45"
+          />
+          <rect
+            x="11"
+            y="11"
+            width="6.5"
+            height="6.5"
+            rx="2"
+            fill="currentColor"
+          />
+        </svg>
+      );
+    case "Discovery":
+      return (
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <circle
+            cx="9.5"
+            cy="9.5"
+            r="6"
+            stroke="currentColor"
+            strokeWidth="2"
+          />
+          <path
+            d="M14 14L17.5 17.5"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+        </svg>
+      );
+    case "Data Review":
+      return (
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path
+            d="M4 5.5H16M4 10H16M4 14.5H11"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+          <circle cx="15" cy="14.5" r="2.5" fill="currentColor" />
+        </svg>
+      );
+    case "Production Queue":
+      return (
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <rect
+            x="3"
+            y="3"
+            width="14"
+            height="14"
+            rx="3.5"
+            stroke="currentColor"
+            strokeWidth="1.8"
+          />
+          <path d="M8.5 7.2L13.2 10L8.5 12.8V7.2Z" fill="currentColor" />
+        </svg>
+      );
+    case "Video Studio":
+      return (
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <rect
+            x="5"
+            y="2.2"
+            width="10"
+            height="15.6"
+            rx="2.5"
+            stroke="currentColor"
+            strokeWidth="1.8"
+          />
+          <circle cx="10" cy="14.5" r="1" fill="currentColor" />
+        </svg>
+      );
+    case "Settings":
+      return (
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <circle
+            cx="10"
+            cy="10"
+            r="3"
+            stroke="currentColor"
+            strokeWidth="1.8"
+          />
+          <path
+            d="M10 2.5V4.5M10 15.5V17.5M2.5 10H4.5M15.5 10H17.5"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+          />
+        </svg>
+      );
+  }
+}
+
 function App() {
   const [sessions, setSessions] = useState<
       { id: string; title: string; updatedAt?: string }[]
     >([]),
     [session, setSession] = useState<StudioSession | null>(null);
   const [step, setStep] = useState("Source"),
-    [area, setArea] = useState<StudioArea>("Discovery"),
+    [area, setArea] = useState<StudioArea>("Dashboard"),
     [localBusy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
@@ -120,7 +270,11 @@ function App() {
   const [sessionJobs, setSessionJobs] = useState<StudioJob[]>([]);
   const [sessionRenders, setSessionRenders] = useState<RenderManifest[]>([]);
   const [publicAssets, setPublicAssets] = useState<LibraryAsset[]>([]);
+  const [data01Catalog, setData01Catalog] =
+    useState<Data01CatalogResponse | null>(null);
+  const [data01Connected, setData01Connected] = useState<boolean>(false);
   const [focusItemId, setFocusItemId] = useState<string>("ALL");
+  const [projectsExpanded, setProjectsExpanded] = useState<boolean>(false);
 
   useEffect(() => {
     document.documentElement.dataset.studioTheme = theme;
@@ -142,10 +296,23 @@ function App() {
     [text, setText] = useState(""),
     [comments, setComments] = useState(""),
     [author, setAuthor] = useState("");
-  const refresh = async () => setSessions(await api(""));
+
+  const refresh = async () => {
+    const list = await api<{ id: string; title: string; updatedAt?: string }[]>(
+      "",
+    );
+    setSessions(list);
+    return list;
+  };
+
+  const refreshData01 = async () => {
+    const res = await fetchData01Catalog();
+    setData01Connected(res.connected);
+    setData01Catalog(res.catalog);
+  };
 
   useEffect(() => {
-    refresh().catch((e) => setError(e.message));
+    void refreshData01();
     fetch("/api/studio/public-assets")
       .then((r) => r.json())
       .then((j) => setPublicAssets(j.data ?? j ?? []))
@@ -155,12 +322,19 @@ function App() {
       id = query.get("session"),
       requestedArea = query.get("area") as StudioArea | null,
       requestedStep = query.get("step");
+
     if (requestedArea && STUDIO_AREAS.includes(requestedArea)) {
       setArea(requestedArea);
     }
-    if (id && /^[a-f0-9-]{36}$/.test(id))
-      void api<StudioSession>("/" + id)
-        .then((s) => {
+
+    void refresh()
+      .then((list) => {
+        const targetId =
+          id && /^[a-f0-9-]{36}$/.test(id)
+            ? id
+            : list[0]?.id;
+        if (!targetId) return;
+        return api<StudioSession>("/" + targetId).then((s) => {
           setSession(s);
           if (
             requestedStep &&
@@ -179,8 +353,10 @@ function App() {
               );
             }
           }
-        })
-        .catch((e) => setError(e.message));
+        });
+      })
+      .catch((e) => setError(e.message));
+
     const failed = (e: Event) => setError((e as CustomEvent<string>).detail);
     window.addEventListener("studio-job-error", failed);
     return () => window.removeEventListener("studio-job-error", failed);
@@ -263,7 +439,7 @@ function App() {
       }),
     );
     await refresh();
-    setNotice("Project saved locally.");
+    setNotice("Đã lưu dự án cục bộ.");
   };
   const update = (id: string, patch: Partial<StudioItem>) => {
     if (!session) return;
@@ -288,7 +464,8 @@ function App() {
   };
 
   const navigateStep = (nextStep: string) => {
-    if (nextStep === step && ["Discovery", "Video Studio"].includes(area)) return;
+    if (nextStep === step && ["Discovery", "Video Studio"].includes(area))
+      return;
     if (!canLeave()) return;
     setStep(nextStep);
     if (nextStep === "Video Editor") {
@@ -309,10 +486,24 @@ function App() {
     }
   };
 
+  const navigateAreaBySlug = (slug: AreaSlug) => {
+    navigateArea(SLUG_TO_AREA[slug]);
+  };
+
   const isEditorFull =
     step === "Video Editor" &&
     session !== null &&
     !["Dashboard", "Data Review", "Settings"].includes(area);
+
+  // Contextual workflow step bar ONLY appears in manual studio/discovery workflows, NOT on Dashboard/Data Review/Settings
+  const showContextualStepBar =
+    area === "Discovery" ||
+    area === "Video Studio" ||
+    (area === "Production Queue" && ["Render", "Publish"].includes(step));
+
+  const completedRendersCount = sessionRenders.filter(
+    (r) => r.status === "COMPLETED",
+  ).length;
 
   const visibleSourceItems = (session?.items || []).filter(
     (i) =>
@@ -325,52 +516,201 @@ function App() {
         )),
   );
 
+  const AREA_LABELS: Record<
+    StudioArea,
+    { title: string; badge: string | number }
+  > = {
+    Dashboard: { title: "Tổng quan Studio", badge: "Home" },
+    Discovery: {
+      title: "Nguồn bài Threads",
+      badge: session?.items.length ?? 0,
+    },
+    "Data Review": {
+      title: "Duyệt dữ liệu",
+      badge: `${session?.items.length ?? 0} chờ`,
+    },
+    "Production Queue": {
+      title: "Kho Video & Hàng đợi",
+      badge: `${completedRendersCount} MP4`,
+    },
+    "Video Studio": { title: "Bàn dựng 9:16", badge: "Canvas" },
+    Settings: { title: "Cấu hình", badge: "5 giọng" },
+  };
+
   return (
-    <div className={"studio " + (isEditorFull ? "is-editor" : "")}>
-      <aside>
-        <a className="brand" href="/studio">
-          <span>◈</span> Studio V2
+    <div
+      className={
+        "studio shell " +
+        (isEditorFull ? "is-editor " : "") +
+        (theme === "DARK" ? "is-dark" : "is-light")
+      }
+    >
+      <aside className="v3-sidebar">
+        {/* Studio Brand Identity */}
+        <a className="v3-brand" href="/studio">
+          <span className="v3-brand-prism" aria-hidden="true">
+            <svg viewBox="0 0 28 28" fill="none">
+              <defs>
+                <linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#a78bfa" />
+                  <stop offset="50%" stopColor="#f472b6" />
+                  <stop offset="100%" stopColor="#fde047" />
+                </linearGradient>
+              </defs>
+              <rect
+                x="2"
+                y="2"
+                width="24"
+                height="24"
+                rx="8"
+                fill="url(#brandGrad)"
+              />
+              <path
+                d="M11 9.5L19 14L11 18.5V9.5Z"
+                fill="#121218"
+              />
+            </svg>
+          </span>
+          <div className="v3-brand-text">
+            <strong>Threads Studio</strong>
+            <small>Creative Operations</small>
+          </div>
         </a>
-        <div className="eyebrow">OPERATIONS & STUDIO</div>
-        <div className="v2-area-nav" role="navigation" aria-label="Primary areas">
-          {STUDIO_AREAS.map((a) => (
-            <button
-              key={a}
-              data-area={a}
-              className={"v2-area-btn " + (area === a ? "active" : "")}
-              onClick={() => navigateArea(a)}
-            >
-              <span>{a}</span>
-              <small>
-                {a === "Dashboard"
-                  ? "Ops"
-                  : a === "Discovery"
-                    ? session?.items.length ?? 0
-                    : a === "Data Review"
-                      ? "QA"
-                      : a === "Production Queue"
-                        ? sessionJobs.length
-                        : a === "Video Studio"
-                          ? "NLE"
-                          : "Cfg"}
-              </small>
-            </button>
-          ))}
+
+        {/* Primary Task Navigation (Zero Legacy Clutter) */}
+        <div className="v3-nav-section">
+          <div className="eyebrow">KHÔNG GIAN LÀM VIỆC</div>
+          <div
+            className="v2-area-nav"
+            role="navigation"
+            aria-label="Điều hướng chính"
+          >
+            {STUDIO_AREAS.map((a) => (
+              <button
+                key={a}
+                data-area={a}
+                className={"v2-area-btn " + (area === a ? "active" : "")}
+                onClick={() => navigateArea(a)}
+              >
+                <span className="v3-nav-item-left">
+                  <AreaIcon area={a} />
+                  <span>{AREA_LABELS[a].title}</span>
+                </span>
+                <small>{AREA_LABELS[a].badge}</small>
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="eyebrow">WORKFLOWS</div>
-        <button className="workflow active">
-          ◉ Threads SERIOUS <small>01</small>
-        </button>
-        {["FUNNY", "COMPILATION", "LYRICS"].map((w) => (
-          <button className="workflow" disabled key={w}>
-            {w}
-            <small>Legacy</small>
-          </button>
-        ))}
-        <div className="project-heading">
-          <span className="eyebrow">YOUR PROJECTS ({sessions.length})</span>
+        {/* Tactile Featured Project Card (Inspired by Reference 1's 3D Book Card) */}
+        <div className="v3-sidebar-spotlight">
+          <div className="v3-spotlight-top">
+            <span className="v3-spotlight-pill">● Đang mở</span>
+            <span className="v3-spotlight-meta">
+              {session?.items.length ?? 0} cảnh
+            </span>
+          </div>
+          <div className="v3-spotlight-body">
+            <div className="v3-spotlight-copy">
+              <strong>{session?.title || "Untitled project"}</strong>
+              <p>
+                {completedRendersCount} bản nháp MP4 ·{" "}
+                {data01Connected ? "DATA-01 đã kết nối" : "Cục bộ"}
+              </p>
+            </div>
+            <div className="v3-spotlight-3d" aria-hidden="true">
+              <svg viewBox="0 0 56 56" fill="none">
+                <rect
+                  x="10"
+                  y="6"
+                  width="32"
+                  height="44"
+                  rx="7"
+                  transform="rotate(-8 10 6)"
+                  fill="#fde067"
+                />
+                <rect
+                  x="16"
+                  y="8"
+                  width="32"
+                  height="44"
+                  rx="7"
+                  transform="rotate(6 16 8)"
+                  fill="#9d8df1"
+                />
+                <path d="M28 24L37 29.5L28 35V24Z" fill="#13131a" />
+              </svg>
+            </div>
+          </div>
+          <div className="v3-spotlight-actions">
+            <button
+              type="button"
+              className="v3-spot-btn-ghost"
+              onClick={() => setProjectsExpanded((v) => !v)}
+            >
+              {projectsExpanded
+                ? "Ẩn danh sách"
+                : `Đổi dự án (${sessions.length})`}
+            </button>
+            <button
+              type="button"
+              className="v3-spot-btn-primary"
+              onClick={() => navigateArea("Video Studio")}
+            >
+              Bàn dựng ↗
+            </button>
+          </div>
+        </div>
+
+        {/* Progressive Disclosure Project Switcher */}
+        {projectsExpanded && (
+          <div className="sessions v3-sessions-drawer">
+            {sessions.map((s) => (
+              <button
+                className={session?.id === s.id ? "chosen" : ""}
+                key={s.id}
+                disabled={busy}
+                onClick={() => {
+                  if (canLeave())
+                    void run(async () => {
+                      accept(await api("/" + s.id));
+                      if (step === "Video Editor") setStep("Source");
+                    });
+                }}
+              >
+                {s.title}
+                <small>Phiên {s.id.slice(0, 8)}</small>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Bottom Dock: Theme Switcher Pill + Dashed New Project Card (Inspired by Reference 2) */}
+        <div className="v3-sidebar-dock">
+          <div
+            className="v3-theme-pill-dock"
+            role="group"
+            aria-label="Giao diện Sáng / Tối"
+          >
+            <button
+              type="button"
+              className={theme === "LIGHT" ? "active" : ""}
+              onClick={() => setTheme("LIGHT")}
+            >
+              ☀ Sáng
+            </button>
+            <button
+              type="button"
+              className={theme === "DARK" ? "active" : ""}
+              onClick={() => setTheme("DARK")}
+            >
+              🌙 Tối
+            </button>
+          </div>
+
           <button
+            type="button"
+            className="v3-new-project-card"
             aria-label="New project"
             disabled={busy}
             onClick={() => {
@@ -383,48 +723,42 @@ function App() {
                 });
             }}
           >
-            ＋
+            <span className="v3-plus-circle">＋</span>
+            <strong>Tạo dự án Threads mới</strong>
+            <small>Bắt đầu từ liên kết bài viết</small>
           </button>
         </div>
-        <div className="sessions">
-          {sessions.map((s) => (
-            <button
-              className={session?.id === s.id ? "chosen" : ""}
-              key={s.id}
-              disabled={busy}
-              onClick={() => {
-                if (canLeave())
-                  void run(async () => {
-                    accept(await api("/" + s.id));
-                    if (step === "Video Editor") setStep("Source");
-                  });
-              }}
-            >
-              {s.title}
-              <small>SERIOUS · {s.id.slice(0, 8)}</small>
-            </button>
-          ))}
-        </div>
-        <footer>
-          LOCAL WORKSPACE · LOOPBACK
-          <br />
-          <span>Publishing automation is off</span>
-        </footer>
       </aside>
+
       <main>
-        <header className="v2-topbar">
-          <div>
-            <div className="eyebrow">
-              THREADS / SERIOUS · {area.toUpperCase()}
+        <header className="v2-topbar v3-topbar">
+          <div className="v3-topbar-title-group">
+            <div className="v3-breadcrumb">
+              <span className="v3-live-dot" />
+              <span>Threads Studio</span>
+              <span>/</span>
+              <strong>{AREA_LABELS[area].title}</strong>
             </div>
             <h1>{session?.title || "Your next story starts here"}</h1>
           </div>
           <div className="v2-topbar-controls">
-            <span className="badge">
-              ● Local studio{" "}
+            <span
+              className={`v3-prov-pill ${
+                data01Connected ? "prov-real" : "prov-disconnected"
+              }`}
+              title={
+                data01Connected
+                  ? "Đã kết nối trực tiếp với động cơ dữ liệu DATA-01"
+                  : "Chưa kết nối API DATA-01"
+              }
+            >
+              {data01Connected ? "● DATA-01: REAL DATA" : "○ DATA-01: NOT CONNECTED"}
+            </span>
+            <span className="badge v3-session-badge">
+              Phiên cục bộ{" "}
               {session && (
                 <small data-testid="active-session">
-                  Session {session.id} · revision {session.revision}
+                  {session.id.slice(0, 8)} · rev {session.revision}
                 </small>
               )}
             </span>
@@ -438,23 +772,23 @@ function App() {
             </button>
           </div>
         </header>
-        <nav aria-label="Workflow steps">
-          {WORKFLOW_STEPS.map((name, n) => (
-            <button
-              className={
-                step === name &&
-                !["Dashboard", "Data Review", "Settings"].includes(area)
-                  ? "current"
-                  : ""
-              }
-              onClick={() => navigateStep(name)}
-              key={name}
-            >
-              <b>{n + 1}</b>
-              {name}
-            </button>
-          ))}
-        </nav>
+
+        {/* Contextual Workflow Bar: Shown ONLY in Discovery / Studio steps, never duplicated on Dashboard */}
+        {showContextualStepBar && (
+          <nav className="v3-contextual-steps" aria-label="Các bước dựng chi tiết">
+            {WORKFLOW_STEPS.map((name, n) => (
+              <button
+                className={step === name ? "current" : ""}
+                onClick={() => navigateStep(name)}
+                key={name}
+              >
+                <b>{n + 1}</b>
+                <span>{STEP_LABELS[name]}</span>
+              </button>
+            ))}
+          </nav>
+        )}
+
         {error && (
           <div role="alert" className="alert error">
             {error}
@@ -471,90 +805,72 @@ function App() {
             refresh.
           </div>
         )}
-        {session &&
-          (["Video Editor", "Render"].includes(step) ||
-          ["Dashboard", "Data Review", "Production Queue", "Settings"].includes(
-            area,
-          ) ? (
-            <details
-              className={
-                isEditorFull ? "editor-jobs" : "v2-jobs-drawer render-shared-jobs"
-              }
-              open={jobActive}
-            >
-              <summary>
-                <span>
-                  All stage jobs ({sessionJobs.length}){" "}
-                  {jobActive ? "· RUNNING" : "· Standby"}
-                </span>
-              </summary>
-              <ProgressPanel
-                id={session.id}
-                onActive={setJobActive}
-                onCompleted={() => {
-                  if (!dirty && !editorDirty)
-                    void api<StudioSession>("/" + session.id)
-                      .then(accept)
-                      .catch((e) => setError(e.message));
-                }}
-              />
-            </details>
-          ) : (
-            <details className="v2-jobs-drawer" open={jobActive}>
-              <summary>
-                <span>
-                  Tiến trình & lịch sử tác vụ ({sessionJobs.length} jobs){" "}
-                  {jobActive ? "— ĐANG CHẠY" : "— Nhấn để mở rộng"}
-                </span>
-              </summary>
-              <ProgressPanel
-                id={session.id}
-                onActive={setJobActive}
-                onCompleted={() => {
-                  if (!dirty && !editorDirty)
-                    void api<StudioSession>("/" + session.id)
-                      .then(accept)
-                      .catch((e) => setError(e.message));
-                }}
-              />
-            </details>
-          ))}
 
-        {/* Primary Area Router: Dashboard / Data Review / Settings / Production Queue */}
+        {/* Progress Drawer: Shown when a job is actively running or inside manual production steps */}
+        {session && (jobActive || showContextualStepBar) && (
+          <details
+            className={
+              isEditorFull ? "editor-jobs" : "v2-jobs-drawer render-shared-jobs"
+            }
+            open={jobActive}
+          >
+            <summary>
+              <span>
+                Tiến trình tác vụ ({sessionJobs.length}){" "}
+                {jobActive ? "· ĐANG CHẠY" : "· Sẵn sàng"}
+              </span>
+            </summary>
+            <ProgressPanel
+              id={session.id}
+              onActive={setJobActive}
+              onCompleted={() => {
+                if (!dirty && !editorDirty)
+                  void api<StudioSession>("/" + session.id)
+                    .then(accept)
+                    .catch((e) => setError(e.message));
+              }}
+            />
+          </details>
+        )}
+
+        {/* Primary Area Router */}
         {area === "Dashboard" ? (
           <DashboardWorkspace
-            sessions={sessions}
+            sessionsCount={sessions.length}
             session={session}
             jobs={sessionJobs}
             renders={sessionRenders}
-            busy={busy}
-            onNavigateArea={(a) => navigateArea(a as StudioArea)}
+            data01Catalog={data01Catalog}
+            data01Connected={data01Connected}
+            onNavigateArea={navigateAreaBySlug}
             onNavigateStep={navigateStep}
-            onSelectSession={(id) => {
-              if (canLeave())
-                void run(async () => {
-                  accept(await api("/" + id));
-                });
-            }}
-            onCreateSession={() => {
-              if (canLeave())
-                void run(async () => {
-                  accept(await api("", "POST"));
-                  await refresh();
-                  setStep("Source");
-                  setArea("Discovery");
-                });
-            }}
           />
         ) : area === "Data Review" ? (
           <DataReviewWorkspace
             session={session}
             busy={busy}
             dirty={dirty}
-            onUpdateItem={update}
-            onMoveItem={move}
-            onSaveSession={() => void run(save)}
-            onOpenStep={navigateStep}
+            data01Catalog={data01Catalog}
+            data01Connected={data01Connected}
+            onRefreshData01={refreshData01}
+            onUpdateItem={(id, patch) =>
+              update(id, patch as Partial<StudioItem>)
+            }
+            onMoveItem={(index, delta) => {
+              const item = session?.items[index];
+              if (item) move(item.id, delta);
+            }}
+            onRestoreItem={(id) => {
+              const item = session?.items.find((i) => i.id === id);
+              if (item) {
+                update(id, {
+                  displayText: item.originalText,
+                  spokenText: item.originalText,
+                });
+              }
+            }}
+            onSave={() => void run(save)}
+            onNavigateStep={navigateStep}
           />
         ) : area === "Settings" ? (
           <SettingsWorkspace
@@ -580,7 +896,7 @@ function App() {
             onCancelJob={(jobId) => {
               void fetch(`/api/studio/jobs/${jobId}/cancel`, {
                 method: "POST",
-              }).then(() => setNotice("Cancellation requested."));
+              }).then(() => setNotice("Đã gửi yêu cầu hủy tác vụ."));
             }}
             onOpenStep={navigateStep}
           />
@@ -711,7 +1027,7 @@ function App() {
                 })
               }
             >
-              ＋ Create SERIOUS project
+              ＋ Tạo dự án Threads mới
             </button>
           </section>
         ) : (
@@ -719,29 +1035,29 @@ function App() {
             <section className="source-header">
               <div>
                 <span className="v2-eyebrow">
-                  DISCOVERY & SOURCE COLLECTION · IMMUTABLE PROVENANCE
+                  THU THẬP NGUỒN BÀI THREADS · BẢO TOÀN NGUYÊN BẢN
                 </span>
-                <h2>01 / Discovery & Source Material</h2>
-                <p>Collect the original. Shape your version. Keep both.</p>
+                <h2>01 / Nguồn bài Threads (Discovery)</h2>
+                <p>Thu thập bài gốc, giữ nguyên lịch sử và tinh chỉnh bản dựng.</p>
               </div>
               <div className="actions">
                 <button
                   disabled={busy}
                   onClick={() => navigateArea("Data Review")}
                 >
-                  Open Medallion Data Review
+                  Mở Bảng Duyệt Dữ liệu (DATA-01)
                 </button>
                 <button
                   className="primary"
                   disabled={busy}
                   onClick={() => void run(save)}
                 >
-                  {dirty ? "Save changes" : "Save project"}
+                  {dirty ? "Lưu thay đổi" : "Lưu dự án"}
                 </button>
               </div>
             </section>
             <label className="title-field">
-              Project name
+              Tên dự án
               <input
                 maxLength={150}
                 value={session.title}
@@ -753,8 +1069,8 @@ function App() {
             </label>
             <section className="panel">
               <div className="panel-top">
-                <h3>Add Threads content</h3>
-                <span>Up to 5 public URLs · Rate-limited sequential fetch</span>
+                <h3>Thêm liên kết bài viết Threads</h3>
+                <span>Tối đa 5 URL công khai · Tải tuần tự an toàn</span>
               </div>
               <UrlRows
                 key={session.id}
@@ -776,38 +1092,34 @@ function App() {
               />
               <div className="actions">
                 <button onClick={() => setManual(!manual)}>
-                  {manual ? "Close manual import" : "Paste content manually"}
+                  {manual ? "Đóng nhập thủ công" : "Dán nội dung thủ công"}
                 </button>
                 <small>
                   {dirty
-                    ? "Save changes before importing."
-                    : "Extraction runs only when you click Fetch."}
+                    ? "Hãy lưu thay đổi trước khi tải bài mới."
+                    : "Hệ thống chỉ trích xuất khi bạn nhấn Fetch."}
                 </small>
               </div>
               {manual && (
                 <div className="manual">
-                  <h3>Manual source import</h3>
+                  <h3>Nhập nội dung thủ công</h3>
                   <label>
-                    Original source URL (optional)
+                    URL bài gốc (tùy chọn)
                     <input
                       value={manualUrl}
                       onChange={(e) => setManualUrl(e.target.value)}
                       placeholder="Threads share link or permalink"
                     />
                   </label>
-                  <p>
-                    Paste a post and optional comments. Each comment occupies
-                    one line.
-                  </p>
                   <label>
-                    Author
+                    Tác giả
                     <input
                       value={author}
                       onChange={(e) => setAuthor(e.target.value)}
                     />
                   </label>
                   <label>
-                    Original post
+                    Nội dung bài gốc
                     <textarea
                       rows={4}
                       value={text}
@@ -815,7 +1127,7 @@ function App() {
                     />
                   </label>
                   <label>
-                    Comments
+                    Bình luận kèm theo
                     <textarea
                       rows={3}
                       value={comments}
@@ -836,21 +1148,19 @@ function App() {
                         setComments("");
                         setManual(false);
                         await refresh();
-                        setNotice(
-                          "Manual source imported. Original text preserved.",
-                        );
+                        setNotice("Đã nhập bài viết thủ công.");
                       })
                     }
                   >
-                    Import source
+                    Nhập vào dự án
                   </button>
                 </div>
               )}
               <details>
                 <summary>
-                  Discovery scheduling & rate limits ·{" "}
+                  Cấu hình nguồn theo dõi mẫu ·{" "}
                   <span className="v2-status-pill status-needs-review">
-                    [SIMULATED / CONTRACT PREVIEW]
+                    MOCK DATA / CONTRACT PREVIEW
                   </span>
                 </summary>
                 <div className="v2-kv-list">
@@ -891,8 +1201,8 @@ function App() {
             {!!session.attempts?.some((a) => a.contextCandidates?.length) && (
               <details className="panel">
                 <summary>
-                  Auxiliary context — excluded from target content unless
-                  explicitly added
+                  Ngữ cảnh phụ trợ — không tự động đưa vào kịch bản trừ khi bạn
+                  chọn
                 </summary>
                 {session.attempts.flatMap((a) =>
                   (a.contextCandidates || []).map((c, index) => (
@@ -926,52 +1236,37 @@ function App() {
                           })
                         }
                       >
-                        Add this context item
+                        Thêm vào dự án
                       </button>
                     </div>
                   )),
                 )}
               </details>
             )}
-            {!!session.attempts?.length && !session.scope && (
-              <div className="alert">
-                Legacy extraction contains unverified context. Original data is
-                preserved.
-                <button
-                  disabled={busy || dirty}
-                  onClick={() =>
-                    void run(async () => {
-                      accept(
-                        await api("/" + session.id + "/exact-copy", "POST"),
-                      );
-                      await refresh();
-                    })
-                  }
-                >
-                  Verify exact targets in a preserved copy
-                </button>
-              </div>
-            )}
             <section className="content-heading">
               <h3>
-                Collected content <span>{session.items.length}</span>
+                Bài viết đã thu thập <span>{session.items.length}</span>
               </h3>
               <span>
-                {session.items.filter((i) => i.selected).length} selected ·{" "}
-                {dirty ? "Unsaved changes" : "Saved"}
+                {session.items.filter((i) => i.selected).length} đang chọn ·{" "}
+                {dirty ? "Chưa lưu thay đổi" : "Đã lưu"}
                 {session.elapsedMs !== undefined
-                  ? ` · Extraction ${(session.elapsedMs / 1000).toFixed(1)}s`
+                  ? ` · Trích xuất ${(session.elapsedMs / 1000).toFixed(1)}s`
                   : ""}
               </span>
             </section>
             {session.items.length > 1 && (
-              <div className="v2-scene-jumpbar" role="toolbar" aria-label="Scene focus filter">
-                <span>FOCUS VIEW:</span>
+              <div
+                className="v2-scene-jumpbar"
+                role="toolbar"
+                aria-label="Chọn nhanh bài viết"
+              >
+                <span>CHỌN NHANH:</span>
                 <button
                   className={focusItemId === "ALL" ? "active" : ""}
                   onClick={() => setFocusItemId("ALL")}
                 >
-                  All ({session.items.length})
+                  Tất cả ({session.items.length})
                 </button>
                 {session.items.map((item, idx) => (
                   <button
@@ -986,7 +1281,7 @@ function App() {
             )}
             {session.items.length === 0 ? (
               <div className="panel empty-small">
-                Add a Threads URL or paste source material to begin.
+                Hãy dán liên kết bài viết Threads để bắt đầu.
               </div>
             ) : (
               visibleSourceItems.map((i, index) => (
@@ -1047,10 +1342,10 @@ function App() {
                   />
                   <details>
                     <summary>
-                      Review original, metadata, topic mapping, media & edit text
+                      Xem văn bản gốc, chủ đề, thông tin & chỉnh sửa nội dung
                     </summary>
                     <details>
-                      <summary>Original source · read only</summary>
+                      <summary>Văn bản gốc · Chỉ đọc</summary>
                       <p className="original">{i.originalText}</p>
                       {i.mediaReferences.map((m, n) => (
                         <p className="media" key={n}>

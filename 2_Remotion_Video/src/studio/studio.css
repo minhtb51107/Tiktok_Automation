@@ -1228,3 +1228,1422 @@ html[data-studio-theme="DARK"] .tier-quarantine { color: #f87171; }
     width: 100%;
   }
 }
+
+/* ============================================================================
+ * UX-02 / STUDIO V3 — CREATIVE OPERATIONS STUDIO (CHROMATIC BENTO & TACTILE DEPTH)
+ * ============================================================================ */
+
+@keyframes v3Pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.28);
+    opacity: 0.65;
+  }
+}
+
+@keyframes v3Float {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(1.5deg);
+  }
+}
+
+/* Studio Shell & Dimensional Split-Surface Architecture */
+.studio.shell {
+  background: var(--v2-bg);
+  min-height: 100vh;
+}
+
+html[data-studio-theme="DARK"] {
+  --v2-bg: #111118;
+  --v2-surface: #181824;
+  --v2-surface-2: #202030;
+  --v2-border: rgba(255, 255, 255, 0.08);
+  --v2-text: #f8fafc;
+  --v2-muted: #9ca3af;
+  --v2-accent: #8b76f6;
+  --v2-accent-soft: rgba(139, 118, 246, 0.16);
+  --v2-shadow: 0 18px 40px -14px rgba(0, 0, 0, 0.55);
+}
+
+html[data-studio-theme="LIGHT"] {
+  --v2-bg: #f4f4f9;
+  --v2-surface: #ffffff;
+  --v2-surface-2: #f1f2f9;
+  --v2-border: rgba(15, 23, 42, 0.08);
+  --v2-text: #12131a;
+  --v2-muted: #5e6478;
+  --v2-accent: #6851ec;
+  --v2-accent-soft: rgba(104, 81, 236, 0.1);
+  --v2-shadow: 0 16px 36px -12px rgba(20, 20, 43, 0.07);
+}
+
+/* Expressive Left Sidebar (Inspired by Reference Images 1 & 2) */
+aside.v3-sidebar {
+  background: linear-gradient(180deg, #171622 0%, #12111a 100%);
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 22px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+.v3-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  padding: 6px 8px;
+  border-radius: 14px;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+.v3-brand:hover {
+  background: rgba(255, 255, 255, 0.05);
+  transform: translateY(-1px);
+}
+.v3-brand-prism {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  flex-shrink: 0;
+  filter: drop-shadow(0 6px 14px rgba(167, 139, 250, 0.35));
+}
+.v3-brand-prism svg {
+  width: 100%;
+  height: 100%;
+}
+.v3-brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.v3-brand-text strong {
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.v3-brand-text small {
+  color: #9ca3af;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.v3-nav-section .eyebrow {
+  padding: 0 10px;
+  margin-bottom: 8px;
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  color: #7c849b;
+}
+
+aside.v3-sidebar .v2-area-nav {
+  margin: 0;
+  gap: 6px;
+}
+
+aside.v3-sidebar .v2-area-btn {
+  padding: 11px 13px;
+  border-radius: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #cbd5e1 !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  transition: all 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+aside.v3-sidebar .v2-area-btn:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #ffffff !important;
+  transform: translateX(2px);
+}
+aside.v3-sidebar .v2-area-btn.active {
+  background: linear-gradient(135deg, #7c68fa 0%, #9b84ff 100%) !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  box-shadow: 0 10px 22px -6px rgba(124, 104, 250, 0.55);
+}
+.v3-nav-item-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.v3-nav-item-left svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+aside.v3-sidebar .v2-area-btn small {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f1f5f9;
+}
+aside.v3-sidebar .v2-area-btn.active small {
+  background: rgba(17, 17, 24, 0.26);
+  color: #ffffff;
+}
+
+/* Tactile Featured Project Spotlight Card in Sidebar (Inspired by Reference 1) */
+.v3-sidebar-spotlight {
+  background: linear-gradient(160deg, #232134 0%, #1b1929 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 14px 28px -12px rgba(0, 0, 0, 0.5);
+}
+.v3-spotlight-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+}
+.v3-spotlight-pill {
+  color: #c4b5fd;
+  font-weight: 700;
+}
+.v3-spotlight-meta {
+  background: rgba(157, 141, 241, 0.18);
+  color: #ddd6fe;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.v3-spotlight-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.v3-spotlight-copy {
+  min-width: 0;
+}
+.v3-spotlight-copy strong {
+  display: block;
+  color: #ffffff;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.v3-spotlight-copy p {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: #9ca3af;
+}
+.v3-spotlight-3d {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  animation: v3Float 5s ease-in-out infinite;
+}
+.v3-spotlight-3d svg {
+  width: 100%;
+  height: 100%;
+}
+.v3-spotlight-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.v3-spot-btn-ghost,
+.v3-spot-btn-primary {
+  padding: 7px 10px !important;
+  border-radius: 999px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-align: center;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.v3-spot-btn-ghost {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #e2e8f0 !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+.v3-spot-btn-primary {
+  background: #a594ff !important;
+  color: #12121a !important;
+  border: 1px solid #c4b5fd !important;
+}
+.v3-spot-btn-ghost:hover,
+.v3-spot-btn-primary:hover {
+  transform: translateY(-1px);
+}
+
+.v3-sessions-drawer {
+  max-height: 170px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.v3-sessions-drawer button {
+  padding: 7px 10px !important;
+  border-radius: 8px !important;
+  font-size: 12px !important;
+  background: transparent !important;
+  color: #cbd5e1 !important;
+}
+.v3-sessions-drawer button.chosen {
+  background: rgba(139, 118, 246, 0.25) !important;
+  color: #ffffff !important;
+}
+
+/* Sidebar Bottom Dock (Theme Pill + Dashed New Project Card from Reference 2) */
+.v3-sidebar-dock {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.v3-theme-pill-dock {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  background: #101017;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+}
+.v3-theme-pill-dock button {
+  padding: 6px 10px !important;
+  border-radius: 999px !important;
+  border: 0 !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  background: transparent !important;
+  color: #9ca3af !important;
+  transition: all 0.18s ease;
+}
+.v3-theme-pill-dock button.active {
+  background: #7c68fa !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(124, 104, 250, 0.45);
+}
+
+.v3-new-project-card {
+  width: 100%;
+  padding: 14px 12px !important;
+  border-radius: 16px !important;
+  border: 1.5px dashed rgba(165, 148, 255, 0.35) !important;
+  background: rgba(139, 118, 246, 0.06) !important;
+  color: #f8fafc !important;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+  transition: all 0.2s ease;
+}
+.v3-new-project-card:hover:not(:disabled) {
+  background: rgba(139, 118, 246, 0.14) !important;
+  border-color: #a594ff !important;
+  transform: translateY(-2px);
+}
+.v3-plus-circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #8b76f6;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 2px;
+  box-shadow: 0 6px 14px rgba(139, 118, 246, 0.45);
+}
+.v3-new-project-card strong {
+  font-size: 12px;
+  color: #ffffff;
+}
+.v3-new-project-card small {
+  font-size: 10px;
+  color: #9ca3af;
+}
+
+/* Top Creative Header Bar */
+.v3-topbar {
+  border-bottom: 0;
+  padding-bottom: 8px;
+  margin-bottom: 18px;
+}
+.v3-breadcrumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--v2-muted);
+  margin-bottom: 4px;
+}
+.v3-breadcrumb strong {
+  color: var(--v2-text);
+}
+.v3-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #10b981;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18);
+  animation: v3Pulse 2.4s ease-in-out infinite;
+}
+.v3-topbar h1 {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.6px;
+  margin: 0;
+}
+
+/* Contextual Workflow Bar (Only in Discovery/Studio steps) */
+.v3-contextual-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px;
+  background: var(--v2-surface);
+  border: 1px solid var(--v2-border);
+  border-radius: 16px;
+  margin-bottom: 20px;
+  box-shadow: var(--v2-shadow);
+}
+.v3-contextual-steps button {
+  padding: 8px 14px;
+  border-radius: 11px;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--v2-muted);
+  transition: all 0.16s ease;
+}
+.v3-contextual-steps button.current {
+  background: var(--v2-accent);
+  color: #ffffff;
+  border-bottom: 0;
+  box-shadow: 0 6px 14px rgba(104, 81, 236, 0.32);
+}
+.v3-contextual-steps button.current b {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+/* Data Provenance Pills (REAL DATA / NEEDS REVIEW / NOT CONNECTED / MOCK DATA) */
+.v3-eyebrow-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.v3-prov-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.prov-real {
+  background: rgba(16, 185, 129, 0.16);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.32);
+}
+.prov-review {
+  background: rgba(245, 158, 11, 0.18);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+html[data-studio-theme="LIGHT"] .prov-review {
+  color: #b45309;
+}
+.prov-disconnected {
+  background: rgba(244, 63, 94, 0.16);
+  color: #f43f5e;
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+.prov-dark-ink {
+  background: rgba(18, 19, 26, 0.14);
+  color: #12131a;
+  border: 1px solid rgba(18, 19, 26, 0.16);
+}
+.v3-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #12131a;
+  animation: v3Pulse 2s infinite;
+}
+
+/* ============================================================================
+ * STUDIO V3 DASHBOARD — CHROMATIC BENTO GRID (INSPIRED BY REF IMAGES 1, 2, 3)
+ * ============================================================================ */
+
+.v3-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.v3-hero-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.v3-chroma-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 238px;
+  color: #12131a;
+  box-shadow: 0 18px 36px -14px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.22s ease;
+}
+.v3-chroma-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 24px 44px -14px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* 4 Expressive Color-Blocked Fills from the Reference Designs */
+.v3-card-periwinkle {
+  background: linear-gradient(145deg, #aba0ff 0%, #8f7ef8 100%);
+}
+.v3-card-buttercup {
+  background: linear-gradient(145deg, #ffe578 0%, #fcd34d 100%);
+}
+.v3-card-flamingo {
+  background: linear-gradient(145deg, #ff99e6 0%, #f472d0 100%);
+}
+.v3-card-mint {
+  background: linear-gradient(145deg, #d4fc79 0%, #96e6a1 100%);
+}
+
+.v3-card-art {
+  position: absolute;
+  top: -8px;
+  right: -12px;
+  width: 145px;
+  height: 120px;
+  pointer-events: none;
+  opacity: 0.9;
+}
+.v3-card-art svg {
+  width: 100%;
+  height: 100%;
+}
+
+.v3-chroma-top {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.v3-card-step-tag {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(18, 19, 26, 0.72);
+}
+
+.v3-chroma-title {
+  position: relative;
+  z-index: 1;
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  color: #111218 !important;
+  margin: 12px 0 6px;
+}
+
+.v3-chroma-desc {
+  position: relative;
+  z-index: 1;
+  font-size: 12.5px;
+  line-height: 1.48;
+  color: rgba(17, 18, 24, 0.84) !important;
+  margin: 0 0 12px;
+}
+.v3-chroma-desc code {
+  background: rgba(17, 18, 24, 0.12);
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-weight: 700;
+}
+
+/* Author Avatar Stack inside Sunny Buttercup Card (Reference 1 & 2) */
+.v3-avatar-stack-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.v3-avatar-stack {
+  display: flex;
+  align-items: center;
+}
+.v3-stack-img,
+.v3-stack-fallback {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 2px solid #fde067;
+  margin-left: -7px;
+  object-fit: cover;
+  background: #181824;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.v3-stack-img:first-child,
+.v3-stack-fallback:first-child {
+  margin-left: 0;
+}
+.v3-stack-caption {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(17, 18, 24, 0.78);
+}
+
+/* Diagonal Striped Progress Bar & Checklist inside Flamingo Card (Reference 2) */
+.v3-striped-progress {
+  position: relative;
+  z-index: 1;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(17, 18, 24, 0.14);
+  overflow: hidden;
+  padding: 2px;
+  margin-bottom: 10px;
+}
+.v3-striped-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: repeating-linear-gradient(
+    -45deg,
+    #14141d 0px,
+    #14141d 5px,
+    rgba(20, 20, 29, 0.35) 5px,
+    rgba(20, 20, 29, 0.35) 10px
+  );
+  transition: width 0.4s ease;
+}
+
+.v3-checklist {
+  position: relative;
+  z-index: 1;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #14141d;
+}
+.v3-checklist li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.v3-check-box {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.v3-checklist li.done .v3-check-box {
+  background: #14141d;
+  color: #ff99e6;
+}
+.v3-checklist li.pending .v3-check-box {
+  background: rgba(20, 20, 29, 0.14);
+  border: 1.5px solid #14141d;
+  color: #14141d;
+}
+
+/* High-Contrast Ink Action Pill Button (Reference 3) */
+.v3-chroma-footer {
+  position: relative;
+  z-index: 1;
+  margin-top: auto;
+}
+.v3-ink-btn {
+  width: 100%;
+  padding: 10px 15px !important;
+  border-radius: 14px !important;
+  background: #14141d !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  font-size: 12.5px !important;
+  font-weight: 700 !important;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  box-shadow: 0 8px 18px -6px rgba(17, 18, 24, 0.45);
+  transition: transform 0.16s ease, background 0.16s ease;
+}
+.v3-ink-btn:hover {
+  background: #1f202e !important;
+  transform: translateY(-1px);
+}
+.v3-ink-btn:active {
+  transform: scale(0.98);
+}
+
+/* ============================================================================
+ * ROW 2: MAIN BENTO STAGE (9:16 PHONE PLAYER + PIPELINE + REAL CHART + POSTS)
+ * ============================================================================ */
+
+.v3-bento-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.38fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.v3-bento-panel {
+  background: var(--v2-surface);
+  border: 1px solid var(--v2-border);
+  border-radius: 26px;
+  padding: 22px;
+  box-shadow: var(--v2-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.v3-bento-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.v3-bento-head h2 {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  margin: 2px 0 0;
+}
+.v3-subtle-tag {
+  font-size: 11px;
+  color: var(--v2-muted);
+  font-weight: 600;
+}
+.v3-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.v3-ghost-btn,
+.v3-accent-btn {
+  padding: 8px 14px !important;
+  border-radius: 12px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: transform 0.15s ease;
+}
+.v3-ghost-btn {
+  background: var(--v2-surface-2) !important;
+  color: var(--v2-text) !important;
+  border: 1px solid var(--v2-border) !important;
+}
+.v3-accent-btn {
+  background: var(--v2-accent) !important;
+  color: #ffffff !important;
+  border: 1px solid var(--v2-accent) !important;
+  box-shadow: 0 8px 18px -6px rgba(104, 81, 236, 0.45);
+}
+.v3-ghost-btn:hover,
+.v3-accent-btn:hover {
+  transform: translateY(-1px);
+}
+
+/* Split inside Left Bento: 9:16 Phone Bezel + Pipeline/Chart */
+.v3-showcase-split {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 20px;
+  align-items: stretch;
+}
+
+.v3-phone-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.v3-phone-bezel {
+  position: relative;
+  width: 100%;
+  max-width: 224px;
+  aspect-ratio: 9 / 16;
+  background: #090a0f;
+  border-radius: 28px;
+  border: 5px solid #28293d;
+  overflow: hidden;
+  box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.v3-phone-notch {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  z-index: 3;
+  pointer-events: none;
+}
+.v3-phone-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.v3-phone-overlay-badges {
+  position: absolute;
+  top: 24px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+  z-index: 2;
+}
+.v3-phone-overlay-badges span {
+  background: rgba(15, 16, 24, 0.75);
+  backdrop-filter: blur(6px);
+  color: #ffffff;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.v3-play-pill {
+  width: 100%;
+  padding: 8px 12px !important;
+  border-radius: 999px !important;
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  background: var(--v2-surface-2) !important;
+  color: var(--v2-text) !important;
+  border: 1px solid var(--v2-border) !important;
+}
+
+/* Visual 4-Step Pipeline inside Showcase Bento */
+.v3-pipeline-and-chart {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+
+.v3-visual-pipeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.v3-pipe-step {
+  width: 100%;
+  text-align: left;
+  padding: 11px 14px !important;
+  border-radius: 16px !important;
+  background: var(--v2-surface-2) !important;
+  border: 1px solid var(--v2-border) !important;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+.v3-pipe-step:hover {
+  transform: translateX(4px);
+  border-color: var(--v2-accent) !important;
+}
+.v3-pipe-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: rgba(139, 118, 246, 0.16);
+  color: var(--v2-accent);
+  font-size: 12px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.v3-pipe-step.is-review .v3-pipe-icon {
+  background: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+}
+.v3-pipe-body {
+  flex: 1;
+  min-width: 0;
+}
+.v3-pipe-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.v3-pipe-title-row strong {
+  font-size: 13px;
+  color: var(--v2-text);
+}
+.v3-pipe-body p {
+  margin: 3px 0 0;
+  font-size: 11.5px;
+  color: var(--v2-muted);
+}
+
+/* Real Scene Rhythm & Rule Score Pill Bar Chart (Inspired by Ref 2 & Ref 3) */
+.v3-mini-chart-card {
+  background: var(--v2-surface-2);
+  border: 1px solid var(--v2-border);
+  border-radius: 18px;
+  padding: 14px 16px;
+}
+.v3-mini-chart-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.v3-mini-chart-head strong {
+  display: block;
+  font-size: 13px;
+  color: var(--v2-text);
+}
+.v3-mini-chart-head span {
+  font-size: 11px;
+  color: var(--v2-muted);
+}
+.v3-chart-legend {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--v2-muted);
+}
+.v3-chart-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  margin-right: 4px;
+}
+.dot-duration {
+  background: #8b76f6;
+}
+.dot-score {
+  background: #34d399;
+}
+
+.v3-bars-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+.v3-bar-col {
+  padding: 8px 6px !important;
+  border-radius: 12px !important;
+  background: var(--v2-surface) !important;
+  border: 1px solid var(--v2-border) !important;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  transition: transform 0.16s ease, border-color 0.16s ease;
+}
+.v3-bar-col:hover {
+  transform: translateY(-2px);
+  border-color: var(--v2-accent) !important;
+}
+.v3-bar-pair {
+  height: 62px;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 4px;
+}
+.v3-bar-pill {
+  width: 10px;
+  border-radius: 999px;
+  transition: height 0.35s ease;
+}
+.bar-duration {
+  background: linear-gradient(180deg, #a78bfa 0%, #7c3aed 100%);
+}
+.bar-score {
+  background: linear-gradient(180deg, #6ee7b7 0%, #10b981 100%);
+}
+.bar-score-warn {
+  background: linear-gradient(180deg, #fde047 0%, #f59e0b 100%);
+}
+.v3-bar-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--v2-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.v3-bar-meta {
+  font-size: 9.5px;
+  color: var(--v2-muted);
+}
+
+/* Right Bento: Tactile Source Post Cards (Inspired by Reference 1 & 2) */
+.v3-post-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.v3-source-post-card {
+  border-radius: 18px;
+  padding: 13px 15px;
+  border: 1px solid var(--v2-border);
+  background: var(--v2-surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+.v3-source-post-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--v2-accent);
+}
+
+html[data-studio-theme="LIGHT"] .v3-source-post-card.tone-sky {
+  background: #edf5ff;
+  border-color: #d0e4ff;
+}
+html[data-studio-theme="LIGHT"] .v3-source-post-card.tone-lavender {
+  background: #f3f0ff;
+  border-color: #dfd7ff;
+}
+html[data-studio-theme="LIGHT"] .v3-source-post-card.tone-sand {
+  background: #fff8eb;
+  border-color: #fde6bd;
+}
+
+.v3-post-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.v3-post-author {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.v3-post-avatar,
+.v3-post-avatar-fallback {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  object-fit: cover;
+  background: var(--v2-accent);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.v3-post-author strong {
+  display: block;
+  font-size: 13px;
+  color: var(--v2-text);
+}
+.v3-post-author span {
+  font-size: 11px;
+  color: var(--v2-muted);
+}
+.v3-post-score-pill {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: rgba(245, 158, 11, 0.16);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.32);
+}
+html[data-studio-theme="LIGHT"] .v3-post-score-pill {
+  color: #b45309;
+}
+
+.v3-post-excerpt {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--v2-text);
+}
+
+.v3-post-card-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.v3-post-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.v3-tag-chip {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: var(--v2-surface);
+  color: var(--v2-muted);
+  border: 1px solid var(--v2-border);
+}
+.v3-tag-chip.chip-warn {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+html[data-studio-theme="LIGHT"] .v3-tag-chip.chip-warn {
+  color: #b45309;
+}
+.v3-post-actions {
+  display: flex;
+  gap: 6px;
+}
+.v3-post-actions button {
+  padding: 4px 10px !important;
+  border-radius: 999px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+}
+
+/* Row 3: Progressive Disclosure Footer Drawer */
+.v3-progressive-drawer {
+  background: var(--v2-surface);
+  border: 1px solid var(--v2-border);
+  border-radius: 18px;
+  padding: 12px 18px;
+  margin: 0;
+  box-shadow: var(--v2-shadow);
+}
+.v3-progressive-drawer > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  list-style: none;
+  font-size: 12px;
+  color: var(--v2-muted);
+}
+.v3-drawer-summary-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.v3-safe-pill {
+  background: rgba(16, 185, 129, 0.14);
+  color: #10b981;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 11px;
+}
+.v3-drawer-toggle-label {
+  font-weight: 700;
+  color: var(--v2-accent);
+}
+.v3-drawer-body {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--v2-border);
+}
+.v3-tech-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  font-size: 12px;
+}
+.v3-tech-grid span {
+  display: block;
+  color: var(--v2-muted);
+  font-size: 11px;
+}
+.v3-tech-grid strong {
+  color: var(--v2-text);
+}
+
+/* Data Review Avatar Helper */
+.v3-author-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.v3-avatar-xs,
+.v3-avatar-fallback {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  object-fit: cover;
+  background: var(--v2-accent);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.v3-review-box {
+  background: var(--v2-surface-2);
+  border: 1px solid var(--v2-border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+/* Responsive Breakpoints for Studio V3 */
+@media (max-width: 1420px) {
+  .v3-hero-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .v3-bento-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .v3-showcase-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .v3-phone-bezel {
+    max-width: 200px;
+  }
+  .v3-sidebar-spotlight,
+  .v3-new-project-card small {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .v3-hero-grid,
+  .v3-tech-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .v3-bars-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .v3-bento-panel {
+    padding: 16px;
+    border-radius: 20px;
+  }
+  .v3-chroma-card {
+    padding: 16px;
+    border-radius: 20px;
+    min-height: auto;
+  }
+}
+
+/* Reduced Motion Accessibility Support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================================
+ * STEP 8 SELF-CRITIQUE VISUAL REFINEMENT PASS
+ * ============================================================================ */
+
+/* Balanced 9:16 Phone Control Card */
+.v3-phone-caption-card {
+  width: 100%;
+  max-width: 224px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--v2-surface-2);
+  border: 1px solid var(--v2-border);
+  border-radius: 18px;
+  padding: 10px;
+}
+.v3-download-pill {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  background: var(--v2-surface);
+  color: var(--v2-text);
+  border: 1px solid var(--v2-border);
+  transition: transform 0.15s ease;
+}
+.v3-download-pill:hover {
+  transform: translateY(-1px);
+  border-color: var(--v2-accent);
+}
+.v3-phone-QuickMeta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--v2-border);
+  font-size: 10px;
+  color: var(--v2-muted);
+}
+.v3-phone-QuickMeta strong {
+  color: var(--v2-text);
+  font-size: 10.5px;
+}
+
+/* Light Mode Color-Blocked Bento Containers (Inspired by Reference Image 3) */
+html[data-studio-theme="LIGHT"] .v3-posts-bento {
+  background: linear-gradient(180deg, #e7e4ff 0%, #f1effe 100%);
+  border-color: #d6d0fb;
+}
+html[data-studio-theme="LIGHT"] .v3-posts-bento .v3-source-post-card {
+  background: #ffffff;
+  border-color: rgba(104, 81, 236, 0.14);
+  box-shadow: 0 8px 20px -10px rgba(67, 56, 202, 0.12);
+}
+html[data-studio-theme="LIGHT"] .v3-mini-chart-card {
+  background: linear-gradient(145deg, #fbe8ce 0%, #fdf2e2 100%);
+  border-color: #f3d6ae;
+}
+html[data-studio-theme="LIGHT"] .v3-mini-chart-card .v3-bar-col {
+  background: #ffffff !important;
+  border-color: rgba(217, 119, 6, 0.16) !important;
+}
+
+/* Data Review Select Input Block Styling */
+.v3-review-box label {
+  display: block;
+  margin-top: 8px;
+}
+.v3-review-box select {
+  display: block;
+  width: 100%;
+  margin: 6px 0 10px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--v2-border);
+  background: var(--v2-surface);
+  color: var(--v2-text);
+}
+
+/* Compact Mobile Sidebar Navigation at <=640px */
+@media (max-width: 640px) {
+  aside.v3-sidebar {
+    padding: 14px 12px;
+    gap: 10px;
+  }
+  aside.v3-sidebar .v2-area-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  aside.v3-sidebar .v2-area-btn {
+    padding: 8px 10px;
+    font-size: 11.5px;
+  }
+  aside.v3-sidebar .v2-area-btn small {
+    display: none !important;
+  }
+  .v3-new-project-card {
+    flex-direction: row;
+    justify-content: center;
+    padding: 9px 12px !important;
+    gap: 8px;
+  }
+  .v3-plus-circle {
+    width: 22px;
+    height: 22px;
+    font-size: 13px;
+    margin-bottom: 0;
+  }
+}
