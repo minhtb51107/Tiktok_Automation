@@ -22,6 +22,10 @@ before editing; do not reset, clean, stash or overwrite unrelated work.
 
 ## Studio safety and validation
 
+- New production development follows THREADS SERIOUS → data pipeline → video
+  production. FUNNY/Drama, Compilation and Lyrics are legacy: preserve their code,
+  assets and sessions, and do not activate or add features to them in this stream.
+
 - Reuse Studio contracts, timeline engine and Remotion compositions. Humans and
   agents invoke the same local backend operations.
 - Original source is immutable. Preserve revisions, locks, provenance and assets.
