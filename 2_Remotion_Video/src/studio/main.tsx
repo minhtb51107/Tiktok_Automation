@@ -296,8 +296,10 @@ function App() {
     return list;
   };
 
-  const refreshData01 = async () => {
-    const res = await fetchData01Catalog();
+  const [dataPage,setDataPage]=useState(0);
+  const refreshData01 = async (page=dataPage) => {
+    const res = await fetchData01Catalog(page);
+    setDataPage(page);
     setData01Connected(res.connected);
     setData01Catalog(res.catalog);
   };
@@ -834,7 +836,8 @@ function App() {
             dirty={dirty}
             data01Catalog={data01Catalog}
             data01Connected={data01Connected}
-            onRefreshData01={refreshData01}
+            onRefreshData01={()=>refreshData01()}
+            onPageChange={page=>refreshData01(page)}
             onUpdateItem={(id, patch) =>
               update(id, patch as Partial<StudioItem>)
             }
@@ -846,8 +849,8 @@ function App() {
               const item = session?.items.find((i) => i.id === id);
               if (item) {
                 update(id, {
-                  displayText: item.originalText,
-                  spokenText: item.originalText,
+                  displayText: item.contentMapping?.bodyText || item.originalText,
+                  spokenText: item.contentMapping?.bodyText || item.originalText,
                 });
               }
             }}

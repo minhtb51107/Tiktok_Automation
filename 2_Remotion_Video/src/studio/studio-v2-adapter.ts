@@ -1,3 +1,4 @@
+import { matchCatalogIdentity, canonicalTarget } from "../../../1_nest_backend/src/data-engine/studio-integration";
 import type { StudioSession } from "../../../1_nest_backend/src/studio/studio.contracts";
 import type { LibraryAsset } from "../../../1_nest_backend/src/studio/public-assets";
 import { spokenAmbiguities } from "../../../1_nest_backend/src/studio/voice-settings";
@@ -288,6 +289,8 @@ export interface ReviewBlockerSignal {
 }
 
 export interface MedallionItem {
+  sessionItemId?:string|null;
+  identityVerified?:boolean;
   id: string;
   data01PostId: string | null;
   sourcePostId: string | null;
@@ -363,13 +366,13 @@ function extractPostShortcode(url?: string | null): string | null {
   return m ? m[1] : null;
 }
 
-export async function fetchData01Catalog(): Promise<{
+export async function fetchData01Catalog(page = 0): Promise<{
   connected: boolean;
   catalog: Data01CatalogResponse | null;
   error?: string;
 }> {
   try {
-    const res = await fetch("/api/studio/data?page=0");
+    const res = await fetch(`/api/studio/data?page=${page}`);
     if (!res.ok) {
       return {
         connected: false,
@@ -496,20 +499,6 @@ export function computeMedallionItems(
     };
   }
 
-  // Index DATA-01 rows by shortcode or handle
-  const rowsByShortcode = new Map<string, Data01CatalogRow>();
-  const rowsByHandle = new Map<string, Data01CatalogRow>();
-  if (data01Catalog?.rows) {
-    for (const r of data01Catalog.rows) {
-      if (r.sourcePostId) rowsByShortcode.set(r.sourcePostId, r);
-      const code = extractPostShortcode(r.sourceUrl);
-      if (code) rowsByShortcode.set(code, r);
-      if (r.author?.handle) {
-        rowsByHandle.set(r.author.handle.replace(/^@/, "").toLowerCase(), r);
-      }
-    }
-  }
-
   const duplicates: DuplicateCluster[] = [];
   const itemDupMap = new Map<string, string>();
 
@@ -553,10 +542,7 @@ export function computeMedallionItems(
     const cleanHandle = handleRaw.replace(/^@/, "");
     const shortcode = extractPostShortcode(item.sourceUrl);
 
-    const matchedRow =
-      (shortcode ? rowsByShortcode.get(shortcode) : undefined) ||
-      rowsByHandle.get(cleanHandle.toLowerCase()) ||
-      null;
+    const matchedRow = matchCatalogIdentity(item.sourceUrl, data01Catalog?.rows || []);
 
     const reasons: string[] = [];
     const positiveSignals: string[] = [];
@@ -808,4 +794,28 @@ export function summarizePublicAssets(assets: LibraryAsset[]): PublicAssetSummar
     byCategory[a.category] = (byCategory[a.category] || 0) + 1;
   }
   return { total: assets.length, byCategory };
+}
+
+/** Separate projections: global catalog identity is never a scene index or author handle. */
+export interface CatalogPostView extends MedallionItem { scope:"CATALOG_POST"; sessionItemId:string|null; identityVerified:boolean; }
+export interface SessionSceneView { scope:"SESSION_SCENE"; sessionId:string; itemId:string; revision:number; order:number; }
+export function catalogPostView(row:Data01CatalogRow, detail:Data01PostDetailResponse|null, session:StudioSession|null):CatalogPostView {
+ const b=detail?.bronze,e=detail?.evaluation;
+ const exact=b&&b.sourcePostId===row.sourcePostId&&canonicalTarget(b.sourceUrl)===row.sourcePostId&&detail?.post.id===row.id;
+ const item=session?.items.find(i=>matchCatalogIdentity(i.sourceUrl,[row])) || null;
+ const raw=b?.originalBody??row.bodyPreview??"";
+ const type=b?.itemType??"UNKNOWN";
+ const state=e?.state??row.state;
+ const status:MedallionItem["evaluationStatus"]=state==="QUARANTINED"?"QUARANTINED":state==="QUEUED"?"QUEUED":state==="QUALIFIED"?"QUALIFIED":state==="REJECTED"?"REJECTED":"NEEDS_REVIEW";
+ return {id:row.id,data01PostId:row.id,sourcePostId:row.sourcePostId,itemIndex:0,
+ author:b?.author?.name||row.author?.name||row.author?.handle||"Unknown",handle:b?.author?.handle||row.author?.handle||"",avatarUrl:b?.author?.avatarUrl||null,
+ sourceUrl:row.sourceUrl||"",publishedAt:b?.publishedAt||null,entityType:type,
+ likesCount:b?.engagement?.likes??null,repliesCount:b?.engagement?.replies??null,repostsCount:b?.engagement?.reposts??null,sharesCount:b?.engagement?.shares??null,
+ evaluationStatus:status,data01State:state,provenanceBadge:"REAL DATA",ruleScore:e?.gold?.score??row.score,data01Labels:e?.gold?.labels||row.labels,
+ selected:item?.selected??false,inclusion:"TARGET",wordCount:raw.trim().split(/\s+/).filter(Boolean).length,charCount:raw.length,hasAvatar:!!b?.author?.avatarUrl,
+ spokenApproved:!!item?.spokenApproval?.valid,audioStatus:"MISSING",audioDurationSec:null,ambiguities:spokenAmbiguities(item?.spokenText||raw),proposalStatus:"NO_PROPOSAL",
+ reviewReasons:[...(e?.gold?.reasons||[]),...(e?.silver?.quarantineReasons||[])],positiveSignals:[],reviewBlockers:exact?[]:[{code:"DETAIL_REQUIRED",title:"Loading verified source identity",hint:"Review requires full post details",severity:"warning"}],
+ duplicateGroupId:row.duplicate?.postId||null,revision:item?.revision??0,data01Revision:e?.revision??row.revision,manualLocks:item?.manualLocks||[],
+ originalText:raw,displayText:item?.displayText??raw,spokenText:item?.spokenText??raw,topic:b?.topic??null,
+ scope:"CATALOG_POST",sessionItemId:item?.id||null,identityVerified:!!exact};
 }

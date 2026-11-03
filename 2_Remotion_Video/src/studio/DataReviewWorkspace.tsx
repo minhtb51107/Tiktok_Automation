@@ -1,7 +1,8 @@
+import { targetType, reviewPayload, type TargetType } from "../../../1_nest_backend/src/data-engine/studio-integration";
 import { useEffect, useMemo, useState } from "react";
 import type { StudioSession } from "../../../1_nest_backend/src/studio/studio.contracts";
 import {
-  computeMedallionItems,
+  catalogPostView,
   fetchData01PostDetail,
   formatCompactNumber,
   formatVietnameseDate,
@@ -17,6 +18,7 @@ interface DataReviewProps {
   data01Catalog?: Data01CatalogResponse | null;
   data01Connected?: boolean;
   onRefreshData01?: () => Promise<void>;
+  onPageChange?: (page:number)=>Promise<void>;
   onUpdateItem: (id: string, patch: Record<string, unknown>) => void;
   onMoveItem: (index: number, delta: number) => void;
   onRestoreItem: (id: string) => void;
@@ -37,7 +39,7 @@ interface PendingConfirmation {
   mode: "SINGLE" | "BATCH" | "ENQUEUE";
   decision: "ACCEPT" | "REJECT" | "NEEDS_REVIEW";
   targetItems: MedallionItem[];
-  confirmedType: "POST" | "COMMENT";
+  confirmedType: TargetType;
   reason: string;
 }
 
@@ -128,6 +130,7 @@ export function DataReviewWorkspace({
   data01Catalog = null,
   data01Connected = false,
   onRefreshData01,
+  onPageChange,
   onUpdateItem,
   onMoveItem,
   onRestoreItem,
@@ -152,7 +155,7 @@ export function DataReviewWorkspace({
 
   // Multi-select batch state (never auto-approves without user confirmation)
   const [batchCheckedIds, setBatchCheckedIds] = useState<string[]>([]);
-  const [batchType, setBatchType] = useState<"POST" | "COMMENT">("POST");
+  const [batchType, setBatchType] = useState<TargetType>("UNKNOWN");
   const [batchReason, setBatchReason] = useState(PRESET_REASONS.ACCEPT[0]);
 
   // Confirmation modal state
@@ -167,10 +170,10 @@ export function DataReviewWorkspace({
     "EVALUATION" | "SCRIPT" | "HISTORY"
   >("EVALUATION");
 
-  const { items, counts, dataProvenance } = useMemo(
-    () => computeMedallionItems(session, data01Catalog, data01Connected),
-    [session, data01Catalog, data01Connected],
-  );
+  const items = useMemo(() => (data01Catalog?.rows || []).map((row,index) => ({...catalogPostView(row,detailsByPostId[row.id] || null,session),itemIndex:(data01Catalog?.page||0)*25+index+1})),[data01Catalog,detailsByPostId,session]);
+  const c=data01Catalog?.counts||{};
+  const counts={total:data01Catalog?.total||0,bronzeObservations:data01Catalog?.observations||0,silverValidated:Math.max(0,(data01Catalog?.total||0)-(c.QUARANTINED||0)),goldScored:(c.SCORED||0)+(c.QUALIFIED||0)+(c.QUEUED||0)+(c.REJECTED||0),needsReview:(c.SCORED||0)+(c.ELIGIBLE||0),qualified:c.QUALIFIED||0,queued:c.QUEUED||0,rejected:c.REJECTED||0,quarantine:c.QUARANTINED||0};
+  const dataProvenance=data01Connected?"REAL DATA":"NOT CONNECTED";
 
   // Fetch DATA-01 post details for rich cards & evaluation history
   useEffect(() => {
@@ -198,7 +201,7 @@ export function DataReviewWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [data01Connected, items]);
+  }, [data01Connected, data01Catalog]);
 
   const filteredItems = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -230,19 +233,11 @@ export function DataReviewWorkspace({
       ? detailsByPostId[activeItem.data01PostId] || null
       : null;
 
-  const getEffectiveEntityType = (item: MedallionItem): "POST" | "COMMENT" => {
-    if (entityTypesByItem[item.id]) return entityTypesByItem[item.id];
-    const det = item.data01PostId ? detailsByPostId[item.data01PostId] : null;
-    if (det?.evaluation?.review?.confirmedType) {
-      return det.evaluation.review.confirmedType;
-    }
-    if (item.entityType === "POST" || item.entityType === "COMMENT") {
-      return item.entityType;
-    }
-    return "POST";
-  };
+  const getEffectiveEntityType = (item:MedallionItem):TargetType => targetType(item.entityType,entityTypesByItem[item.id],item.data01PostId?detailsByPostId[item.data01PostId]?.evaluation?.review?.confirmedType:undefined);
 
   const setItemEntityType = (itemId: string, t: "POST" | "COMMENT") => {
+    const row=items.find(i=>i.id===itemId);
+    if(row&&row.entityType!=="UNKNOWN"&&row.entityType!==t){setReviewError("Known target type cannot be silently changed");return;}
     setEntityTypesByItem((prev) => ({ ...prev, [itemId]: t }));
   };
 
@@ -274,6 +269,8 @@ export function DataReviewWorkspace({
       (customReason ?? reviewReason).trim() ||
       PRESET_REASONS[decision][0];
     const chosenType = getEffectiveEntityType(item);
+    if(!item.identityVerified){setReviewError("Wait for verified source details");return;}
+    if(decision==="ACCEPT"&&chosenType==="UNKNOWN"){setReviewError("Explicitly confirm POST or COMMENT first");return;}
     setConfirmation({
       mode: "SINGLE",
       decision,
@@ -290,6 +287,7 @@ export function DataReviewWorkspace({
       (i) => batchCheckedIds.includes(i.id) && i.data01PostId,
     );
     if (targets.length === 0) return;
+    if(targets.some(i=>!i.identityVerified)||(decision==="ACCEPT"&&batchType==="UNKNOWN")){setReviewError("Confirm target type and verified identity for every selected post");return;}
     setConfirmation({
       mode: "BATCH",
       decision,
@@ -339,6 +337,7 @@ export function DataReviewWorkspace({
           `Đã đưa bài viết của @${target.handle} vào Hàng đợi Sản xuất (chế độ Bản nháp an toàn).`,
         );
       } else {
+        for(const item of confirmation.targetItems){if(!item.identityVerified)throw Error("Verified identity required");reviewPayload(item.data01Revision!,confirmation.decision,confirmation.reason,targetType(item.entityType,confirmation.confirmedType));}
         let completed = 0;
         const updatedDetails: Record<string, Data01PostDetailResponse> = {};
         for (const item of confirmation.targetItems) {
@@ -348,12 +347,7 @@ export function DataReviewWorkspace({
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                revision: item.data01Revision,
-                decision: confirmation.decision,
-                reason: confirmation.reason,
-                confirmedType: confirmation.confirmedType,
-              }),
+              body: JSON.stringify(reviewPayload(item.data01Revision, confirmation.decision, confirmation.reason, targetType(item.entityType,confirmation.confirmedType))),
             },
           );
           const json = await res.json();
@@ -423,12 +417,12 @@ export function DataReviewWorkspace({
     }
   };
 
-  if (!session) {
+  if (!data01Connected) {
     return (
       <section className="v2-workspace">
         <div className="v2-empty-box">
-          <h3>Chưa chọn dự án</h3>
-          <p>Hãy chọn một dự án Threads ở thanh bên trái để duyệt bài viết.</p>
+          <h3>Chưa kết nối DATA-01</h3>
+          <p>Connect the local Data Engine to review the global catalog.</p>
         </div>
       </section>
     );
@@ -538,7 +532,7 @@ export function DataReviewWorkspace({
               type="button"
               className="s2-btn-secondary"
               onClick={triggerData01Import}
-              disabled={busy || reviewPending}
+              disabled={busy || reviewPending || !session}
             >
               ↻ Đồng bộ lại DATA-01
             </button>
@@ -811,7 +805,7 @@ export function DataReviewWorkspace({
               <div className="s2-confirm-row">
                 <span>Loại bài xác nhận:</span>
                 <strong>
-                  {confirmation.confirmedType === "POST"
+                  {confirmation.confirmedType === "UNKNOWN" ? "UNKNOWN — not confirmed" : confirmation.confirmedType === "POST"
                     ? "📄 Bài đăng gốc (POST)"
                     : "💬 Bình luận / Phản hồi (COMMENT)"}
                 </strong>
@@ -870,7 +864,8 @@ export function DataReviewWorkspace({
         </div>
       )}
 
-      {/* Main Layout: Either Quick Grid (2-col visual cards) or Split Detail (Card Feed + Deep Inspector) */}
+      <div className="v2-header-actions" data-testid="catalog-pagination"><button disabled={!(data01Catalog?.page) || reviewPending} onClick={()=>void onPageChange?.((data01Catalog?.page||0)-1)}>Previous page</button><span>Catalog page {(data01Catalog?.page||0)+1} · {data01Catalog?.total||0} posts</span><button disabled={((data01Catalog?.page||0)+1)*25 >= (data01Catalog?.matching||0) || reviewPending} onClick={()=>void onPageChange?.((data01Catalog?.page||0)+1)}>Next page</button></div>
+      {/* Catalog cards are independent of the currently opened session. */}
       <div
         className={
           viewMode === "QUICK_GRID"
@@ -906,6 +901,7 @@ export function DataReviewWorkspace({
                 key={item.id}
                 role="listitem"
                 data-testid={`review-card-${item.itemIndex}`}
+                data-post-id={item.data01PostId}
                 className={`s2-thread-card status-${item.evaluationStatus.toLowerCase()} ${
                   isSelected && viewMode === "SPLIT_DETAIL" ? "is-focused" : ""
                 } ${isChecked ? "is-batch-checked" : ""}`}
@@ -1041,8 +1037,9 @@ export function DataReviewWorkspace({
                     <button
                       type="button"
                       className={`s2-include-chip ${item.selected ? "is-on" : ""}`}
+                      disabled={!item.sessionItemId}
                       onClick={() =>
-                        onUpdateItem(item.id, { selected: !item.selected })
+                        onUpdateItem(item.sessionItemId || "", { selected: !item.selected })
                       }
                     >
                       {item.selected ? "🎬 Có trong Video" : "○ Đang ẩn khỏi Video"}
@@ -1403,9 +1400,10 @@ export function DataReviewWorkspace({
                         Nội dung hiển thị trên Thẻ Video 9:16
                         <textarea
                           rows={3}
+                          disabled={!activeItem.sessionItemId}
                           value={activeItem.displayText}
                           onChange={(e) =>
-                            onUpdateItem(activeItem.id, {
+                            onUpdateItem(activeItem.sessionItemId || "", {
                               displayText: e.target.value,
                             })
                           }
@@ -1418,9 +1416,10 @@ export function DataReviewWorkspace({
                         Lời đọc giọng AI Kokoro (Viết rõ từ viết tắt nếu cần)
                         <textarea
                           rows={4}
+                          disabled={!activeItem.sessionItemId}
                           value={activeItem.spokenText}
                           onChange={(e) =>
-                            onUpdateItem(activeItem.id, {
+                            onUpdateItem(activeItem.sessionItemId || "", {
                               spokenText: e.target.value,
                             })
                           }
@@ -1432,7 +1431,7 @@ export function DataReviewWorkspace({
                       <button
                         type="button"
                         className="s2-btn-secondary"
-                        onClick={() => onRestoreItem(activeItem.id)}
+                        onClick={() => onRestoreItem(activeItem.sessionItemId || "")}
                         disabled={busy}
                       >
                         ↺ Khôi phục về nguyên bản

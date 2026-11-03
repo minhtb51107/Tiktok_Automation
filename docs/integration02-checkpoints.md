@@ -28,3 +28,20 @@
 - No data workflow was exercised. Existing P0 identity/type defects are still
   explicitly pending checkpoint 3. Source merge PASS does not imply integration
   acceptance or permission to use real data.
+
+## Checkpoint 3 — P0/data contract gate
+
+- Removed handle fallback; canonical HTTPS source identity and sourcePostId must
+  agree. Ambiguous matches fail closed. UNKNOWN is preserved, including batch
+  defaults; ACCEPT requires deliberate POST/COMMENT confirmation.
+- CatalogPostView is independent of SessionSceneView. Data Review projects every
+  current catalog page, even without an open session; edits only target an exact
+  linked scene. Page navigation is real, not a session filter.
+- Browser-safe shared payload gates distinguish quality-feedback revision from
+  DATA-01 evaluation revision. Gold feedback never grants production approval.
+- Regression gate PASS: 3 suites / 29 tests (identity, UNKNOWN, catalog scope,
+  feedback, stale revisions, DATA-03 idempotency/recovery). Backend build and
+  frontend TypeScript/Studio bundle PASS, exit 0.
+- All 63 pre-existing session/Data Engine files remain hash-identical against
+  checkpoint 1. P0 gate is cleared for further isolated synthetic integration;
+  real-data access still waits for checkpoint 6 GO/NO-GO and user decision.
