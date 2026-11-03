@@ -617,6 +617,7 @@ export class StudioService {
       this.busy = false;
     }
   }
+  async withControlledCollection<T>(fn:()=>Promise<T>){return this.exclusive(fn);}
   async create() {
     const id = randomUUID();
     const project: VideoProject = {

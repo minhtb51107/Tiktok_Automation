@@ -5,6 +5,7 @@ import { existsSync } from 'fs';
 import puppeteer from 'puppeteer';
 import {labelledCounts} from './metadata-fields';
 import { matchExactTarget } from './target-identity';
+import {existingPublicBrowser} from '../modules/core/scraper/public-discovery';
 
 const hosts = [
   'threads.com',
@@ -44,6 +45,9 @@ const decode = (s: string) =>
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
 export interface PublicRecord {
+  topic?:string|null;
+  bodyText?:string;
+  topicEvidence?:{href:string;label:string};
   shareCount?:number|null;
   fields?:Record<string,import('./metadata-fields').ObservedField>;
   text: string;
@@ -230,12 +234,7 @@ export async function extractPublicThreads(
       'RESOLVED',
       'Public response resolved; canonical URL and public metadata inspected.',
     );
-    const executable = [
-      process.env.STUDIO_BROWSER,
-      puppeteer.executablePath(),
-      'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-      'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    ].find((p) => p && existsSync(p));
+    const executable = existingPublicBrowser();
     if (!executable) {
       diagnostic(
         'browser',
@@ -284,6 +283,7 @@ export async function extractPublicThreads(
           throw Error('Navigation HTTP ' + response.status());
         if (/\/login|\/accounts\//.test(page.url()))
           throw Error('Public access requires login; no login attempted');
+        if(/\/(?:challenge|checkpoint)(?:\/|\?|$)/i.test(page.url())||await page.evaluate(()=>!!document.querySelector('input[type="password"],iframe[src*="captcha"],[data-testid*="captcha"]')))throw Error('Public access protection encountered; stopped without bypass');
         await page
           .waitForSelector('[data-pressable-container="true"], article', {
             timeout: 10000,
