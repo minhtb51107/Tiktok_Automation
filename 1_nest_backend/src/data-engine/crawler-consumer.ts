@@ -1,4 +1,4 @@
-import { DATA_SCHEMA, type SourceInput, type DataRun } from './contracts';
+import { DATA_SCHEMA, type DataRun } from './contracts';
 import { DataEngine } from './engine';
 import { hash } from './rules';
 import { ScraperService } from '../modules/core/scraper/scraper.service';
@@ -10,41 +10,9 @@ import {
 } from '../studio/public-threads';
 import { crawlerInput } from './crawler-adapter';
 import { GoldShadowEngine } from './gold-shadow';
-import { DISCOVERY_TOPICS, topic, type DiscoveryTopic } from './gold-v2';
-export interface CrawlerRequest {
-  mode: 'SEARCH' | 'FEED' | 'URLS';
-  keyword?: string;
-  urls?: string[];
-  requestId: string;
-  limit?: number;
-  topic?: DiscoveryTopic;
-}
-export interface CrawlerRun {
-  execution: 'LIVE' | 'MOCK';
-  schemaVersion: typeof DATA_SCHEMA;
-  crawlerVersion: 'legacy-public-crawler/1';
-  id: string;
-  input: CrawlerRequest;
-  status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'BLOCKED_ACCESS';
-  stage: string;
-  startedAt: string;
-  completedAt: string | null;
-  elapsedMs: number;
-  urls: string[] | null;
-  cursor: number;
-  captures: {
-    url: string;
-    attempt: SourceAttempt;
-    input: SourceInput | null;
-    importRunId: string | null;
-    done: boolean;
-    captureHash: string;
-    shadowIds?: string[];
-  }[];
-  error: string | null;
-  warnings: string[];
-  history: { at: string; stage: string; status: string }[];
-}
+import { DISCOVERY_TOPICS, topic } from './gold-v2';
+import type { CrawlerRequest, CrawlerRun } from "./discovery-contracts";
+export type { CrawlerRequest,CrawlerRun } from "./discovery-contracts";
 export function crawlerRequest(b: any): CrawlerRequest {
   if (
     !b ||

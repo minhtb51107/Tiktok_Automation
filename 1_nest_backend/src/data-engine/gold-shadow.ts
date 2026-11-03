@@ -2,11 +2,8 @@ import { DATA_SCHEMA, type Evaluation, type DataRun, type Bronze } from './contr
 import { DataEngine } from './engine';
 import { hash } from './rules';
 import { shadowResult, qualityMetrics, topic, type DiscoveryTopic } from './gold-v2';
-export interface GoldShadow {
-  schemaVersion: typeof DATA_SCHEMA; id: string; postId: string; bronzeId: string;
-  evaluationId: string; evaluationRevision: number; createdAt: string;
-  result: ReturnType<typeof shadowResult>;
-}
+import type { GoldShadow } from "./discovery-contracts";
+export type { GoldShadow } from "./discovery-contracts";
 export interface Feedback {
   schemaVersion: typeof DATA_SCHEMA; id: string; shadowId: string; revision: number;
   requestId: string; decision: 'ACCEPT' | 'REJECT' | 'NEEDS_REVIEW'; reason: string; at: string;

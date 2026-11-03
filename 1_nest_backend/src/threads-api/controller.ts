@@ -24,10 +24,12 @@ export class ThreadsDiscoveryService {
   readonly auth = new ThreadsAuth();
   readonly collector: ThreadsCollector;
   readonly scheduler: DiscoveryScheduler;
-  constructor(data: DataStudioService) {
+  constructor(private data: DataStudioService) {
     this.collector = new ThreadsCollector(data.engine, this.auth);
     this.scheduler = new DiscoveryScheduler(this.collector);
   }
+  start(body:any){return this.data.studio.withControlledCollection(()=>this.collector.start(body));}
+  resume(id:string){return this.data.studio.withControlledCollection(()=>this.collector.resume(id));}
 }
 @Controller('api/studio/threads')
 export class ThreadsController {
@@ -128,14 +130,14 @@ export class ThreadsController {
   }
   @Post('collector/runs') start(@Body() b: any, @Headers('origin') o?: string) {
     this.origin(o);
-    return this.call(() => this.svc.collector.start(b));
+    return this.call(() => this.svc.start(b));
   }
   @Post('collector/runs/:id/resume') resume(
     @Param('id') id: string,
     @Headers('origin') o?: string,
   ) {
     this.origin(o);
-    return this.call(() => this.svc.collector.resume(id));
+    return this.call(() => this.svc.resume(id));
   }
   @Get('scheduler') scheduler() {
     return this.call(() => this.svc.scheduler.status());

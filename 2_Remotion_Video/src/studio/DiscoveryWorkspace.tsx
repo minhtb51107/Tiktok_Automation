@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { ControlledDiscovery } from "./ControlledDiscovery";
+import { useEffect, useState, useRef } from "react";
 import type {
   StudioItem,
   StudioSession,
@@ -80,6 +81,7 @@ export function DiscoveryWorkspace({
   onCreateProject,
   onRefreshData01,
 }: DiscoveryWorkspaceProps) {
+  const collectorLock=useRef(false);
   const [activeTab, setActiveTab] =
     useState<AcquisitionTab>("URLS_AND_MANUAL");
   const [focusItemId, setFocusItemId] = useState<string>("ALL");
@@ -196,11 +198,12 @@ export function DiscoveryWorkspace({
     } catch (err) {
       setApiError((err as Error).message);
     } finally {
-      setApiBusy(false);
+      setApiBusy(false);collectorLock.current=false;
     }
   };
 
   const handleStartCollectorRun = async () => {
+    if(collectorLock.current)return;collectorLock.current=true;
     setApiBusy(true);
     setApiError("");
     setApiMessage("");
@@ -211,7 +214,7 @@ export function DiscoveryWorkspace({
       if (pilotKeywords.length < 1) {
         throw new Error("Vui lòng chọn ít nhất 1 từ khóa để bắt đầu thu thập.");
       }
-      const requestId = `pilot-${Date.now()}`;
+      const requestId = crypto.randomUUID();
       const body = {
         keywords: pilotKeywords,
         searchType,
@@ -220,6 +223,11 @@ export function DiscoveryWorkspace({
         maxRunMs: Math.min(180000, Math.max(1000, Math.round(maxRunSeconds * 1000))),
         requestId,
       };
+      const intentKey="studio-official-collector-intent";
+      let saved:any=null;try{saved=JSON.parse(localStorage.getItem(intentKey)||"null");}catch{}
+      const signature=JSON.stringify({...body,requestId:undefined});
+      if(saved?.signature===signature)body.requestId=saved.requestId;
+      localStorage.setItem(intentKey,JSON.stringify({signature,requestId:body.requestId}));
       const res = await fetch("/api/studio/threads/collector/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -234,6 +242,7 @@ export function DiscoveryWorkspace({
         );
       }
       const run = (json.data ?? json) as ThreadsCollectorRunItem;
+      if(run.status==="COMPLETED")localStorage.removeItem("studio-official-collector-intent");
       setCollectorRuns((prev) => [
         run,
         ...prev.filter((existing) => existing.id !== run.id),
@@ -260,6 +269,7 @@ export function DiscoveryWorkspace({
   };
 
   const handleResumeCollectorRun = async (runId: string) => {
+    if(collectorLock.current)return;collectorLock.current=true;
     setApiBusy(true);
     setApiError("");
     setApiMessage("");
@@ -374,7 +384,7 @@ export function DiscoveryWorkspace({
 
   if (!session) {
     return (
-      <section className="v2-workspace s2-discovery-workspace">
+      <section className="v2-workspace s2-discovery-workspace"><ControlledDiscovery onRefresh={onRefreshData01} onReview={()=>onNavigateArea("data-review")}/>
         <div className="s2-empty-hero">
           <span className="hero-icon">✦</span>
           <h2>Bắt đầu câu chuyện mới từ Threads</h2>
@@ -414,6 +424,7 @@ export function DiscoveryWorkspace({
       aria-label="Khám phá và thu thập nguồn bài Threads"
       data-testid="discovery-workspace"
     >
+      <ControlledDiscovery onRefresh={onRefreshData01} onReview={()=>onNavigateArea("data-review")}/>
       {/* Hero Header with 3-Step Visual Guide & Primary Action */}
       <div className="s2-hero-banner s2-hero-discovery">
         <div className="s2-hero-copy">
@@ -508,6 +519,7 @@ export function DiscoveryWorkspace({
         </div>
       )}
 
+      <p className="alert">Scheduler configuration and resume are read-only in this integrated pilot. OAuth READY does not imply approved keyword-search coverage.</p>
       {/* Mode Switcher Tabs: 1. Link & Manual | 2. Keyword Collector (DATA-02) | 3. Future Schedule */}
       <div
         className="s2-mode-tabs"
@@ -1435,7 +1447,7 @@ export function DiscoveryWorkspace({
                   type="button"
                   className="s2-btn-secondary"
                   style={{ marginLeft: 12 }}
-                  disabled={apiBusy}
+                  disabled={true}
                   onClick={() => void handleSchedulerAction("acknowledge-block")}
                 >
                   Xác nhận đã kiểm tra
@@ -1506,7 +1518,7 @@ export function DiscoveryWorkspace({
                   <button
                     type="button"
                     className="s2-btn-secondary"
-                    disabled={apiBusy}
+                    disabled={true}
                     onClick={() =>
                       void handleSchedulerAction(
                         scheduler.paused ? "resume" : "pause",
@@ -1521,7 +1533,7 @@ export function DiscoveryWorkspace({
                 <button
                   type="button"
                   className="s2-btn-primary"
-                  disabled={apiBusy}
+                  disabled={true}
                   onClick={() => void handleSaveScheduler()}
                   data-testid="scheduler-save-btn"
                 >

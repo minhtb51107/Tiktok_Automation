@@ -45,3 +45,17 @@
 - All 63 pre-existing session/Data Engine files remain hash-identical against
   checkpoint 1. P0 gate is cleared for further isolated synthetic integration;
   real-data access still waits for checkpoint 6 GO/NO-GO and user decision.
+
+## Checkpoint 4 — Discovery integration
+
+- One-Click DATA-02C, run history/polling/report, V1/V2 comparison, quality buckets
+  and independent feedback now use actual backend APIs. Official API collector
+  remains a separate source. No POST or crawl on mount.
+- Persisted request intent and immediate click locks prevent accidental duplicate
+  collection on retries/refresh. No automatic resume through an access block.
+- Scheduler mutation controls are disabled in this pilot. Both collector paths
+  share Studio's operation mutex. Browser-safe DTOs avoid importing server/service
+  dependency graphs into frontend type checking.
+- Backend/frontend TypeScript and Studio bundle PASS. Contract/crawler regression:
+  2 suites / 15 tests PASS. Browser workflow acceptance is pending checkpoint 6;
+  no LIVE collection, AI, TTS or render was triggered by this checkpoint.
