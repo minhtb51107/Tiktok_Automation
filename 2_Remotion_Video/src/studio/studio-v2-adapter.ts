@@ -1,4 +1,4 @@
-import { matchCatalogIdentity, canonicalTarget } from "../../../1_nest_backend/src/data-engine/studio-integration";
+import { matchCatalogIdentity, canonicalTarget, pendingReviewCount } from "../../../1_nest_backend/src/data-engine/studio-integration";
 import type { StudioSession } from "../../../1_nest_backend/src/studio/studio.contracts";
 import type { LibraryAsset } from "../../../1_nest_backend/src/studio/public-assets";
 import { spokenAmbiguities } from "../../../1_nest_backend/src/studio/voice-settings";
@@ -51,6 +51,8 @@ export interface Data01CatalogRow {
   quarantine: string[];
   observations: number;
   revision: number;
+  /** True when the stored observation is labelled synthetic/mock; never shown as REAL DATA. */
+  synthetic?: boolean;
 }
 
 export interface Data01CatalogResponse {
@@ -441,6 +443,13 @@ export async function fetchThreadsDiscoveryState(): Promise<{
   }
 }
 
+/** Posts the user still has to decide on, counted across the whole catalog (not the open session). */
+export function catalogPendingReview(
+  catalog: Data01CatalogResponse | null,
+): number {
+  return pendingReviewCount(catalog?.counts);
+}
+
 export function formatCompactNumber(value?: number | null): string {
   if (value === null || value === undefined) return "—";
   if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
@@ -811,7 +820,7 @@ export function catalogPostView(row:Data01CatalogRow, detail:Data01PostDetailRes
  author:b?.author?.name||row.author?.name||row.author?.handle||"Unknown",handle:b?.author?.handle||row.author?.handle||"",avatarUrl:b?.author?.avatarUrl||null,
  sourceUrl:row.sourceUrl||"",publishedAt:b?.publishedAt||null,entityType:type,
  likesCount:b?.engagement?.likes??null,repliesCount:b?.engagement?.replies??null,repostsCount:b?.engagement?.reposts??null,sharesCount:b?.engagement?.shares??null,
- evaluationStatus:status,data01State:state,provenanceBadge:"REAL DATA",ruleScore:e?.gold?.score??row.score,data01Labels:e?.gold?.labels||row.labels,
+ evaluationStatus:status,data01State:state,provenanceBadge:row.synthetic?"MOCK DATA":"REAL DATA",ruleScore:e?.gold?.score??row.score,data01Labels:e?.gold?.labels||row.labels,
  selected:item?.selected??false,inclusion:"TARGET",wordCount:raw.trim().split(/\s+/).filter(Boolean).length,charCount:raw.length,hasAvatar:!!b?.author?.avatarUrl,
  spokenApproved:!!item?.spokenApproval?.valid,audioStatus:"MISSING",audioDurationSec:null,ambiguities:spokenAmbiguities(item?.spokenText||raw),proposalStatus:"NO_PROPOSAL",
  reviewReasons:[...(e?.gold?.reasons||[]),...(e?.silver?.quarantineReasons||[])],positiveSignals:[],reviewBlockers:exact?[]:[{code:"DETAIL_REQUIRED",title:"Loading verified source identity",hint:"Review requires full post details",severity:"warning"}],

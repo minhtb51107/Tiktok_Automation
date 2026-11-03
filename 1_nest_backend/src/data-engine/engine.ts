@@ -428,6 +428,7 @@ export class DataEngine {
         quarantine: e?.silver?.quarantineReasons || [],
         observations: post.observations.length,
         revision: e?.revision ?? 0,
+        synthetic: bronze?.provenance?.synthetic === true,
       });
     }
     const runs: any[] = [];

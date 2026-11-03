@@ -24,6 +24,7 @@ import {
   SettingsWorkspace,
 } from "./OperationsWorkspaces";
 import {
+  catalogPendingReview,
   fetchData01Catalog,
   type Data01CatalogResponse,
 } from "./studio-v2-adapter";
@@ -512,7 +513,7 @@ function App() {
     },
     "Data Review": {
       title: "Duyệt dữ liệu",
-      badge: `${session?.items.length ?? 0} chờ`,
+      badge: `${catalogPendingReview(data01Catalog)} chờ`,
     },
     "Production Queue": {
       title: "Kho Video & Hàng đợi",

@@ -1,4 +1,4 @@
-import { targetType, reviewPayload, type TargetType } from "../../../1_nest_backend/src/data-engine/studio-integration";
+import { targetType, reviewPayload, isUserAccepted, type TargetType } from "../../../1_nest_backend/src/data-engine/studio-integration";
 import { useEffect, useMemo, useState } from "react";
 import type { StudioSession } from "../../../1_nest_backend/src/studio/studio.contracts";
 import {
@@ -116,7 +116,7 @@ const STATE_VI_LABELS: Record<string, string> = {
   VALIDATED: "Đã kiểm tra hợp lệ (Silver)",
   ELIGIBLE: "Đủ điều kiện sơ bộ",
   SCORED: "Đã chấm điểm tự động (Gold)",
-  QUALIFIED: "Đạt chuẩn (Đã duyệt)",
+  QUALIFIED: "Đạt chuẩn (tự động hoặc đã được bạn duyệt)",
   QUEUED: "Đã vào Hàng đợi Sản xuất",
   REJECTED: "Đã từ chối",
   QUARANTINED: "Đang cách ly kiểm tra",
@@ -429,11 +429,25 @@ export function DataReviewWorkspace({
   }
 
   const renderStatusBadge = (item: MedallionItem) => {
+    // Pipeline QUALIFIED is a threshold result; only an explicit user ACCEPT makes it approved.
+    const userAccepted =
+      !!item.data01PostId &&
+      isUserAccepted(detailsByPostId[item.data01PostId]?.evaluation?.review);
     switch (item.evaluationStatus) {
       case "QUALIFIED":
-        return (
-          <span className="s2-status-badge badge-qualified">
+        return userAccepted ? (
+          <span
+            className="s2-status-badge badge-qualified"
+            data-testid="badge-user-accepted"
+          >
             ✓ Đạt chuẩn · Sẵn sàng dựng
+          </span>
+        ) : (
+          <span
+            className="s2-status-badge badge-review"
+            data-testid="badge-auto-qualified"
+          >
+            ⏳ Đạt ngưỡng tự động · Chưa được bạn duyệt
           </span>
         );
       case "QUEUED":
@@ -483,7 +497,16 @@ export function DataReviewWorkspace({
             </span>
             {counts.qualified > 0 && (
               <span className="v3-prov-pill prov-real">
-                {counts.qualified} ĐẠT CHUẨN
+                {counts.qualified} ĐẠT NGƯỠNG TỰ ĐỘNG
+              </span>
+            )}
+            {(data01Catalog?.rows || []).some((r) => r.synthetic) && (
+              <span
+                className="v3-prov-pill prov-review"
+                data-testid="synthetic-catalog-warning"
+              >
+                {(data01Catalog?.rows || []).filter((r) => r.synthetic).length}{" "}
+                SYNTHETIC / MOCK
               </span>
             )}
           </div>
@@ -946,6 +969,14 @@ export function DataReviewWorkspace({
                         {item.topic && (
                           <span className="s2-topic-chip">#{item.topic}</span>
                         )}
+                        {item.provenanceBadge === "MOCK DATA" && (
+                          <span
+                            className="v3-prov-pill prov-review"
+                            data-testid="synthetic-badge"
+                          >
+                            SYNTHETIC
+                          </span>
+                        )}
                       </div>
                       <div className="s2-post-submeta">
                         <span>📅 Đăng ngày {pubDate}</span>
@@ -1366,7 +1397,21 @@ export function DataReviewWorkspace({
                         </div>
                       </div>
 
-                      {activeItem.evaluationStatus === "QUALIFIED" && (
+                      {activeItem.evaluationStatus === "QUALIFIED" &&
+                        !isUserAccepted(activeDetail?.evaluation?.review) && (
+                          <div
+                            className="s2-enqueue-callout"
+                            data-testid="enqueue-needs-accept"
+                          >
+                            <span>
+                              Bài này mới đạt ngưỡng chấm điểm tự động. Hãy bấm
+                              “Chấp nhận” để xác nhận trước khi đưa vào Hàng
+                              đợi Sản xuất.
+                            </span>
+                          </div>
+                        )}
+                      {activeItem.evaluationStatus === "QUALIFIED" &&
+                        isUserAccepted(activeDetail?.evaluation?.review) && (
                         <div className="s2-enqueue-callout">
                           <span>
                             Bài viết đã Đạt chuẩn! Bạn có muốn xếp vào Hàng đợi

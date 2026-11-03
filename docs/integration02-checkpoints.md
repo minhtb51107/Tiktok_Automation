@@ -75,3 +75,66 @@
 - Backend build and frontend TypeScript PASS; focused regression 4 suites / 28
   tests PASS (including stale audio and DATA-03 idempotency/recovery). All executed
   sequentially. Browser/save/reopen acceptance remains pending checkpoint 6.
+
+## Checkpoint 6 — Browser end-to-end regression (SYNTHETIC runtime)
+
+Recovery: the reported "9 uncommitted files" did not exist in any worktree (all three
+clean, reflog and loose objects checked). Checkpoint 6 was therefore implemented from
+`ef5cc78`; nothing from Codex was lost or overwritten.
+
+Runtime and safety:
+- `1_nest_backend/test/synthetic-runtime.cjs` boots the real Nest modules on
+  `127.0.0.1:3100` inside the integration worktree only. It refuses to start with a
+  `.env`, scrubs every credential-like variable, keeps all dormant feature flags off and
+  replaces only the public crawler source with a local synthetic fixture (mode `MOCK`).
+  It can inject one extraction failure through `.studio-data/synthetic-fail-once`.
+- `1_nest_backend/test/integration02-e2e.cjs` drives the real Studio bundle in headless
+  Chrome (one worker). Run: start the runtime, then `node test/integration02-e2e.cjs`
+  (`E2E_ONLY_D=1` re-runs groups D/Z against an existing synthetic store).
+- No real crawl, AI, TTS, render or publishing request is possible; the suite asserts
+  that no such request or job is issued.
+
+Defects found by the browser run and fixed (scope: integration UI, no redesign):
+1. Pipeline-QUALIFIED posts were shown as "Đạt chuẩn (Đã duyệt)" / "Sẵn sàng dựng" and
+   offered the enqueue action before any user ACCEPT (the backend correctly refused).
+   Now such posts show "Đạt ngưỡng tự động · Chưa được bạn duyệt", the enqueue action is
+   hidden with an explanation until an explicit ACCEPT exists (`isUserAccepted`).
+2. Synthetic observations were labelled "REAL DATA". The catalog now exposes
+   `synthetic` per row (from `bronze.provenance.synthetic`); cards show `SYNTHETIC` and the
+   header shows a synthetic/mock warning.
+3. The "Duyệt dữ liệu" navigation badge counted scenes of the open session. It now shows
+   the catalog-wide pending-review count (`pendingReviewCount`), equal to the Data Review tab.
+
+Results (`e2e-final`, clean synthetic store): 38/38 browser checks PASS —
+A Discovery 10, B Data Review 8, C DATA-03 9, D UI regression 8, Z global 3.
+Evidence includes: refresh/mount never crawl; double-click creates one run; injected
+failure + Resume re-fetches only the failed URL and never duplicates imports; Gold V2 view
+per canonical permalink; UNKNOWN stays UNKNOWN (explicit POST/COMMENT confirmation);
+stale revision and API failure surfaced in the modal; same-author posts never confused;
+Ready Queue only after explicit ACCEPT + enqueue; double-click/retry create exactly one
+project; `productionOrigin`, source reference and original text preserved; stale audio is
+not counted ready; DRAFT never shown as FINAL; editor save → reload keeps edits; idle pages
+do not poll aggressively.
+
+Technical gates: backend and frontend `tsc --noEmit` exit 0, `nest build` exit 0, Studio
+bundle exit 0, Jest `--runInBand` 34 suites / 217 tests PASS (new: catalog provenance,
+pending-review count, explicit-ACCEPT gate).
+
+Observations (not defects, recorded for the real-data decision):
+- Opening the Voice workspace runs a read-only runtime preflight job (`voice-runtime`);
+  it never loads a model or synthesizes.
+- Saving in the editor runs `editor/prepare` (preview preparation, no render). With real
+  data this may touch source images; not exercised here.
+- `Saved locally` appears a few frames before the app-level dirty flag settles; an
+  immediate reload can show the browser "leave page" prompt. Cosmetic race.
+- The Data Review state label for QUALIFIED now reads "tự động hoặc đã được bạn duyệt".
+
+Real-data integrity: SHA-256 manifest of the original `.studio-data` (933 files,
+508,694,633 bytes, aggregate `9cee8c1a02eca632352c52b02715d4328ba49acf8df13f2a4609fdd6f4cbc632`)
+taken before and after the run: 0 differences. Three live log files held open by the
+running real backend could not be read and are recorded as `LOCKED` in both manifests.
+Source worktrees `90451cf` and `66b8d59` remain clean.
+
+Not verified: any LIVE crawl of Threads, Official API collection with a real token, real
+Kokoro/TTS generation inside the integrated Studio, FINAL render and publishing, and
+behaviour with real media/avatar downloads.

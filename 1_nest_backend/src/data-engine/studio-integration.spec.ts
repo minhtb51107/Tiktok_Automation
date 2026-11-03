@@ -60,4 +60,22 @@ describe('Integration checkpoint 3 — P0 gates / SYNTHETIC',()=>{
   expect(calls).toEqual(['/api/studio/data?page=2']);
   expect(result.catalog.total).toBe(51);expect(result.catalog.rows[0].sourcePostId).toBe('PAGE003');
  });
+ it('never labels synthetic observations as REAL DATA',()=>{
+  expect(adapter().catalogPostView({...row(),synthetic:true},null,null).provenanceBadge).toBe('MOCK DATA');
+  expect(adapter().catalogPostView(row(),null,null).provenanceBadge).toBe('REAL DATA');
+ });
+ it('counts pending reviews across the catalog, not the open session',()=>{
+  const counts={QUALIFIED:3,QUEUED:1,REJECTED:2,QUARANTINED:1,SCORED:4,DISCOVERED:1,FAILED:1};
+  expect(gates.pendingReviewCount(counts)).toBe(6);
+  expect(adapter().catalogPendingReview({counts})).toBe(6);
+  expect(adapter().catalogPendingReview(null)).toBe(0);
+  expect(gates.pendingReviewCount(undefined)).toBe(0);
+ });
+ it('treats pipeline QUALIFIED as approved only after an explicit user ACCEPT',()=>{
+  expect(gates.isUserAccepted(null)).toBe(false);
+  expect(gates.isUserAccepted(undefined)).toBe(false);
+  expect(gates.isUserAccepted({decision:'NEEDS_REVIEW'})).toBe(false);
+  expect(gates.isUserAccepted({decision:'REJECT'})).toBe(false);
+  expect(gates.isUserAccepted({decision:'ACCEPT'})).toBe(true);
+ });
 });

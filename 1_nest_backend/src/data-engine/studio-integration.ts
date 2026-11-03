@@ -27,3 +27,11 @@ export function feedbackPayload(revision:number,requestId:string,decision:string
   if(!Number.isSafeInteger(revision)||revision<0||!requestId||!['ACCEPT','REJECT','NEEDS_REVIEW'].includes(decision)||!reason.trim())throw Error('INVALID_QUALITY_FEEDBACK');
   return {revision,requestId,decision,reason:reason.trim()};
 }
+/** Pipeline QUALIFIED is only a threshold result; production eligibility needs an explicit user ACCEPT. */
+export function isUserAccepted(review:{decision?:string}|null|undefined):boolean {
+  return review?.decision==='ACCEPT';
+}
+/** Posts that still need a human decision (catalog-wide, independent of any open session). */
+export function pendingReviewCount(counts:Record<string,number>|null|undefined):number {
+  return Object.entries(counts||{}).filter(([state])=>!['QUALIFIED','QUEUED','REJECTED','QUARANTINED'].includes(state)).reduce((sum,[,n])=>sum+n,0);
+}
