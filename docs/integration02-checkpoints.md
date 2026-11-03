@@ -17,3 +17,14 @@
   version changes. Source worktrees remain untouched. No second live-store writer.
 - Snapshot verification PASS. Proceed to source merge; data-writing workflow
   integration remains gated on checkpoint 3 regression.
+
+## Checkpoint 2 — Source merge
+
+- Merged design `66b8d59` into the integration branch only. Resolved `main.tsx`
+  around the Antigravity shell, preserving Codex's DATA-01 technical library as
+  a collapsed advanced view and old `step=Data` links into Data Review.
+- Backend/frontend TypeScript, backend build and Studio frontend bundle PASS,
+  exit 0, sequential execution. Dependency and lockfiles unchanged.
+- No data workflow was exercised. Existing P0 identity/type defects are still
+  explicitly pending checkpoint 3. Source merge PASS does not imply integration
+  acceptance or permission to use real data.

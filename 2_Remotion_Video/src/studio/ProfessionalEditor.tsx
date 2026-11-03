@@ -78,7 +78,7 @@ export function ProfessionalEditor({
   const [theme, setTheme] = useState(
     () => localStorage.getItem("studio-appearance") || "DARK",
   );
-  const [selectedClip, setSelectedClip] = useState("");
+  const [selectedClip, setSelectedClip] = useState(""), [mobilePane, setMobilePane] = useState<"CANVAS" | "SCENES" | "INSPECTOR">("CANVAS");
   const gesture = useRef<Draft | null>(null);
   const player = useRef<PlayerRef>(null),
     stage = useRef<HTMLDivElement>(null),
@@ -628,7 +628,7 @@ export function ProfessionalEditor({
     Math.min(stageSize.width - 48, ((stageSize.height - 32) * 9) / 16),
   );
   return (
-    <section className="pro-editor" data-testid="professional-editor">
+    <section className="pro-editor" data-testid="professional-editor" data-mobile-pane={mobilePane}>
       <div className="editor-toolbar">
         <div>
           <strong>{session.title}</strong>
@@ -689,6 +689,11 @@ export function ProfessionalEditor({
           {error || live.error || notice}
         </div>
       )}
+      <div className="editor-mobile-tabs" role="tablist" aria-label="Editor responsive view">
+        <button role="tab" aria-selected={mobilePane==="SCENES"} className={mobilePane==="SCENES"?"active":""} onClick={()=>setMobilePane("SCENES")}>Scenes & Assets</button>
+        <button role="tab" aria-selected={mobilePane==="CANVAS"} className={mobilePane==="CANVAS"?"active":""} onClick={()=>setMobilePane("CANVAS")}>9:16 Canvas</button>
+        <button role="tab" aria-selected={mobilePane==="INSPECTOR"} className={mobilePane==="INSPECTOR"?"active":""} onClick={()=>setMobilePane("INSPECTOR")}>Inspector</button>
+      </div>
       <div className="editor-panels">
         <section className="editor-left">
           <div className="panel-tabs">

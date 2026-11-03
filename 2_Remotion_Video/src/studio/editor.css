@@ -889,3 +889,115 @@ html[data-studio-theme="DARK"] .studio main > section.panel {
   border: 1px dashed var(--ed-border);
   border-radius: 6px;
 }
+
+
+/* =========================================================
+   UX-01 Studio V2 Responsive & Direct Manipulation Enhancements
+   ========================================================= */
+.inspector-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.inspector-label-row input[type="range"] {
+  width: 78px !important;
+  height: 14px;
+  flex-shrink: 0;
+}
+.editor-mobile-tabs {
+  display: none;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--ed-panel);
+  border-bottom: 1px solid var(--ed-border);
+}
+.editor-mobile-tabs button {
+  flex: 1;
+  font-size: 11px;
+  padding: 6px 8px;
+  font-weight: 600;
+}
+.editor-mobile-tabs button.active {
+  background: var(--ed-accent);
+  color: #fff;
+  border-color: var(--ed-accent);
+}
+
+@media (max-width: 1100px) {
+  .editor-panels {
+    grid-template-columns: 220px minmax(0, 1fr) 256px;
+  }
+  .studio.is-editor .editor-jobs {
+    position: static;
+    padding: 2px 12px;
+    background: var(--ed-panel);
+    border-bottom: 1px solid var(--ed-border);
+  }
+}
+
+@media (max-width: 900px) {
+  .studio.is-editor > main {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+  .is-editor main > header {
+    padding: 8px 12px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .is-editor main > nav {
+    height: auto;
+    padding: 4px 12px;
+    overflow-x: auto;
+    gap: 14px;
+  }
+  .pro-editor {
+    grid-template-areas:
+      "toolbar"
+      "mobtabs"
+      "message"
+      "panels"
+      "tracks";
+    grid-template-rows: auto auto auto minmax(0, 1fr) 176px;
+  }
+  .editor-toolbar {
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    gap: 8px;
+  }
+  .editor-toolbar strong {
+    max-width: 65vw;
+  }
+  .toolbar-buttons {
+    flex-wrap: wrap;
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .toolbar-buttons select {
+    width: auto;
+    min-width: 110px;
+  }
+  .editor-mobile-tabs {
+    grid-area: mobtabs;
+    display: flex;
+  }
+  .editor-panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pro-editor[data-mobile-pane="CANVAS"] .editor-left,
+  .pro-editor[data-mobile-pane="CANVAS"] .editor-inspector {
+    display: none;
+  }
+  .pro-editor[data-mobile-pane="SCENES"] .editor-center,
+  .pro-editor[data-mobile-pane="SCENES"] .editor-inspector {
+    display: none;
+  }
+  .pro-editor[data-mobile-pane="INSPECTOR"] .editor-left,
+  .pro-editor[data-mobile-pane="INSPECTOR"] .editor-center {
+    display: none;
+  }
+  .editor-left,
+  .editor-inspector {
+    border: 0;
+  }
+}

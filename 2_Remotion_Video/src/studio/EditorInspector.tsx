@@ -54,7 +54,7 @@ export function EditorInspector({
     step = 1,
   ) => (
     <label>
-      {label}
+      <span className="inspector-label-row"><span>{label}</span>{Number.isFinite(value) && max > min && (max - min <= 1920 || step < 1) && (<input aria-label={label + " slider"} type="range" min={min} max={max} step={step} value={Math.min(max, Math.max(min, value))} disabled={disabled} onChange={(e) => fn(Number(e.target.value))} />)}</span>
       <input
         aria-label={label}
         type="number"
