@@ -6,6 +6,7 @@ import { DataEngine } from './engine';
 import { DataStore } from './store';
 import { PublicCrawlerConsumer, crawlerRequest } from './crawler-consumer';
 import { crawlerInput } from './crawler-adapter';
+import { GoldShadowEngine } from './gold-shadow';
 import {
   discoveryUrl,
   checkDiscovery,
@@ -88,6 +89,28 @@ afterEach(async () => {
   }
 });
 describe('Legacy public crawler adapter — MOCK / SYNTHETIC TEST DATA', () => {
+  it('resumes after a shadow evaluation failure without re-fetch or duplicate post',async()=>{
+    const f=await fixture();
+    jest.spyOn(GoldShadowEngine.prototype,'evaluateImport').mockRejectedValueOnce(Error('SYNTHETIC shadow failure'));
+    const run=await f.collector.start(f.input);
+    expect(run.status).toBe('FAILED');
+    const restart=new PublicCrawlerConsumer(f.data,{scrapeForYouFeed:f.scrape},f.extract as any,'MOCK');
+    const resumed=await restart.resume(run.id);
+    expect(resumed.status).toBe('COMPLETED');
+    expect(f.extract).toHaveBeenCalledTimes(1);
+    expect((await f.data.catalog()).total).toBe(1);
+    expect((await restart.report(run.id)).quality.comparisons).toHaveLength(1);
+  });
+  it('supports one-click topic preset, validated limits and shadow output', async()=>{
+    const f=await fixture();
+    expect(()=>crawlerRequest({...f.input,limit:3})).toThrow('LIMIT');
+    expect(()=>crawlerRequest({...f.input,topic:'INVALID'})).toThrow('TOPIC');
+    const r=await f.collector.start({mode:'SEARCH',topic:'WORK',limit:1,requestId:'one-click'});
+    expect(r.input.keyword).toBe('chuyện đi làm');
+    expect(f.scrape).toHaveBeenCalledWith(1,expect.objectContaining({limit:1}));
+    expect((await f.collector.report(r.id)).quality.comparisons).toHaveLength(1);
+    expect((await f.collector.report(r.id)).quality.automaticAcceptance).toBe(false);
+  });
   it('does not import metadata fallback when the browser encounters an access challenge', async () => {
     const f = await fixture();
     const a = attempt();

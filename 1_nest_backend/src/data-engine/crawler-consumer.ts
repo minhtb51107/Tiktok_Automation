@@ -9,11 +9,15 @@ import {
   type SourceAttempt,
 } from '../studio/public-threads';
 import { crawlerInput } from './crawler-adapter';
+import { GoldShadowEngine } from './gold-shadow';
+import { DISCOVERY_TOPICS, topic, type DiscoveryTopic } from './gold-v2';
 export interface CrawlerRequest {
   mode: 'SEARCH' | 'FEED' | 'URLS';
   keyword?: string;
   urls?: string[];
   requestId: string;
+  limit?: number;
+  topic?: DiscoveryTopic;
 }
 export interface CrawlerRun {
   execution: 'LIVE' | 'MOCK';
@@ -35,6 +39,7 @@ export interface CrawlerRun {
     importRunId: string | null;
     done: boolean;
     captureHash: string;
+    shadowIds?: string[];
   }[];
   error: string | null;
   warnings: string[];
@@ -48,15 +53,19 @@ export function crawlerRequest(b: any): CrawlerRequest {
     !/^[A-Za-z0-9-]{1,100}$/.test(b.requestId)
   )
     throw Error('CRAWLER_INVALID_REQUEST');
+  if(b.limit !== undefined && (!Number.isInteger(b.limit)||b.limit<1||b.limit>2))throw Error('CRAWLER_INVALID_LIMIT');
+  const selected=topic(b.topic), options={...(b.limit!==undefined?{limit:b.limit}:{}),...(b.topic!==undefined?{topic:selected}:{})};
   if (b.mode === 'SEARCH') {
-    discoveryUrl('SEARCH', b.keyword);
+    const keyword=b.keyword ?? (selected!=='ALL'?DISCOVERY_TOPICS[selected].keyword:undefined);
+    discoveryUrl('SEARCH', keyword);
     return {
       mode: 'SEARCH',
-      keyword: b.keyword.trim(),
+      keyword: keyword.trim(),
       requestId: b.requestId,
+      ...options,
     };
   }
-  if (b.mode === 'FEED') return { mode: 'FEED', requestId: b.requestId };
+  if (b.mode === 'FEED') return { mode: 'FEED', requestId: b.requestId, ...options };
   if (!Array.isArray(b.urls) || !b.urls.length || b.urls.length > 2)
     throw Error('CRAWLER_INVALID_URLS');
   const urls = [
@@ -74,7 +83,8 @@ export function crawlerRequest(b: any): CrawlerRequest {
       }),
     ),
   ];
-  return { mode: 'URLS', urls, requestId: b.requestId };
+  if(b.limit!==undefined && urls.length>b.limit)throw Error('CRAWLER_URL_LIMIT_MISMATCH');
+  return { mode: 'URLS', urls, requestId: b.requestId,...options };
 }
 /** Explicit bounded run. No imports of Hunter/Prisma/AI/Discord or active timers. */
 export class PublicCrawlerConsumer {
@@ -177,12 +187,12 @@ export class PublicCrawlerConsumer {
         await this.save(r);
         const rows = await this.scraper.scrapeForYouFeed(1, {
           url: discoveryUrl(r.input.mode as 'SEARCH' | 'FEED', r.input.keyword),
-          limit: 2,
+          limit: r.input.limit ?? 2,
           timeoutMs: 20000,
         });
         r.urls = [...new Set<string>(rows.map((x) => threadsUrl(x.url)))].slice(
           0,
-          2,
+          r.input.limit ?? 2,
         );
         await this.save(r);
       }
@@ -242,6 +252,10 @@ export class PublicCrawlerConsumer {
             await this.save(r);
             if (imported.status !== 'COMPLETED')
               throw Error('CRAWLER_IMPORT_FAILED');
+            r.stage='GOLD_SHADOW';
+            await this.save(r);
+            capture.shadowIds=(await new GoldShadowEngine(this.data).evaluateImport(imported.id,r.input.topic)).map(s=>s.id);
+            await this.save(r);
           } else {
             r.warnings.push('UNRESOLVED_EXACT_TARGET: ' + capture.url);
             if (
@@ -285,7 +299,12 @@ export class PublicCrawlerConsumer {
       quarantine = 0;
     const states: Record<string, number> = {},
       reasons: Record<string, number> = {};
+    const shadow = new GoldShadowEngine(this.data), comparisons:any[]=[], buckets:Record<string,number>={};
     for (const c of r.captures) {
+      for(const id of c.shadowIds||[]) {
+        const s=await shadow.get(id); comparisons.push(s);
+        buckets[s.result.bucket]=(buckets[s.result.bucket]||0)+1;
+      }
       if (!c.importRunId) continue;
       const run = await this.data.store.read<DataRun>(
         'runs/' + c.importRunId + '.json',
@@ -326,6 +345,8 @@ export class PublicCrawlerConsumer {
       quarantine,
       newPosts,
       duplicates,
+      errors: r.captures.filter(c=>!c.input).length + (r.error?1:0),
+      quality: {buckets,comparisons,mode:'SHADOW',automaticAcceptance:false},
       states,
       reasons,
       elapsedMs: r.elapsedMs,
