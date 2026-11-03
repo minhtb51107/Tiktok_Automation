@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { ProductionBridge } from "./ProductionBridge";
+import { studioRequest } from "./integration-api";
+import { useState,useEffect } from "react";
 import type { StudioSession } from "../../../1_nest_backend/src/studio/studio.contracts";
 import type { StudioJob } from "../../../1_nest_backend/src/studio/progress";
 import type { RenderManifest } from "../../../1_nest_backend/src/studio/render.types";
@@ -61,6 +63,7 @@ export function ProductionQueueWorkspace({
   busy,
   onCancelJob,
   onOpenStep,
+  onOpenProject,
 }: {
   session: StudioSession | null;
   jobs: StudioJob[];
@@ -68,6 +71,7 @@ export function ProductionQueueWorkspace({
   busy: boolean;
   onCancelJob: (jobId: string) => void;
   onOpenStep: (step: string) => void;
+  onOpenProject:(project:string,step:string)=>Promise<void>;
 }) {
   const [zoneFilter, setZoneFilter] = useState<QueueZoneFilter>("ALL");
   const [stageFilter, setStageFilter] = useState<string>("ALL");
@@ -92,39 +96,14 @@ export function ProductionQueueWorkspace({
     ["QUEUED", "RUNNING"].includes(j.status),
   );
 
+  const [serverReadiness,setServerReadiness]=useState<any>(null);
+  useEffect(()=>{setServerReadiness(null);if(session)void studioRequest("/sessions/"+session.id+"/readiness").then(setServerReadiness).catch(()=>setServerReadiness(null));},[session?.id,session?.revision]);
   const selectedItems = (session?.items || []).filter((i) => i.selected);
-  const getLatestVoiceAsset = (itemId: string) =>
-    (session?.voiceAssets || [])
-      .filter((a) => a.itemId === itemId && a.status !== "STALE")
-      .slice(-1)[0] || null;
-
-  const scenesWithAudio = selectedItems.filter((item) =>
-    Boolean(getLatestVoiceAsset(item.id)),
-  );
-  const approvedSpokenScenes = selectedItems.filter(
-    (item) =>
-      Boolean(
-        item.spokenApproval?.valid &&
-          item.spokenApproval.revision === item.revision,
-      ),
-  );
-  const approvedVoiceScenes = selectedItems.filter((item) => {
-    const asset = getLatestVoiceAsset(item.id);
-    return Boolean(asset && asset.status === "APPROVED" && asset.approvedAt);
-  });
-  const productionApprovedScenes = selectedItems.filter((item) => {
-    const asset = getLatestVoiceAsset(item.id);
-    const voiceOk = Boolean(
-      asset && asset.status === "APPROVED" && asset.approvedAt,
-    );
-    const spokenOk = Boolean(
-      item.spokenApproval?.valid &&
-        item.spokenApproval.revision === item.revision,
-    );
-    const mappingOk = item.contentMapping?.status === "VERIFIED";
-    return voiceOk && spokenOk && mappingOk;
-  });
-
+  const getLatestVoiceAsset = (itemId:string) => (session?.voiceAssets||[]).find(a=>a.id===serverReadiness?.items.find((r:any)=>r.itemId===itemId)?.assetId)||null;
+  const scenesWithAudio=selectedItems.filter(i=>!!getLatestVoiceAsset(i.id));
+  const approvedSpokenScenes=selectedItems.filter(i=>serverReadiness?.items.find((r:any)=>r.itemId===i.id)?.script==='APPROVED');
+  const approvedVoiceScenes=selectedItems.filter(i=>serverReadiness?.items.find((r:any)=>r.itemId===i.id)?.voice==='APPROVED');
+  const productionApprovedScenes=selectedItems.filter(i=>serverReadiness?.items.find((r:any)=>r.itemId===i.id)?.productionApproved===true);
   const totalAudioSec = selectedItems.reduce((acc, item) => {
     const asset = getLatestVoiceAsset(item.id);
     return acc + (asset ? asset.durationMs / 1000 : 0);
@@ -146,6 +125,8 @@ export function ProductionQueueWorkspace({
       className="v2-workspace s2-queue-workspace"
       data-testid="production-queue-workspace"
     >
+      <ProductionBridge onOpen={onOpenProject}/>
+      {!serverReadiness&&<p role="status">Readiness not loaded from backend; no approval inferred.</p>}
       {/* Hero Banner with 3D Film Clapperboard Art & Primary Action */}
       <div className="s2-hero-banner s2-hero-queue">
         <div className="s2-hero-copy">

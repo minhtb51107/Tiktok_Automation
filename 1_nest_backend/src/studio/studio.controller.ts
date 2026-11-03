@@ -147,6 +147,7 @@ export class StudioController {
       path.resolve('../2_Remotion_Video/studio-dist/app.css'),
     );
   }
+  @Get('api/studio/sessions/:id/readiness') readiness(@Param('id') id:string){return this.studio.readiness(id);}
   @Get('api/studio/sessions') list() {
     return this.studio.list();
   }

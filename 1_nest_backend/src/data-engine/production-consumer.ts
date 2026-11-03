@@ -1,3 +1,4 @@
+import { sessionReadiness } from "../studio/session-readiness";
 import { DataEngine } from './engine';
 import { DATA_SCHEMA } from './contracts';
 import { hash } from './rules';
@@ -8,7 +9,7 @@ import type {
   ProductionSnapshot,
 } from './production-contracts';
 import { productionSession } from './production-adapter';
-import { textHash } from '../studio/kokoro-runtime';
+
 const key = (id: string) => 'production-jobs/' + id + '.json';
 function projectId(id: string) {
   return `${id.slice(0, 8)}-${id.slice(8, 12)}-5${id.slice(13, 16)}-8${id.slice(17, 20)}-${id.slice(20, 32)}`;
@@ -269,42 +270,7 @@ export class ProductionConsumer {
       sessionRevision: s.revision,
       studioUrl: j.studioUrl,
       scope: 'PROJECT_PREPARATION_ONLY',
-      items: s.items
-        .filter((i) => i.selected)
-        .map((i) => ({
-          itemId: i.id,
-          revision: i.revision,
-          script:
-            i.spokenApproval?.valid &&
-            i.spokenApproval.textHash === textHash(i.spokenText)
-              ? 'APPROVED'
-              : 'DRAFT',
-          voice: s.voiceAssets?.some(
-            (a) =>
-              a.itemId === i.id &&
-              a.spokenText === i.spokenText &&
-              a.textHash === textHash(i.spokenText) &&
-              Number.isFinite(a.durationMs) &&
-              a.durationMs > 0 &&
-              a.voice === i.voiceSettings?.voice &&
-              a.speed === i.voiceSettings?.speed &&
-              a.status === 'APPROVED',
-          )
-            ? 'APPROVED'
-            : s.voiceAssets?.some(
-                  (a) =>
-                    a.itemId === i.id &&
-                    a.spokenText === i.spokenText &&
-                    a.textHash === textHash(i.spokenText) &&
-                    Number.isFinite(a.durationMs) &&
-                    a.durationMs > 0 &&
-                    a.voice === i.voiceSettings?.voice &&
-                    a.speed === i.voiceSettings?.speed &&
-                    a.status === 'GENERATED',
-                )
-              ? 'DRAFT'
-              : 'MISSING',
-        })),
+      ...(await sessionReadiness(s)),
       renderMode: 'DRAFT_ONLY',
       qualityValidation: 'NOT_PERFORMED_BY_CONSUMER',
       publishingAllowed: false,

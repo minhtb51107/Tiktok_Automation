@@ -1,3 +1,4 @@
+import { sessionReadiness } from "./session-readiness";
 import {uploadSignature,probeUpload,validCategory} from './uploaded-media';
 import { replaceFile } from './atomic-file';
 import { normalizeSpokenNumbers, NUMBER_READING_VERSION } from './spoken-numbers';
@@ -55,6 +56,7 @@ export function threadsUrl(value: unknown): string {
 @Injectable()
 export class StudioService {
   readonly renders = new RenderStore();
+  async readiness(id:string){return sessionReadiness(await this.load(id),this.root); }
   async saveRights(id:string,body:any){return this.exclusive(async()=>{
     const s=await this.load(id);if(s.revision!==body.revision)throw new ConflictException('Session changed before rights declaration');
     if(typeof body.assetId!=='string'||body.assetId.length>160||!['UNKNOWN','OWNED','LICENSED','PERMISSION'].includes(body.status)||typeof body.evidence!=='string'||body.evidence.length>2000||body.status!=='UNKNOWN'&&!body.evidence.trim())throw new BadRequestException('Rights need an explicit status and evidence reference');

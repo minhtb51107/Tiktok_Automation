@@ -464,7 +464,9 @@ function App() {
     setStep(nextStep);
     if (nextStep === "Video Editor") {
       setArea("Video Studio");
-    } else if (["Dashboard", "Data Review", "Settings"].includes(area)) {
+    } else if (["Render","Publish"].includes(nextStep)) {
+      setArea("Production Queue");
+    } else {
       setArea("Discovery");
     }
   };
@@ -886,6 +888,7 @@ function App() {
               }).then(() => setNotice("Đã gửi yêu cầu hủy tác vụ."));
             }}
             onOpenStep={navigateStep}
+            onOpenProject={async(project,step)=>{if(!canLeave())return;const s=await api<StudioSession>("/"+project);accept(s);await refresh();setStep(step);setArea(step==="Video Editor"?"Video Studio":"Discovery");}}
           />
         ) : step === "Script" && session ? (
           <ScriptWorkspace

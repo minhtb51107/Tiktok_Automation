@@ -59,3 +59,19 @@
 - Backend/frontend TypeScript and Studio bundle PASS. Contract/crawler regression:
   2 suites / 15 tests PASS. Browser workflow acceptance is pending checkpoint 6;
   no LIVE collection, AI, TTS or render was triggered by this checkpoint.
+
+## Checkpoint 5 — DATA-03 and authoritative readiness
+
+- Added Ready Queue / Production Jobs inside the Antigravity production workspace.
+  Create uses the queued evaluation's IDs/revision and a persistent requestId;
+  explicit retry uses the existing resume endpoint. No implicit ACCEPT/enqueue.
+- Job success opens the actual materialized session. Queue → Script/Voice/Editor
+  navigation no longer stays trapped in the Queue router branch.
+- Added backend session readiness, shared with DATA-03 readiness: checks item
+  revision, text/hash, voice/speed, number-reading version and session-owned audio
+  file. Existing UI consumes authoritative asset IDs/approval states. No FINAL or
+  publishing approval is inferred. Global catalog actions cannot open/edit an
+  unrelated current session.
+- Backend build and frontend TypeScript PASS; focused regression 4 suites / 28
+  tests PASS (including stale audio and DATA-03 idempotency/recovery). All executed
+  sequentially. Browser/save/reopen acceptance remains pending checkpoint 6.

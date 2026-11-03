@@ -539,6 +539,7 @@ export function DataReviewWorkspace({
             <button
               type="button"
               className="s2-btn-primary"
+              disabled={!activeItem?.sessionItemId}
               onClick={() => onNavigateStep("Script")}
             >
               Sang bước Chuẩn hóa Kịch bản →
