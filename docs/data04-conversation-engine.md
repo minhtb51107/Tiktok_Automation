@@ -1,0 +1,40 @@
+# DATA-04 — Conversation discovery, evidence and shadow quality
+
+## A — Read-only audit (2026-11-05)
+
+Base `35179ea`, dedicated branch/worktree `codex/data04-conversation-quality`.
+All three prior worktrees were clean and remain untouched. Production baseline:
+933 readable runtime files, no locked files; private manifest hash
+`4897b40301b9452182147d1ea35d5c91c9867ffa47701d525f6ef65e890227e8`.
+
+| Existing component | Confirmed source behavior | Reuse / limitation |
+|---|---|---|
+| `ScraperService.scrapeThreadsUrl:10` | Drops query; scrolls four times; first card becomes post, remainder comments | Do not reuse this parser as verified replies |
+| Same file `:117` | Same-author/DOM-order/previous-author heuristics infer replyTo; 40-char prefix dedup; placeholder avatar/time | Unsafe relationship/identity and missing-data inference |
+| `scrapeForYouFeed:158` / `public-discovery.ts` | Controlled public navigation, installed browser, URL allowlist, small budgets; returns first permalinks | Reuse lifecycle/budgeting; order is not HOT ranking |
+| `extractPublicThreads:355` | Exact target by unique permalink, labelled controls, time and topic evidence | Reuse exact-post extraction; compact counts may be approximate |
+| `public-threads.ts:426` | Context stores own URL/text/author, UNKNOWN type and null parent; explicit unverified relationship | Context is persisted in crawler attempts/session, not verified reply Bronze |
+| `crawler-consumer.ts` | Exact root import, checkpoint, Gold V1/V2 shadow | No verified reply collector or relationship graph |
+| `crawler-adapter.ts` | Preserves identity evidence/raw fields; no parent invention | Reuse post projection |
+| Gold V1/V2 | Single-post lexical/content/context/engagement rules | Retain unchanged; no conversation quality or verified reply sample |
+| Studio | Global catalog review and on-demand discovery; Gold feedback separate from production | Extend existing panels, not replace them |
+| DATA-03 `production-adapter.ts` | One pinned reviewed source → one initial scene | Source bundle must preserve reply identities; no automatic multi-source handoff |
+
+Reply permalink is sometimes observed in context. Parent/nested hierarchy is **not
+verified** by current extraction. Visible counts, time elements and labelled
+controls are observations; positional numbers, same author, DOM proximity, absent
+time defaults and handle-only parent are not evidence of a reply relationship.
+
+The new strict reader may accept an explicit public structured relationship,
+never card proximity. Schema.org defines [Comment.parentItem](https://schema.org/parentItem)
+and [CreativeWork.comment](https://schema.org/comment) as parent/comment relationships.
+This establishes parser semantics, **not that Threads currently exposes them**.
+Whether public Threads pages expose sufficient relationship evidence remains a
+LIVE pilot question. No Threads page/API was fetched in checkpoint A.
+
+Production remains THREADS SERIOUS. FUNNY/Compilation/Lyrics are not reactivated.
+
+## Checkpoint status
+
+- A: source audit PASS; historical live reply hierarchy NOT VERIFIED.
+- B–G: pending. No LIVE pilot authorized or executed.
