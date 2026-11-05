@@ -38,3 +38,7 @@ Production remains THREADS SERIOUS. FUNNY/Compilation/Lyrics are not reactivated
 
 - A: source audit PASS; historical live reply hierarchy NOT VERIFIED.
 - B–G: pending. No LIVE pilot authorized or executed.
+
+## B — Popularity foundation
+
+Versioned multi-signal scorer and comparable-evidence ranking are implemented. Missing values stay null; velocity requires two consistent observations. Sparse candidates preserve observed order and report PARTIAL. Synthetic regression: 3 tests PASS. Public observation adapter is completed with collector checkpoint C. No HOT or viral prediction is claimed.
