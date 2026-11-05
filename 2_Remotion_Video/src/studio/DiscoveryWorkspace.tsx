@@ -1,3 +1,4 @@
+import {ConversationPanel} from './ConversationPanel';
 import { ControlledDiscovery } from "./ControlledDiscovery";
 import { useEffect, useState, useRef } from "react";
 import type {
@@ -384,7 +385,7 @@ export function DiscoveryWorkspace({
 
   if (!session) {
     return (
-      <section className="v2-workspace s2-discovery-workspace"><ControlledDiscovery onRefresh={onRefreshData01} onReview={()=>onNavigateArea("data-review")}/>
+      <section className="v2-workspace s2-discovery-workspace"><ConversationPanel/><ControlledDiscovery onRefresh={onRefreshData01} onReview={()=>onNavigateArea("data-review")}/>
         <div className="s2-empty-hero">
           <span className="hero-icon">✦</span>
           <h2>Bắt đầu câu chuyện mới từ Threads</h2>
@@ -424,7 +425,7 @@ export function DiscoveryWorkspace({
       aria-label="Khám phá và thu thập nguồn bài Threads"
       data-testid="discovery-workspace"
     >
-      <ControlledDiscovery onRefresh={onRefreshData01} onReview={()=>onNavigateArea("data-review")}/>
+      <ConversationPanel/><ControlledDiscovery onRefresh={onRefreshData01} onReview={()=>onNavigateArea("data-review")}/>
       {/* Hero Header with 3-Step Visual Guide & Primary Action */}
       <div className="s2-hero-banner s2-hero-discovery">
         <div className="s2-hero-copy">

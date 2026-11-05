@@ -1,3 +1,4 @@
+import {ConversationPanel} from './ConversationPanel';
 import { targetType, reviewPayload, isUserAccepted, type TargetType } from "../../../1_nest_backend/src/data-engine/studio-integration";
 import { useEffect, useMemo, useState } from "react";
 import type { StudioSession } from "../../../1_nest_backend/src/studio/studio.contracts";
@@ -484,6 +485,7 @@ export function DataReviewWorkspace({
       aria-label="Duyệt nội dung Threads"
       data-testid="data-review-workspace"
     >
+      <ConversationPanel sourceUrl={activeDetail?.bronze?.sourceUrl}/>
       {/* Hero Banner with 3D-styled Illustration & One Clear Primary CTA */}
       <div className="s2-hero-banner s2-hero-review">
         <div className="s2-hero-copy">
