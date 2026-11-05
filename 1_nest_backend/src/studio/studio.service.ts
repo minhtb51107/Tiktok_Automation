@@ -662,7 +662,7 @@ export class StudioService {
   async approveEditorialScript(id:string,body:any){return this.exclusive(async()=>{
     const s=await this.load(id);if(s.revision!==body?.revision)throw new ConflictException('STALE_REVISION');
     if(!s.project.editorialPlan||body.confirmUserReview!==true||typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>1000)throw new BadRequestException('EDITORIAL_USER_REVIEW_REQUIRED');
-    const selected=s.items.filter(i=>i.selected);if(!selected.some(i=>i.editorial?.stage==='DISCUSSION')||!selected.some(i=>i.editorial?.kind==='COMMENTARY')||selected.some(i=>!i.spokenText.trim()))throw new BadRequestException('EDITORIAL_SCRIPT_INCOMPLETE');
+    const selected=s.items.filter(i=>i.selected);if(!selected.some(i=>i.editorial?.stage==='CONTEXT'&&i.sourceReference.entityId===s.project.editorialPlan!.bundle.collection.root.id)||!selected.some(i=>i.editorial?.stage==='DISCUSSION')||!selected.some(i=>i.editorial?.kind==='COMMENTARY')||selected.some(i=>!i.spokenText.trim()))throw new BadRequestException('EDITORIAL_SCRIPT_INCOMPLETE');
     const approval={scriptHash:editorialScriptHash(s),reason:body.reason.trim(),approvedAt:new Date().toISOString(),sessionRevision:s.revision};
     s.project.editorialApproval={...approval,status:'APPROVED'};s.project.editorialApprovalHistory=[...(s.project.editorialApprovalHistory||[]),approval];return this.persist(s);
   });}

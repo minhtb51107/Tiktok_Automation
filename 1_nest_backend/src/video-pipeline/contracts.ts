@@ -1,6 +1,6 @@
 export const VIDEO_PIPELINE_CONTRACT_VERSION = '1.0' as const;
 export interface ProductionOrigin {
-  conversation?:{collectionId:string;planId:string;planRevision:number;bundleHash:string;selectionRevision:number;selectedReplyIds:string[]};
+  conversation?:{collectionId:string;planId:string;planRevision:number;bundleHash:string;selectionRevision:number;selectedReplyIds:string[];sourceProvenance?:'REAL'|'SYNTHETIC'|'UNKNOWN'};
   jobId:string;postId:string;bronzeId:string;silverId:string;evaluationId:string;
   evaluationRevision:number;queueId:string;snapshotHash:string;mode:'DRAFT_ONLY';
 }

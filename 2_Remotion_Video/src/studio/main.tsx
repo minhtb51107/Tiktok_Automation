@@ -1,3 +1,4 @@
+import {studioRequest} from './integration-api';
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type {
@@ -894,6 +895,7 @@ function App() {
           />
         ) : step === "Script" && session ? (
           <ScriptWorkspace
+            approveEditorial={(revision,reason)=>void run(async()=>accept(await studioRequest<StudioSession>('/data/editorial/sessions/'+session!.id+'/approve-script',{revision,confirmUserReview:true,reason})))}
             session={session}
             busy={busy}
             dirty={dirty}

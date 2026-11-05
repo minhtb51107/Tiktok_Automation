@@ -28,7 +28,9 @@ export function validateRenderRequest(body: RenderRequest, props: VideoPreviewPr
 }
 export function renderValidation(s: StudioSession, props: VideoPreviewProps) {
   const warnings: string[] = [], blockers: string[] = [], finalBlockers: string[] = [];
-  if(s.project.editorialPlan){
+  if(s.project?.editorialPlan){
+    const plan=s.project.editorialPlan;
+    if(!props.timeline.scenes.some(t=>t.scene.editorial?.stage==='CONTEXT'&&t.scene.sourceReferences.some(r=>r.entityType==='POST'&&r.entityId===plan.bundle.collection.root.id))||!props.timeline.scenes.some(t=>t.scene.sourceReferences.some(r=>r.entityType==='COMMENT'&&plan.selectedReplyIds.includes(r.entityId))))finalBlockers.push('DATA05_CONVERSATION_SOURCE_MISSING');
     const duration=measuredDuration(props.timeline,props.audioAssets);
     if(duration.source!=='MEASURED'||!duration.durationGatePassed)finalBlockers.push('DATA05_'+duration.status+': measured narration and timeline must exceed 60 seconds');
     if(s.project.editorialApproval?.status!=='APPROVED'||s.project.editorialApproval.scriptHash!==editorialScriptHash(s))finalBlockers.push('DATA05_SCRIPT_REVIEW_REQUIRED');

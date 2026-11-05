@@ -1,3 +1,4 @@
+import {EditorialPanel} from './EditorialPanel';
 import { useEffect, useRef, useState } from "react";
 import type {
   ConversationRun,
@@ -390,7 +391,8 @@ export function ConversationPanel({
                     {JSON.stringify({ quality, evidence: r.evidence }, null, 2)}
                   </pre>
                 </details>
-              </article>
+              <EditorialPanel collectionId={collectionId} selectionRevision={view!.review.revision}/>
+        </article>
             );
           })}
           <details>

@@ -1,3 +1,4 @@
+import {EditorialDurationPanel} from './EditorialDurationPanel';
 import { useState } from "react";
 import type {
   StudioSession,
@@ -34,6 +35,7 @@ function TextDifferences({ before, after }: { before: string; after: string }) {
 }
 export function ScriptWorkspace({
   session,
+  approveEditorial,
   edit,
   save,
   propose,
@@ -43,6 +45,7 @@ export function ScriptWorkspace({
   dirty,
 }: {
   session: StudioSession;
+  approveEditorial?:(revision:number,reason:string)=>void;
   edit: (id: string, p: Partial<StudioItem>) => void;
   save: () => void;
   propose: (id: string, mode?: "LIVE" | "OFFLINE") => void;
@@ -76,6 +79,7 @@ export function ScriptWorkspace({
           </button>
         </div>
       </section>
+      <EditorialDurationPanel session={session} busy={busy||dirty} onApprove={approveEditorial}/>
       <StageReportPanel
         id={session.id}
         revision={session.revision}
@@ -115,6 +119,7 @@ export function ScriptWorkspace({
                   {item.manualLocks.join(", ") || "none"}
                 </small>
               </div>
+              {item.editorial&&<p data-testid="script-editorial-role">{item.editorial.stage} · {item.editorial.kind} · parent {item.editorial.parentId||'root/editorial'} {item.editorial.permalink&&<a href={item.editorial.permalink} target="_blank" rel="noreferrer">Source</a>}</p>}
               <label>Original text · read only</label>
               <blockquote>{item.originalText}</blockquote>
               <div className="edit-grid">

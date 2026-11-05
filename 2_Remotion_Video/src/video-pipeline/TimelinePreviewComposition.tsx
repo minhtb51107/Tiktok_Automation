@@ -1,3 +1,4 @@
+import {cardPages,normalizeVisual} from '../../../1_nest_backend/src/video-pipeline/scene-visual';
 import {frameRange} from '../../../1_nest_backend/src/video-pipeline/editing';
 import { ContinuousBackground } from "./ContinuousBackground";
 import { ThreadsVisual } from "./ThreadsVisual";
@@ -26,8 +27,12 @@ const SceneCard: React.FC<{
   background?: MediaAsset;
   transparent?: boolean;
   mediaAssets: MediaAsset[];
-}> = ({ item, style, background, mediaAssets, transparent }) =>
-  item.scene.threadsCard ? (
+}> = ({ item, style, background, mediaAssets, transparent }) => {
+  const frame=useCurrentFrame();
+  const visual=normalizeVisual(item.scene.visual),editorial=item.scene.editorial?.kind==='COMMENTARY';
+  const pages=editorial?cardPages(item.scene.displayText,visual,0).pages:[item.scene.displayText];
+  const page=Math.min(pages.length-1,Math.floor(Math.max(0,frame)/Math.max(1,item.durationInFrames)*pages.length));
+  return item.scene.threadsCard ? (
     <ThreadsVisual
       item={item}
       transparent={transparent}
@@ -38,7 +43,7 @@ const SceneCard: React.FC<{
     <AbsoluteFill
       style={{
         alignItems: "center",
-        backgroundColor: style === "FUNNY" ? "#111111" : "#172033",
+        backgroundColor: editorial && transparent ? "transparent" : style === "FUNNY" ? "#111111" : "#172033",
         color: "#ffffff",
         display: "flex",
         fontFamily: "Arial, sans-serif",
@@ -64,14 +69,16 @@ const SceneCard: React.FC<{
           background: "rgba(9, 14, 24, 0.78)",
           border: "2px solid rgba(255, 255, 255, 0.18)",
           borderRadius: 36,
-          fontSize: 54,
-          lineHeight: 1.3,
-          maxWidth: 880,
-          padding: 52,
-          position: "relative",
+          fontSize: editorial ? visual.card.fontSize*visual.card.scale : 54,
+          lineHeight: editorial ? visual.card.lineHeight : 1.3,
+          maxWidth: editorial ? undefined : 880,
+          ...(editorial?{position:"absolute" as const,left:visual.card.x,top:visual.card.y,width:visual.card.width*visual.card.scale,boxSizing:"border-box" as const,whiteSpace:"pre-wrap" as const,overflowWrap:"break-word" as const}:{}),
+          padding: editorial ? visual.card.padding*visual.card.scale : 52,
+          position: editorial ? "absolute" : "relative",
         }}
       >
-        {item.scene.displayText}
+        {editorial&&<small style={{display:"block",fontSize:26,marginBottom:20}}>Bình luận biên tập · không phải trích dẫn</small>}
+        {pages[page]}
       </div>
       {mediaAssets
         .filter((asset) => asset.kind !== "BACKGROUND")
@@ -108,6 +115,7 @@ const SceneCard: React.FC<{
         )}
     </AbsoluteFill>
   );
+};
 
 const TimelinePreviewComposition: React.FC<
   VideoPreviewProps & { expectedStyle: ContentStyle }

@@ -180,6 +180,7 @@ export const ThreadsVisual: React.FC<{
               }}
             >
               <strong style={{fontWeight:600}}>{card.handle || card.author}</strong>
+              {item.scene.editorial?.kind==='PARAPHRASE'&&<small style={{fontSize:20}}> · Diễn giải của biên tập</small>}
               {card.topic && (
                 <>
                   <span style={{ color: palette.muted }}>›</span>
