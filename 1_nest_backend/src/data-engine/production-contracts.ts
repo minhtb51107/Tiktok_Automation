@@ -1,6 +1,7 @@
 import type { Bronze, Evaluation, DATA_SCHEMA } from './contracts';
 import type { DataEngine } from './engine';
 export type ProductionSnapshot = {
+  editorial?: import('./editorial-contracts').EditorialSnapshot;
   bronze: Bronze;
   evaluation: Evaluation;
   input: Awaited<ReturnType<DataEngine['productionInput']>>;

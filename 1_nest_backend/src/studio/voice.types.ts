@@ -10,6 +10,7 @@ export interface SpokenApproval {
   valid: boolean;
 }
 export interface VoiceAsset {
+  durationEvidence?:'FFPROBE'|'SYNTHETIC_FIXTURE';
   ttsInputText?: string;
   ttsInputHash?: string;
   numberReadingVersion?: string;

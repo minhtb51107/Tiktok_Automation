@@ -62,7 +62,7 @@ export function buildStudioPreview(
         role: 'NARRATION',
         uri: audio.uri,
         durationMs: audio.durationMs,
-        durationSource: 'MEASURED',
+        durationSource: audio.durationEvidence==='SYNTHETIC_FIXTURE'?'FIXTURE':'MEASURED',
         availability: 'AVAILABLE',
         approvalStatus: audio.status === 'APPROVED' ? 'APPROVED' : 'PENDING',
         voice: { provider: 'KOKORO', voiceId: audio.voice, language: 'vi' },
@@ -86,6 +86,7 @@ export function buildStudioPreview(
     }));
     project.mediaAssets.push(...sourceMedia);
     const scene: StoryboardScene = {
+      ...(i.editorial?{editorial:{kind:i.editorial.kind,stage:i.editorial.stage}}:{}),
       visual: {
         ...normalizeVisual(x.visual),
         backgroundId: x.visual?.backgroundId || s.editor?.backgroundId || null,
@@ -130,7 +131,7 @@ export function buildStudioPreview(
       styleProperties: {
         style: 'SERIOUS',
         template: 'STORY_CARD',
-        cardMode: i.sourceReference.entityType === 'POST' ? 'POST' : 'COMMENT',
+        cardMode: i.editorial?.kind==='COMMENTARY'?'NARRATION':i.sourceReference.entityType === 'POST' ? 'POST' : 'COMMENT',
         tone: 'REFLECTIVE',
       },
       manualOverride: {
@@ -174,6 +175,7 @@ export function buildStudioPreview(
         ),
       },
     };
+    if(i.editorial?.kind==='COMMENTARY')delete scene.threadsCard;
     const pages = cardPages(
       scene.displayText,
       scene.visual!,

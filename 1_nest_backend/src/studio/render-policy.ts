@@ -6,6 +6,8 @@ import type { RenderRequest } from './render.types';
 import { textHash } from './kokoro-runtime';
 import { spokenAmbiguities } from './voice-settings';
 import { fitBackground } from '../video-pipeline/editing';
+import {measuredDuration} from '../data-engine/editorial-feasibility';
+import {editorialScriptHash} from '../data-engine/editorial-script-state';
 export function renderBackground(props:VideoPreviewProps,mode:'SAVED'|'FIT'|'LOOP'='SAVED'):VideoPreviewProps {
   if(!['SAVED','FIT','LOOP'].includes(mode))throw new BadRequestException('Invalid background mode');
   if(mode==='SAVED')return props;
@@ -26,6 +28,11 @@ export function validateRenderRequest(body: RenderRequest, props: VideoPreviewPr
 }
 export function renderValidation(s: StudioSession, props: VideoPreviewProps) {
   const warnings: string[] = [], blockers: string[] = [], finalBlockers: string[] = [];
+  if(s.project.editorialPlan){
+    const duration=measuredDuration(props.timeline,props.audioAssets);
+    if(duration.source!=='MEASURED'||!duration.durationGatePassed)finalBlockers.push('DATA05_'+duration.status+': measured narration and timeline must exceed 60 seconds');
+    if(s.project.editorialApproval?.status!=='APPROVED'||s.project.editorialApproval.scriptHash!==editorialScriptHash(s))finalBlockers.push('DATA05_SCRIPT_REVIEW_REQUIRED');
+  }
   if(s.productionOrigin?.mode==='DRAFT_ONLY')finalBlockers.push('DATA03_DRAFT_ONLY_PROJECT: production preparation is not FINAL approval');
   for (const t of props.timeline.scenes) {
     const item = s.items.find(i=>i.id===t.scene.id && i.selected);

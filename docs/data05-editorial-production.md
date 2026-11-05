@@ -26,3 +26,17 @@ Boundary contract tests cover 59/60/61s, fixture versus measured, and padding th
 - Recovery/audit and DATA-05A feasibility contract: 7 synthetic unit tests PASS.
 - Planning, handoff, UI and final regression: pending.
 - LIVE collection / live narration / real >60s video acceptance: NOT RUN.
+
+## DATA-05B/D — Planner and DATA-03 extension
+
+Deterministic planner stores a hash-pinned immutable source bundle, ordered verified reply IDs, source/parent/permalink references and independent editorial selection. Quotes cannot be changed without PARAPHRASE labeling. Hook/commentary/resolution remain empty until manually written. Per-section locks and plan revision conflicts are enforced. Human quality labels remain separate from original heuristic scores. Missing quality returns UNKNOWN.
+
+The existing ProductionConsumer now accepts a server-validated optional editorial snapshot. DATA-01 ACCEPT + QUEUED + confirmed POST, current Bronze body/identity, revision and explicit draft creation remain mandatory. Existing root-only behavior is preserved; a second job for the same queued source is blocked. Resume revalidates the pinned plan/selection and never overwrites an existing session. Script/audio/rights are not auto-approved. Targeted actual Studio/atomic store tests: 17 DATA05 + 10 DATA03 tests PASS.
+
+Manual script approval is a separate operation and becomes STALE when script content changes. Voice and rights remain independent. DATA05 FINAL validation requires actual measured narration/timeline >60s plus script review; fixture duration cannot satisfy FINAL.
+
+## DATA-05C — Duration evidence
+
+Generated local synthetic tone WAV fixtures (not speech, no TTS): FFprobe durations 14, 18, 16, 25 and 8 seconds; total 81 seconds. Marked SYNTHETIC_FIXTURE in voice manifests and FIXTURE in AudioAssets. They test timing contracts only and cannot establish meaningful narration or LIVE TTS success. Muted/trimmed voice does not count its full manifest duration. Before TTS the estimate stays advisory; a duration-only pass never grants releaseReady.
+
+LIVE pilot CLI has an absent-target/approval/resource gate, one explicit canonical target, isolated store and no retry. Running it without a URL returned BLOCKED_TARGET / exit 2 without collection. It has not run LIVE.

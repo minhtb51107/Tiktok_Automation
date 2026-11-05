@@ -1,4 +1,5 @@
 import { sessionReadiness } from "./session-readiness";
+import {editorialScriptHash} from '../data-engine/editorial-script-state';
 import {uploadSignature,probeUpload,validCategory} from './uploaded-media';
 import { replaceFile } from './atomic-file';
 import { normalizeSpokenNumbers, NUMBER_READING_VERSION } from './spoken-numbers';
@@ -519,6 +520,7 @@ export class StudioService {
     return rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
   private async persist(s: StudioSession) {
+    if(s.project.editorialApproval&&s.project.editorialApproval.scriptHash!==editorialScriptHash(s))s.project.editorialApproval.status='STALE';
     for (const item of s.items) {
       if (
         item.spokenApproval &&
@@ -570,7 +572,7 @@ export class StudioService {
             role: 'NARRATION' as const,
             uri: a.uri,
             durationMs: a.durationMs,
-            durationSource: 'MEASURED' as const,
+            durationSource: a.durationEvidence==='SYNTHETIC_FIXTURE'?'FIXTURE' as const:'MEASURED' as const,
             availability: 'AVAILABLE' as const,
             approvalStatus:
               a.status === 'APPROVED'
@@ -657,6 +659,13 @@ export class StudioService {
     );
   }
   /** Idempotent DATA-03 materialization. Never overwrites an existing session. */
+  async approveEditorialScript(id:string,body:any){return this.exclusive(async()=>{
+    const s=await this.load(id);if(s.revision!==body?.revision)throw new ConflictException('STALE_REVISION');
+    if(!s.project.editorialPlan||body.confirmUserReview!==true||typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>1000)throw new BadRequestException('EDITORIAL_USER_REVIEW_REQUIRED');
+    const selected=s.items.filter(i=>i.selected);if(!selected.some(i=>i.editorial?.stage==='DISCUSSION')||!selected.some(i=>i.editorial?.kind==='COMMENTARY')||selected.some(i=>!i.spokenText.trim()))throw new BadRequestException('EDITORIAL_SCRIPT_INCOMPLETE');
+    const approval={scriptHash:editorialScriptHash(s),reason:body.reason.trim(),approvedAt:new Date().toISOString(),sessionRevision:s.revision};
+    s.project.editorialApproval={...approval,status:'APPROVED'};s.project.editorialApprovalHistory=[...(s.project.editorialApprovalHistory||[]),approval];return this.persist(s);
+  });}
   async ensureProductionSession(seed: StudioSession) {
     return this.exclusive(async()=>{
       if(!seed.productionOrigin||seed.project.style!=='SERIOUS'||seed.project.id!==seed.id||JSON.stringify(seed.project.productionOrigin)!==JSON.stringify(seed.productionOrigin))throw new BadRequestException('Invalid production seed');
@@ -938,6 +947,7 @@ export class StudioService {
             selected: patch.selected,
             displayText: patch.displayText,
             spokenText: patch.spokenText,
+            ...(original.editorial?{editorial:{...original.editorial,kind:original.editorial.kind==='QUOTE'&&(patch.spokenText!==original.originalText||patch.displayText!==original.originalText)?'PARAPHRASE' as const:original.editorial.kind}}:{}),
             revision: original.revision + (changed ? 1 : 0),
             manualLocks: [
               ...new Set([

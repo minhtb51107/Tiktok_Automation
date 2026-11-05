@@ -9,6 +9,9 @@ import type {
   ProductionSnapshot,
 } from './production-contracts';
 import { productionSession } from './production-adapter';
+import {selectedReplies} from './editorial-feasibility';
+import type {EditorialSnapshot,EditorialPlan} from './editorial-contracts';
+import type {ConversationReview} from './conversation-contracts';
 
 const key = (id: string) => 'production-jobs/' + id + '.json';
 function projectId(id: string) {
@@ -77,6 +80,7 @@ export class ProductionConsumer {
   async ready(page = 0) {
     if (!Number.isSafeInteger(page) || page < 0) throw Error('Invalid page');
     const rows: any[] = [];
+    const jobs=await this.list();
     let total = 0;
     for await (const p of this.data.store.rows<any>('posts')) {
       const { evaluation: e } = await this.data.detail(p.id);
@@ -110,7 +114,7 @@ export class ProductionConsumer {
         evaluationId: e.id,
         queueId: e.queue.id,
       });
-      const prior = await this.data.store.read<ProductionJob>(key(id));
+      const prior = jobs.find(j=>j.request.postId===p.id&&j.request.queueId===e.queue!.id&&j.status==='SUCCEEDED') || jobs.find(j=>j.request.postId===p.id&&j.request.queueId===e.queue!.id) || await this.data.store.read<ProductionJob>(key(id));
       if (prior?.status === 'SUCCEEDED') continue;
       if (total++ < page * 25 || rows.length >= 25) continue;
       rows.push({
@@ -129,22 +133,25 @@ export class ProductionConsumer {
     }
     return { page, pageSize: 25, total, rows };
   }
-  async start(body: any) {
+  async start(body: any, editorial?:EditorialSnapshot) {
     return this.serial(async () => {
       const input = request(body),
         id = hash({
           postId: input.postId,
           evaluationId: input.evaluationId,
           queueId: input.queueId,
+          ...(editorial?{editorialHash:hash(editorial)}:{}),
         });
       for await (const existing of this.data.store.rows<ProductionJob>(
         'production-jobs',
-      ))
+      )) {
+        if(existing.request.postId===input.postId&&existing.request.queueId===input.queueId&&existing.id!==id)throw Error('PRODUCTION_EXISTING_PROJECT');
         if (
           existing.requestIds.includes(input.requestId) &&
           (existing.id !== id || existing.request.revision !== input.revision)
         )
           throw Error('IDEMPOTENCY_CONFLICT');
+      }
       const existing = await this.data.store.read<ProductionJob>(key(id));
       if (existing) {
         if (existing.request.revision !== input.revision)
@@ -162,6 +169,7 @@ export class ProductionConsumer {
         input.queueId,
         input.revision,
         async (snapshot) => {
+          if(editorial){if(snapshot.input.candidate.sourceReferences[0].entityType!=='POST'||snapshot.bronze.originalBody!==editorial.plan.bundle.collection.root.originalText)throw Error('PRODUCTION_EDITORIAL_ROOT_MISMATCH');await this.validateEditorial(editorial,snapshot.bronze.id);snapshot={...snapshot,editorial} as ProductionSnapshot;}
           const at = this.clock(),
             project = projectId(id);
           const job: ProductionJob = {
@@ -189,7 +197,7 @@ export class ProductionConsumer {
                   'Explicit creation from ACCEPT review and queued snapshot',
               },
             ],
-            studioUrl: '/studio?session=' + project,
+            studioUrl: '/studio?session=' + project+(editorial?'&area=Discovery&step=Script':''),
             mode: 'DRAFT_ONLY',
             publishingAllowed: false,
           };
@@ -226,7 +234,8 @@ export class ProductionConsumer {
         j.request.queueId,
         j.request.revision,
         async (snapshot) => {
-          if (hash(snapshot) !== j.snapshotHash)
+          if(j.snapshot.editorial)await this.validateEditorial(j.snapshot.editorial,snapshot.bronze.id);
+          if (hash({...snapshot,...(j.snapshot.editorial?{editorial:j.snapshot.editorial}:{})}) !== j.snapshotHash)
             throw Error('PRODUCTION_SNAPSHOT_MISMATCH');
           await this.move(
             j,
@@ -275,5 +284,13 @@ export class ProductionConsumer {
       qualityValidation: 'NOT_PERFORMED_BY_CONSUMER',
       publishingAllowed: false,
     };
+  }
+  private async validateEditorial(snapshot:EditorialSnapshot,bronzeId:string){
+    const p=snapshot.plan;
+    if(hash(p)!==snapshot.planHash||hash(p.bundle)!==p.bundleHash||p.bundle.sourceLink?.bronzeId!==bronzeId||p.scriptStatus!=='DRAFT'||p.editorialSelectionConfirmed!==true)throw Error('PRODUCTION_EDITORIAL_INTEGRITY');
+    selectedReplies(p.bundle.collection,p.selectedReplyIds);
+    const current=await this.data.store.read<EditorialPlan>('editorial-plans/'+p.id+'.json');
+    const review=await this.data.store.read<ConversationReview>('conversation-feedback/'+p.collectionId+'.json');
+    if(!current||hash(current)!==snapshot.planHash||review?.revision!==p.selectionRevision||hash(review.selectedReplyIds)!==hash(p.selectedReplyIds))throw Error('PRODUCTION_EDITORIAL_STALE');
   }
 }

@@ -3,6 +3,7 @@ import type { StudioSession } from '../studio/studio.contracts';
 import type { PublicRecord } from '../studio/public-types';
 import { editorSettings } from '../video-pipeline/editor-state';
 import { VOICE_SPEED } from '../studio/voice-settings';
+import {editorialSession} from './editorial-adapter';
 /** Pure saved-data projection. No network, AI, inference, render or approval. */
 export function productionSession(job: ProductionJob): StudioSession {
   const { bronze: b, evaluation: e, input } = job.snapshot;
@@ -206,5 +207,5 @@ export function productionSession(job: ProductionJob): StudioSession {
       mediaAssetIds: [],
     });
   s.editor = editorSettings(s);
-  return s;
+  return job.snapshot.editorial?editorialSession(s,job.snapshot.editorial.plan):s;
 }

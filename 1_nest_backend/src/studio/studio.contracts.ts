@@ -4,6 +4,7 @@ import type {
   ContentAuthor,
 } from '../video-pipeline/contracts';
 export interface StudioItem {
+  editorial?:{planId:string;sectionId:string;kind:import('../data-engine/editorial-contracts').EditorialKind;stage:string;parentId:string|null;permalink:string|null};
   contentMapping?:{topic:string|null;bodyText:string;status:'VERIFIED'|'REVIEW_REQUIRED';evidence:{type:'DOM'|'USER_CONFIRMED';detail:string;sourceUrl:string};includeTopicInTts:boolean};
   spokenApproval?:import('./voice.types').SpokenApproval;
   voiceSettings?:import('./voice.types').VoiceSettings;

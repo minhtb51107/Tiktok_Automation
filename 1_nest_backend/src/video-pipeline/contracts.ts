@@ -1,5 +1,6 @@
 export const VIDEO_PIPELINE_CONTRACT_VERSION = '1.0' as const;
 export interface ProductionOrigin {
+  conversation?:{collectionId:string;planId:string;planRevision:number;bundleHash:string;selectionRevision:number;selectedReplyIds:string[]};
   jobId:string;postId:string;bronzeId:string;silverId:string;evaluationId:string;
   evaluationRevision:number;queueId:string;snapshotHash:string;mode:'DRAFT_ONLY';
 }
@@ -137,6 +138,7 @@ export interface SceneTimingRequest {
 }
 
 export interface StoryboardScene {
+  editorial?:{kind:import('../data-engine/editorial-contracts').EditorialKind;stage:string};
   visual?:import('./scene-visual').SceneVisual;
   sfxLayer?:{assetId:string;startMs:number;volume:number;durationMs?:number;sourceInMs?:number};
   threadsCard?: {
@@ -204,6 +206,9 @@ export interface PublishingMetadata {
 }
 
 export interface VideoProject {
+  editorialApproval?:{status:'APPROVED'|'STALE';scriptHash:string;reason:string;approvedAt:string;sessionRevision:number};
+  editorialApprovalHistory?:Array<{scriptHash:string;reason:string;approvedAt:string;sessionRevision:number}>;
+  editorialPlan?:import('../data-engine/editorial-contracts').EditorialPlan;
   productionOrigin?: ProductionOrigin;
   backgroundTracks?:import('./editing').BackgroundClip[];
   editorSettings?:unknown;

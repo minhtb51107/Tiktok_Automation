@@ -14,7 +14,7 @@ export interface Feasibility {
 export interface EditorialPlan {
  schemaVersion:'threads-data/1';version:typeof EDITORIAL_VERSION;id:string;requestId:string;
  revision:number;collectionId:string;selectionRevision:number;selectedReplyIds:string[];
- bundle:{collection:ThreadCollection;quality:ConversationEvaluation;sourceLink:{postId:string;bronzeId:string;evaluationId:string|null}|null};
+ bundle:{collection:ThreadCollection;quality:ConversationEvaluation;humanReplyLabels?:Record<string,import('./conversation-contracts').ReplyLabel>;sourceLink:{postId:string;bronzeId:string;evaluationId:string|null}|null};
  bundleHash:string;sections:EditorialSection[];feasibility:Feasibility;
  style:'SERIOUS';scriptStatus:'DRAFT';editorialSelectionConfirmed:true;rightsStatus:'UNKNOWN';
  updatedAt:string;history:Array<{at:string;revision:number;action:string;reason:string}>;
