@@ -46,3 +46,7 @@ Versioned multi-signal scorer and comparable-evidence ranking are implemented. M
 ## C — Strict collection adapter
 
 Public structured Comment.parentItem/comment edges plus DOM own permalink form the only accepted relationship evidence. Missing/conflicting/unrelated/cyclic parents remain unverified; nested chains must reach the exact root. Public collection never claims COMPLETE. Disposable installed browser, 30s/page, <=150 requests, <=4 navigations, <=2 scrolls, <=20 verified replies. Lightweight discovery observes at most six unique candidates; ambiguous card counters are not attributed. Compact approximate counts are excluded from ranking. No live request has run. Seven identity/relationship tests PASS; backend TypeScript exit 0.
+
+## D — Reply Quality V1
+
+Conservative Vietnamese lexical rules separate SUBSTANTIVE/LOW_INFORMATION/SPAM/DUPLICATE/UNCERTAIN, preserving all raw text. Short counterarguments can be substantive; employment/TOEIC alone never classify advertising. Exact and Jaccard near duplicates have separate reasons. Sarcasm and semantics remain human-review limitations. Four quality tests PASS (including emoji, short counterargument, personal experience, duplicate and spam).
