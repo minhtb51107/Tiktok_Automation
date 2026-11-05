@@ -8,7 +8,7 @@ import {hash} from './rules';
 export class DataStore {
   constructor(readonly root = path.resolve('.studio-data/data-engine')) {}
   private file(key: string) {
-    if (!/^(posts|bronze|evaluations|runs|production-jobs|crawler-runs|gold-shadows|gold-feedback)\/[a-f0-9]{64}\.json$/.test(key))
+    if (!/^(posts|bronze|evaluations|runs|production-jobs|crawler-runs|gold-shadows|gold-feedback|conversation-runs|thread-collections|thread-replies|conversation-feedback)\/[a-f0-9]{64}\.json$/.test(key))
       throw Error('Invalid data storage key');
     return path.join(this.root, key);
   }
@@ -48,7 +48,7 @@ export class DataStore {
     }
     await replaceFile(temp, file);
   }
-  async *rows<T>(kind: 'posts' | 'runs' | 'production-jobs' | 'crawler-runs' | 'gold-shadows' | 'gold-feedback') {
+  async *rows<T>(kind: 'posts' | 'runs' | 'production-jobs' | 'crawler-runs' | 'gold-shadows' | 'gold-feedback' | 'conversation-runs' | 'thread-collections' | 'thread-replies' | 'conversation-feedback') {
     let entries: string[];
     try {
       entries = await fs.readdir(path.join(this.root, kind));

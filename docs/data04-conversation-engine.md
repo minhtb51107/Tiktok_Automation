@@ -42,3 +42,7 @@ Production remains THREADS SERIOUS. FUNNY/Compilation/Lyrics are not reactivated
 ## B — Popularity foundation
 
 Versioned multi-signal scorer and comparable-evidence ranking are implemented. Missing values stay null; velocity requires two consistent observations. Sparse candidates preserve observed order and report PARTIAL. Synthetic regression: 3 tests PASS. Public observation adapter is completed with collector checkpoint C. No HOT or viral prediction is claimed.
+
+## C — Strict collection adapter
+
+Public structured Comment.parentItem/comment edges plus DOM own permalink form the only accepted relationship evidence. Missing/conflicting/unrelated/cyclic parents remain unverified; nested chains must reach the exact root. Public collection never claims COMPLETE. Disposable installed browser, 30s/page, <=150 requests, <=4 navigations, <=2 scrolls, <=20 verified replies. Lightweight discovery observes at most six unique candidates; ambiguous card counters are not attributed. Compact approximate counts are excluded from ranking. No live request has run. Seven identity/relationship tests PASS; backend TypeScript exit 0.

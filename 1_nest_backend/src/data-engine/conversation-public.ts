@@ -1,0 +1,72 @@
+import puppeteer, {type Page} from 'puppeteer';
+import {existingPublicBrowser,publicResource,discoveryUrl} from '../modules/core/scraper/public-discovery';
+import {labelledCounts} from '../studio/metadata-fields';
+import {canonicalPost,collectEvidence, type PublicDocument} from './conversation-evidence';
+import type {PopularityCandidate,PublicPost,ThreadCollection} from './conversation-contracts';
+/** Function deliberately self-contained: executed in public DOM, no credential/session access. */
+export function observePublicDocument(){
+  const cards=[...document.querySelectorAll('div[data-pressable-container="true"],article')].slice(0,80);
+  const rows=cards.map(card=>{
+    const links=[...card.querySelectorAll('a[href*="/post/"]')].map(a=>{try{const u=new URL(a.getAttribute('href')||'',location.origin);return /^\/@[\w.-]+\/post\/[\w-]+\/?$/.test(u.pathname)?u.origin+u.pathname:null;}catch{return null;}}).filter((x):x is string=>!!x);
+    const controls=[...card.querySelectorAll('[aria-label]')].map(x=>({label:x.getAttribute('aria-label')||'',text:(x.textContent||'').trim()})).slice(0,40);
+    const spans=[...card.querySelectorAll('span[dir="auto"]')].map(x=>x.textContent||'');
+    return {urls:[...new Set(links)],controls,date:card.querySelector('time[datetime]')?.getAttribute('datetime')||null,text:spans.sort((a,b)=>b.length-a.length)[0]||''};
+  });
+  const jsonLd:unknown[]=[];
+  for(const script of [...document.querySelectorAll('script[type="application/ld+json"]')].slice(0,20)){
+    const value=script.textContent||'';if(value.length>250000)continue;try{jsonLd.push(JSON.parse(value));}catch{}
+  }
+  return {rows,jsonLd};
+}
+/** A bounded disposable browser, no user profile, no stealth, installed executable only. */
+async function visit<T>(url:string,scrolls:number,read:(page:Page)=>Promise<T>):Promise<T>{
+ const executablePath=existingPublicBrowser();if(!executablePath)throw Error('CONVERSATION_BROWSER_MISSING');
+ const browser=await puppeteer.launch({executablePath,headless:true,args:['--disable-background-networking']});
+ const deadline=setTimeout(()=>void browser.close().catch(()=>{}),30000);
+ try{
+  const page=await browser.newPage();await page.setViewport({width:1280,height:800});await page.setRequestInterception(true);
+  let requests=0,navigations=0;
+  page.on('request',r=>{requests++;if(r.isNavigationRequest()&&r.frame()===page.mainFrame())navigations++;void (publicResource(r.url())&&requests<=150&&navigations<=4&&!['image','media','font'].includes(r.resourceType())?r.continue():r.abort()).catch(()=>{});});
+  const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:15000});
+  if(response&&response.status()>=400)throw Error('CONVERSATION_HTTP_'+response.status());
+  const gate=async()=>/\/(?:login|accounts|challenge|checkpoint)(?:\/|\?|$)/i.test(page.url())||await page.evaluate(()=>!!document.querySelector('input[type="password"],iframe[src*="captcha"],[data-testid*="captcha"]'));
+  if(await gate())throw Error('CONVERSATION_ACCESS_BLOCKED');
+  await page.waitForSelector('div[data-pressable-container="true"],article,script[type="application/ld+json"]',{timeout:5000}).catch(()=>{});
+  for(let i=0;i<scrolls;i++){await page.evaluate(()=>window.scrollBy(0,window.innerHeight));await new Promise(r=>setTimeout(r,500));if(await gate())throw Error('CONVERSATION_ACCESS_BLOCKED');}
+  return await read(page);
+ }catch(e:any){throw Error(/^CONVERSATION_[A-Z0-9_]+$/.test(e.message||'')?e.message:'CONVERSATION_NAVIGATION_FAILED');}
+ finally{clearTimeout(deadline);await browser.close().catch(()=>{});}
+}
+export async function discoverConversations(keyword:string):Promise<PopularityCandidate[]>{
+ const url=discoveryUrl('SEARCH',keyword);
+ return visit(url,1,async page=>{
+  const observed=await page.evaluate(observePublicDocument),now=new Date().toISOString(),seen=new Set<string>(),out:PopularityCandidate[]=[];
+  for(const row of observed.rows){
+   const identities=row.urls.map(canonicalPost).filter((x):x is NonNullable<typeof x>=>!!x),unique=[...new Set(identities.map(x=>x.url))];
+   // Ambiguous container may include context cards: keep URLs but never attribute their counters.
+   for(const identity of identities){if(seen.has(identity.id)||out.length>=6)continue;seen.add(identity.id);
+    const fields=labelledCounts(row.controls),value=(k:string)=>fields[k]?.status==='AVAILABLE'&&!fields[k]?.approximate?Number(fields[k].value):null;
+    const post:PublicPost|null=unique.length===1?{id:identity.id,url:identity.url,author:{handle:identity.handle,name:null},originalText:'',publishedAt:row.date&&Number.isFinite(Date.parse(row.date))?new Date(row.date).toISOString():null,engagement:{likes:value('likeCount'),replies:value('replyCount'),reposts:value('repostCount'),shares:value('shareCount')},provenance:{documentUrl:url,observedAt:now,synthetic:false,method:'UNIQUE_CARD_PERMALINK_LABELLED_COUNTERS'}}:null;
+    out.push({url:identity.url,observedOrder:out.length,post});
+   }
+  }
+  if(!out.length)throw Error('CONVERSATION_NO_PUBLIC_CANDIDATES');return out;
+ });
+}
+export async function enrichConversation(url:string):Promise<ThreadCollection>{
+ const target=canonicalPost(url);if(!target)throw Error('CONVERSATION_INVALID_URL');
+ return visit(target.url,2,async page=>{
+  const final=canonicalPost(page.url());if(final?.url!==target.url)throw Error('CONVERSATION_ROOT_IDENTITY_MISMATCH');
+  const observed=await page.evaluate(observePublicDocument),now=new Date().toISOString();
+  const rootRows=observed.rows.filter(x=>new Set(x.urls.map(v=>canonicalPost(v)?.url).filter(Boolean)).size===1&&x.urls.some(v=>canonicalPost(v)?.url===target.url));
+  // Root body requires structured articleBody/text explicitly attached to exact identity.
+  const nodes:any[]=[];function walk(x:any,depth=0){if(depth>10||nodes.length>=500)return;if(Array.isArray(x)){x.slice(0,100).forEach(v=>walk(v,depth+1));return;}if(!x||typeof x!=='object')return;nodes.push(x);if(x['@graph'])walk(x['@graph'],depth+1);if(x.comment)walk(x.comment,depth+1);}
+  observed.jsonLd.forEach(x=>walk(x));
+  const roots=nodes.filter(x=>canonicalPost(x.url||x['@id'])?.url===target.url&&typeof (x.articleBody||x.text)==='string');
+  if(roots.length!==1||!observed.rows.some(r=>r.urls.some(v=>canonicalPost(v)?.url===target.url)))throw Error('CONVERSATION_EXACT_ROOT_BODY_UNVERIFIED');
+  const record=roots[0],controls=rootRows.length===1?labelledCounts(rootRows[0].controls):{},value=(k:string)=>controls[k]?.status==='AVAILABLE'&&!controls[k].approximate?Number(controls[k].value):null;
+  const root:PublicPost={id:target.id,url:target.url,author:{handle:target.handle,name:typeof record.author?.name==='string'?record.author.name:null},originalText:record.articleBody||record.text,publishedAt:typeof record.datePublished==='string'&&Number.isFinite(Date.parse(record.datePublished))?new Date(record.datePublished).toISOString():null,engagement:{likes:value('likeCount'),replies:value('replyCount'),reposts:value('repostCount'),shares:value('shareCount')},provenance:{documentUrl:target.url,observedAt:now,synthetic:false,method:'PUBLIC_JSON_LD_EXACT_ROOT_AND_DOM'}};
+  const doc:PublicDocument={url:target.url,observedAt:now,synthetic:false,visibleUrls:observed.rows.flatMap(x=>x.urls),jsonLd:observed.jsonLd};
+  return collectEvidence(root,doc,20);
+ });
+}
