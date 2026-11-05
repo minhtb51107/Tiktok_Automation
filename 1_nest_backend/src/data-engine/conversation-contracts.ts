@@ -8,7 +8,7 @@ export interface MetricScore {
 }
 export interface PublicPost {
   id: string; url: string; author: {handle: string; name: string | null};
-  originalText: string; publishedAt: string | null;
+  originalText: string; publishedAt: string | null; topic?: string | null; rawPayload?: unknown;
   engagement: {likes: number | null; replies: number | null; reposts: number | null; shares: number | null};
   provenance: {documentUrl: string; observedAt: string; method: string; synthetic: boolean};
 }
@@ -44,7 +44,7 @@ export interface PopularityCandidate {url: string; observedOrder: number; post: 
 export interface ConversationRun {
   schemaVersion: 'threads-data/1'; version: typeof CONVERSATION_VERSION; id: string;
   request: {requestId: string; urls?: string[]; keyword?: string; limit: number};
-  execution: 'LIVE' | 'SYNTHETIC'; status: 'RUNNING' | 'COMPLETED' | 'FAILED';
+  configHash:string; execution: 'LIVE' | 'SYNTHETIC'; status: 'RUNNING' | 'COMPLETED' | 'FAILED';
   stage: string; startedAt: string; completedAt: string | null; elapsedMs: number;
   candidates: PopularityCandidate[] | null; ranking: {status: Coverage; reasons: string[]; selected: string[]} | null;
   captures: Array<{url: string; collection: ThreadCollection}>;
@@ -53,6 +53,6 @@ export interface ConversationRun {
 }
 export interface ConversationReview {
   schemaVersion: 'threads-data/1'; collectionId: string; revision: number;
-  selectedReplyIds: string[]; decision: 'ACCEPT' | 'REJECT' | 'NEEDS_REVIEW'; reason: string;
-  history: Array<{requestId: string; inputHash: string; at: string; revision: number; selectedReplyIds: string[]; decision: string; reason: string}>;
+  selectedReplyIds: string[]; replyLabels: Record<string,ReplyLabel>; decision: 'ACCEPT' | 'REJECT' | 'NEEDS_REVIEW'; reason: string;
+  history: Array<{requestId: string; inputHash: string; at: string; revision: number; selectedReplyIds: string[]; replyLabels:Record<string,ReplyLabel>; decision: string; reason: string}>;
 }

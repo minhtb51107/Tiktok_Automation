@@ -50,3 +50,7 @@ Public structured Comment.parentItem/comment edges plus DOM own permalink form t
 ## D — Reply Quality V1
 
 Conservative Vietnamese lexical rules separate SUBSTANTIVE/LOW_INFORMATION/SPAM/DUPLICATE/UNCERTAIN, preserving all raw text. Short counterarguments can be substantive; employment/TOEIC alone never classify advertising. Exact and Jaccard near duplicates have separate reasons. Sarcasm and semantics remain human-review limitations. Four quality tests PASS (including emoji, short counterargument, personal experience, duplicate and spam).
+
+## E — Persistent conversation shadow and human selection
+
+Atomic DataStore namespaces now retain run checkpoints, immutable collection/reply observations and revisioned feedback. Existing DATA-01/Gold V1/V2 decisions are pinned and untouched; new roots enter DATA-01 as UNKNOWN and unreviewed. Requests are idempotent, restart resumes saved captures, feedback has stale revision checks. Source bundle retains reply identities/evidence but deliberately has productionApproved=false and handoffEnabled=false. No DATA-03 multi-source production adapter is enabled. Twenty-one DATA04 tests PASS; backend typecheck exit 0. LIVE remains disabled unless explicitly approved and enabled in local runtime. Exact-root extraction reuses existing code with optional bounded mode; default callers retain their previous behavior.

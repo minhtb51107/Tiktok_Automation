@@ -83,6 +83,7 @@ export interface SourceAttempt {
 }
 async function publicGet(
   url: string,
+  timeoutMs = 20000,
 ): Promise<{ status: number; location: string | null; html: string }> {
   const u = new URL(threadsUrl(url));
   const addresses = await lookup(u.hostname, { all: true });
@@ -126,7 +127,7 @@ async function publicGet(
         res.on('error', reject);
       },
     );
-    req.setTimeout(20000, () =>
+    req.setTimeout(timeoutMs, () =>
       req.destroy(Error('Public response timeout (20s)')),
     );
     req.on('error', reject);
@@ -136,6 +137,7 @@ async function publicGet(
 export async function extractPublicThreads(
   input: string,
   scope: 'TARGET_ONLY' | 'WITH_CONTEXT' = 'TARGET_ONLY',
+  controlled = false,
 ): Promise<SourceAttempt> {
   const started = Date.now();
   const out: SourceAttempt = {
@@ -160,8 +162,8 @@ export async function extractPublicThreads(
   try {
     let url = threadsUrl(input),
       html = '';
-    for (let n = 0; n <= 5; n++) {
-      const response = await publicGet(url);
+    for (let n = 0; n <= (controlled?2:5); n++) {
+      const response = await publicGet(url,controlled?8000:20000);
       out.redirects.push({
         url,
         status: response.status,
@@ -172,7 +174,7 @@ export async function extractPublicThreads(
         response.status < 400 &&
         response.location
       ) {
-        if (n === 5) throw Error('Redirect limit (5) reached');
+        if (n === (controlled?2:5)) throw Error('Redirect limit reached');
         url = threadsUrl(new URL(response.location, url).href);
         continue;
       }
@@ -244,16 +246,19 @@ export async function extractPublicThreads(
     } else {
       let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
       let stage = 'browser';
+      let deadline: ReturnType<typeof setTimeout>|undefined;
       try {
         browser = await puppeteer.launch({
           executablePath: executable,
           headless: true,
           args: ['--disable-background-networking'],
         });
+        if(controlled)deadline=setTimeout(()=>void browser?.close().catch(()=>{}),20000);
         const page = await browser.newPage();
         await page.setRequestInterception(true);
-        let navCount = 0;
+        let navCount = 0, requestCount=0;
         page.on('request', (r) => {
+          requestCount++;
           try {
             const u = new URL(r.url());
             const allowed =
@@ -269,7 +274,7 @@ export async function extractPublicThreads(
             if (r.isNavigationRequest() && r.frame() === page.mainFrame())
               navCount++;
             out.browserNavigations = navCount;
-            void (allowed && navCount <= 6 ? r.continue() : r.abort());
+            void (allowed && navCount <= (controlled?4:6) && (!controlled||(requestCount<=150&&!['image','media','font'].includes(r.resourceType()))) ? r.continue() : r.abort());
           } catch {
             void r.abort();
           }
@@ -460,6 +465,7 @@ export async function extractPublicThreads(
           e instanceof Error ? e.message : 'Browser failed',
         );
       } finally {
+        if(deadline)clearTimeout(deadline);
         await browser?.close();
       }
     }

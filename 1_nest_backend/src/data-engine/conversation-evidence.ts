@@ -11,6 +11,7 @@ export interface PublicDocument {
   url:string; observedAt:string; synthetic:boolean;
   /** Public DOM permalink observations. Structured records must also have their own visible permalink. */
   visibleUrls:string[]; jsonLd:unknown[];
+  cardObservations?: Array<{url:string;publishedAt:string|null;engagement:PublicPost['engagement']}>;
 }
 const text=(x:unknown):string|null=>typeof x==='string'&&x.trim()?x:null;
 function date(x:unknown){const s=text(x);return s&&/^\d{4}-\d{2}-\d{2}T/.test(s)&&Number.isFinite(Date.parse(s))?new Date(s).toISOString():null;}
@@ -35,6 +36,8 @@ export function collectEvidence(root:PublicPost, doc:PublicDocument, maxReplies=
     if(x.comment)walk(x.comment,pointer+'/comment',id?.url);
   }
   doc.jsonLd.slice(0,20).forEach((x,i)=>walk(x,'/'+i));
+  // Conflicting handles for one stable post ID are not separate verified identities.
+  const identityCounts=new Map<string,number>();for(const url of nodes.keys()){const id=canonicalPost(url)!.id;identityCounts.set(id,(identityCounts.get(id)||0)+1);}
   const accepted=new Map<string,ThreadCollection['replies'][number]>(), pending=new Map(nodes);
   const documentHash=hash(doc.jsonLd);
   for(let pass=0;pass<21&&pending.size;pass++){
@@ -43,7 +46,8 @@ export function collectEvidence(root:PublicPost, doc:PublicDocument, maxReplies=
       const node=observations[0].node,id=canonicalPost(url)!,parents=observations.map(o=>ownUrl(o.parent)?.url||null);
       const parent=canonicalPost(parents[0]);
       let reason:string|null=null;
-      if(id.id===root.id)reason='ROOT_IS_NOT_A_REPLY';
+      if(identityCounts.get(id.id)!==1)reason='CONFLICTING_PERMALINK_IDENTITY';
+      else if(id.id===root.id)reason='ROOT_IS_NOT_A_REPLY';
       else if(!visible.has(url))reason='REPLY_PERMALINK_NOT_OBSERVED_IN_DOM';
       else if(observations.some(o=>hash(o.node)!==hash(node))||new Set(parents).size>1)reason='AMBIGUOUS_REPLY_RECORD';
       else if(!parent)reason='MISSING_PARENT_EVIDENCE';
@@ -57,6 +61,8 @@ export function collectEvidence(root:PublicPost, doc:PublicDocument, maxReplies=
       if(accepted.size>=maxReplies){unverified.push({url,reason:'VERIFIED_REPLY_BUDGET_EXCEEDED'});pending.delete(url);continue;}
       const observation=observations[0];
       accepted.set(url,{id:id.id,url,author:{handle:id.handle,name:text(node.author?.name)},originalText:body!,publishedAt:date(node.datePublished),engagement:{likes:null,replies:null,reposts:null,shares:null},provenance:{documentUrl:identity!.url,observedAt:doc.observedAt,synthetic:doc.synthetic,method:'PUBLIC_JSON_LD_AND_DOM_PERMALINK'},parentId:parent!.id,rootId:root.id,extractionStatus:'VERIFIED',evidence:{kind:observation.kind,documentUrl:identity!.url,documentHash,pointer:observation.pointer,subjectUrl:url,parentUrl:parent!.url}});
+      const matching=doc.cardObservations?.filter(x=>canonicalPost(x.url)?.url===url)||[];
+      if(matching.length===1){accepted.get(url)!.engagement=matching[0].engagement;accepted.get(url)!.publishedAt??=date(matching[0].publishedAt);accepted.get(url)!.provenance.method+=';UNIQUE_CARD_LABELLED_COUNTERS';}
       pending.delete(url);progressed=true;
     }
     if(!progressed)break;
@@ -65,7 +71,7 @@ export function collectEvidence(root:PublicPost, doc:PublicDocument, maxReplies=
   const known=new Set([...nodes.keys(),identity.url]);
   for(const url of visible)if(url&&!known.has(url))unverified.push({url,reason:'DOM_CONTEXT_WITHOUT_RELATIONSHIP_EVIDENCE'});
   const replies=[...accepted.values()];
-  return {version:CONVERSATION_VERSION,root,replies,unverified,reportedReplyCount:root.engagement.replies,observedReplyCount:replies.length+unverified.length,verifiedReplyCount:replies.length,unverifiedCandidateCount:unverified.length,startedAt:doc.observedAt,completedAt:doc.observedAt,status:replies.length?'PARTIAL':'UNKNOWN',warnings:['Public DOM observation cannot prove complete thread coverage','Zero verified replies does not establish zero actual replies',...(visited>2000?['STRUCTURED_DATA_BUDGET_EXCEEDED']:[])]};
+  return {version:CONVERSATION_VERSION,root,replies,unverified,reportedReplyCount:root.engagement.replies,observedReplyCount:replies.length+unverified.length,verifiedReplyCount:replies.length,unverifiedCandidateCount:unverified.length,startedAt:doc.observedAt,completedAt:doc.observedAt,status:replies.length?'PARTIAL':'UNKNOWN',warnings:['Observed candidate count includes unverified context, not confirmed thread replies','Public DOM observation cannot prove complete thread coverage','Zero verified replies does not establish zero actual replies',...(visited>2000?['STRUCTURED_DATA_BUDGET_EXCEEDED']:[])]};
 }
 function ownAuthor(a:any):string|null{
   if(Array.isArray(a)||!a)return null;

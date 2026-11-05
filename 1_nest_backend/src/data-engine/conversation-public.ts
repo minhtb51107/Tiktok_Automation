@@ -1,11 +1,13 @@
 import puppeteer, {type Page} from 'puppeteer';
 import {existingPublicBrowser,publicResource,discoveryUrl} from '../modules/core/scraper/public-discovery';
+import {extractPublicThreads} from '../studio/public-threads';
+import {crawlerInput} from './crawler-adapter';
 import {labelledCounts} from '../studio/metadata-fields';
 import {canonicalPost,collectEvidence, type PublicDocument} from './conversation-evidence';
 import type {PopularityCandidate,PublicPost,ThreadCollection} from './conversation-contracts';
 /** Function deliberately self-contained: executed in public DOM, no credential/session access. */
 export function observePublicDocument(){
-  const cards=[...document.querySelectorAll('div[data-pressable-container="true"],article')].slice(0,80);
+  const cards=[...document.querySelectorAll('div[data-pressable-container="true"],article')].filter(card=>{const box=card.getBoundingClientRect();return box.width>0&&box.height>0;}).slice(0,80);
   const rows=cards.map(card=>{
     const links=[...card.querySelectorAll('a[href*="/post/"]')].map(a=>{try{const u=new URL(a.getAttribute('href')||'',location.origin);return /^\/@[\w.-]+\/post\/[\w-]+\/?$/.test(u.pathname)?u.origin+u.pathname:null;}catch{return null;}}).filter((x):x is string=>!!x);
     const controls=[...card.querySelectorAll('[aria-label]')].map(x=>({label:x.getAttribute('aria-label')||'',text:(x.textContent||'').trim()})).slice(0,40);
@@ -55,18 +57,17 @@ export async function discoverConversations(keyword:string):Promise<PopularityCa
 }
 export async function enrichConversation(url:string):Promise<ThreadCollection>{
  const target=canonicalPost(url);if(!target)throw Error('CONVERSATION_INVALID_URL');
+ const attempt=await extractPublicThreads(target.url,'TARGET_ONLY',true);
+ const source=crawlerInput(attempt,'DATA04');
+ if(attempt.matchMethod!=='DOM_PERMALINK'||!source||source.sourcePostId!==target.id||canonicalPost(source.sourceUrl)?.url!==target.url||source.author.handle!==target.handle||!source.originalBody)throw Error('CONVERSATION_EXACT_ROOT_BODY_UNVERIFIED');
  return visit(target.url,2,async page=>{
   const final=canonicalPost(page.url());if(final?.url!==target.url)throw Error('CONVERSATION_ROOT_IDENTITY_MISMATCH');
   const observed=await page.evaluate(observePublicDocument),now=new Date().toISOString();
-  const rootRows=observed.rows.filter(x=>new Set(x.urls.map(v=>canonicalPost(v)?.url).filter(Boolean)).size===1&&x.urls.some(v=>canonicalPost(v)?.url===target.url));
-  // Root body requires structured articleBody/text explicitly attached to exact identity.
-  const nodes:any[]=[];function walk(x:any,depth=0){if(depth>10||nodes.length>=500)return;if(Array.isArray(x)){x.slice(0,100).forEach(v=>walk(v,depth+1));return;}if(!x||typeof x!=='object')return;nodes.push(x);if(x['@graph'])walk(x['@graph'],depth+1);if(x.comment)walk(x.comment,depth+1);}
-  observed.jsonLd.forEach(x=>walk(x));
-  const roots=nodes.filter(x=>canonicalPost(x.url||x['@id'])?.url===target.url&&typeof (x.articleBody||x.text)==='string');
-  if(roots.length!==1||!observed.rows.some(r=>r.urls.some(v=>canonicalPost(v)?.url===target.url)))throw Error('CONVERSATION_EXACT_ROOT_BODY_UNVERIFIED');
-  const record=roots[0],controls=rootRows.length===1?labelledCounts(rootRows[0].controls):{},value=(k:string)=>controls[k]?.status==='AVAILABLE'&&!controls[k].approximate?Number(controls[k].value):null;
-  const root:PublicPost={id:target.id,url:target.url,author:{handle:target.handle,name:typeof record.author?.name==='string'?record.author.name:null},originalText:record.articleBody||record.text,publishedAt:typeof record.datePublished==='string'&&Number.isFinite(Date.parse(record.datePublished))?new Date(record.datePublished).toISOString():null,engagement:{likes:value('likeCount'),replies:value('replyCount'),reposts:value('repostCount'),shares:value('shareCount')},provenance:{documentUrl:target.url,observedAt:now,synthetic:false,method:'PUBLIC_JSON_LD_EXACT_ROOT_AND_DOM'}};
-  const doc:PublicDocument={url:target.url,observedAt:now,synthetic:false,visibleUrls:observed.rows.flatMap(x=>x.urls),jsonLd:observed.jsonLd};
+  const fields=attempt.records[0]?.fields;
+  const exact=(key:string,value:number|null)=>fields?.[key]?.status==='AVAILABLE'&&!fields[key].approximate?value:null;
+  const root:PublicPost={id:target.id,url:target.url,author:{handle:target.handle,name:source.author.name},originalText:source.originalBody!,topic:source.topic,rawPayload:source.rawPayload,publishedAt:source.publishedAt,engagement:{likes:exact('likeCount',source.engagement.likes),replies:exact('replyCount',source.engagement.replies),reposts:exact('repostCount',source.engagement.reposts),shares:exact('shareCount',source.engagement.shares)},provenance:{documentUrl:target.url,observedAt:now,synthetic:false,method:'EXISTING_EXACT_TARGET_EXTRACTOR'}};
+  const cardObservations=observed.rows.filter(r=>r.urls.length===1).map(r=>{const fields=labelledCounts(r.controls),value=(k:string)=>fields[k]?.status==='AVAILABLE'&&!fields[k].approximate?Number(fields[k].value):null;return {url:r.urls[0],publishedAt:r.date,engagement:{likes:value('likeCount'),replies:value('replyCount'),reposts:value('repostCount'),shares:value('shareCount')}};});
+  const doc:PublicDocument={url:target.url,observedAt:now,synthetic:false,visibleUrls:observed.rows.flatMap(x=>x.urls),jsonLd:observed.jsonLd,cardObservations};
   return collectEvidence(root,doc,20);
  });
 }
