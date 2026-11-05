@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { StudioSession } from "../../../1_nest_backend/src/studio/studio.contracts";
 import {
   catalogPostView,
+  catalogProvenance,
   fetchData01PostDetail,
   formatCompactNumber,
   formatVietnameseDate,
@@ -173,7 +174,7 @@ export function DataReviewWorkspace({
   const items = useMemo(() => (data01Catalog?.rows || []).map((row,index) => ({...catalogPostView(row,detailsByPostId[row.id] || null,session),itemIndex:(data01Catalog?.page||0)*25+index+1})),[data01Catalog,detailsByPostId,session]);
   const c=data01Catalog?.counts||{};
   const counts={total:data01Catalog?.total||0,bronzeObservations:data01Catalog?.observations||0,silverValidated:Math.max(0,(data01Catalog?.total||0)-(c.QUARANTINED||0)),goldScored:(c.SCORED||0)+(c.QUALIFIED||0)+(c.QUEUED||0)+(c.REJECTED||0),needsReview:(c.SCORED||0)+(c.ELIGIBLE||0),qualified:c.QUALIFIED||0,queued:c.QUEUED||0,rejected:c.REJECTED||0,quarantine:c.QUARANTINED||0};
-  const dataProvenance=data01Connected?"REAL DATA":"NOT CONNECTED";
+  const dataProvenance=data01Connected?catalogProvenance(data01Catalog):"NOT CONNECTED";
 
   // Fetch DATA-01 post details for rich cards & evaluation history
   useEffect(() => {
@@ -925,6 +926,7 @@ export function DataReviewWorkspace({
                 key={item.id}
                 role="listitem"
                 data-testid={`review-card-${item.itemIndex}`}
+                data-source-provenance={item.provenanceBadge}
                 data-post-id={item.data01PostId}
                 className={`s2-thread-card status-${item.evaluationStatus.toLowerCase()} ${
                   isSelected && viewMode === "SPLIT_DETAIL" ? "is-focused" : ""
@@ -969,12 +971,12 @@ export function DataReviewWorkspace({
                         {item.topic && (
                           <span className="s2-topic-chip">#{item.topic}</span>
                         )}
-                        {item.provenanceBadge === "MOCK DATA" && (
+                        {(
                           <span
                             className="v3-prov-pill prov-review"
-                            data-testid="synthetic-badge"
+                            data-testid={item.provenanceBadge === "SYNTHETIC" ? "synthetic-badge" : "source-provenance-badge"}
                           >
-                            SYNTHETIC
+                            {item.provenanceBadge}
                           </span>
                         )}
                       </div>
@@ -1066,6 +1068,7 @@ export function DataReviewWorkspace({
                         ↻ {formatCompactNumber(reposts)}
                       </span>
                     )}
+                    <a data-testid="source-permalink" href={item.sourceUrl} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()}>Source permalink ↗</a>
                     <button
                       type="button"
                       className={`s2-include-chip ${item.selected ? "is-on" : ""}`}
@@ -1257,12 +1260,9 @@ export function DataReviewWorkspace({
                           ))}
                         </div>
                       ) : (
-                        <div className="s2-blocker-item severity-good">
-                          <strong>✓ Bài viết đã đầy đủ điều kiện chất lượng</strong>
-                          <p>
-                            Có thể đưa vào Hàng đợi Sản xuất hoặc tinh chỉnh lời
-                            đọc.
-                          </p>
+                        <div className={isUserAccepted(activeDetail?.evaluation?.review)?"s2-blocker-item severity-good":"s2-blocker-item severity-warning"}>
+                          <strong>{isUserAccepted(activeDetail?.evaluation?.review)?"Đã có quyết định ACCEPT của người dùng":"Điểm quy tắc tham khảo — chưa được bạn duyệt"}</strong>
+                          <p>Enqueue, duyệt kịch bản và audio vẫn là các thao tác riêng.</p>
                         </div>
                       )}
 

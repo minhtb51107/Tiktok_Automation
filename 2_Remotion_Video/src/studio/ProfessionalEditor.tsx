@@ -1,3 +1,4 @@
+import { sessionProvenance, type Data01CatalogResponse } from "./studio-v2-adapter";
 import {shiftSourceInMs} from '../../../1_nest_backend/src/video-pipeline/editing';
 import { CanvasTransform } from "./CanvasTransform";
 import { EditableTimeline } from "./EditableTimeline";
@@ -41,18 +42,21 @@ const api = async (url: string, method = "GET", body?: unknown) => {
 };
 export function ProfessionalEditor({
   session,
+  data01Catalog,
   busy,
   accept,
   onDirty,
   onNavigate,
 }: {
   session: StudioSession;
+  data01Catalog?:Data01CatalogResponse|null;
   busy: boolean;
   accept: (s: StudioSession) => void;
   onDirty: (v: boolean) => void;
   onNavigate?: (step: string) => void;
   prepare?: () => Promise<void>;
 }) {
+  const provenance=sessionProvenance(session,data01Catalog);
   const initial = () => ({
     settings: editorSettings(session),
     displayEdits: {},
@@ -628,10 +632,10 @@ export function ProfessionalEditor({
     Math.min(stageSize.width - 48, ((stageSize.height - 32) * 9) / 16),
   );
   return (
-    <section className="pro-editor" data-testid="professional-editor" data-mobile-pane={mobilePane}>
+    <section className="pro-editor" data-testid="professional-editor" data-source-provenance={provenance} data-mobile-pane={mobilePane}>
       <div className="editor-toolbar">
         <div>
-          <strong>{session.title}</strong>
+          <strong>{session.title}</strong><span className="v3-prov-pill" data-testid="editor-provenance">{provenance}</span>
           <small>
             {session.id.slice(0, 8)} ·{" "}
             <span data-testid="save-state">

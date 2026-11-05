@@ -1,3 +1,4 @@
+import { sourceProvenance } from "./studio-integration";
 import {
   DATA_SCHEMA,
   type Bronze,
@@ -405,12 +406,18 @@ export class DataEngine {
     let total = 0,
       matching = 0,
       observations = 0;
+    const provenanceCounts={REAL:0,SYNTHETIC:0,UNKNOWN:0},reviewSummary={pending:0,accepted:0,rejected:0,quarantined:0};
     for await (const post of this.store.rows<DataPost>('posts')) {
       total++;
       observations += post.observations.length;
       const { bronze, evaluation: e } = await this.detail(post.id);
       const status = e?.state || 'DISCOVERED';
       counts[status] = (counts[status] || 0) + 1;
+      const provenance=sourceProvenance(bronze);provenanceCounts[provenance]++;
+      if(status==="QUARANTINED")reviewSummary.quarantined++;
+      else if(e?.review?.decision==="ACCEPT")reviewSummary.accepted++;
+      else if(e?.review?.decision==="REJECT")reviewSummary.rejected++;
+      else if(!["REJECTED","QUEUED"].includes(status))reviewSummary.pending++;
       if (state && state !== status) continue;
       if (matching++ < page * 25 || rows.length >= 25) continue;
       rows.push({
@@ -429,6 +436,7 @@ export class DataEngine {
         observations: post.observations.length,
         revision: e?.revision ?? 0,
         synthetic: bronze?.provenance?.synthetic === true,
+        provenance,
       });
     }
     const runs: any[] = [];
@@ -444,6 +452,7 @@ export class DataEngine {
       page,
       pageSize: 25,
       counts,
+      provenanceCounts,reviewSummary,
       qualifiedRatio: total
         ? ((counts.QUALIFIED || 0) + (counts.QUEUED || 0)) / total
         : null,

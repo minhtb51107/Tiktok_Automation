@@ -52,6 +52,7 @@ describe('Integration checkpoint 3 — P0 gates / SYNTHETIC',()=>{
  it('uses full backend identity and evaluation revision for catalog actions',()=>{
   const r=row(),detail={post:{id:r.id},bronze:{sourcePostId:r.sourcePostId,sourceUrl:r.sourceUrl,originalBody:'SYNTHETIC TEST DATA',itemType:'UNKNOWN',author:r.author,engagement:{likes:0,replies:null,reposts:null,shares:null}},evaluation:{id:'eval',revision:8,state:'SCORED',gold:{score:70,labels:[],reasons:[]},silver:{quarantineReasons:[]}}};
   const v=adapter().catalogPostView(r,detail,null);expect(v.identityVerified).toBe(true);expect(v.data01Revision).toBe(8);expect(v.likesCount).toBe(0);
+  expect(v.reviewBlockers.some((b:any)=>b.code==='UNKNOWN_ENTITY_TYPE')).toBe(true);
  });
  it('reads requested catalog pages beyond the current session with actual response projection',async()=>{
   const calls:string[]=[];
@@ -61,8 +62,8 @@ describe('Integration checkpoint 3 — P0 gates / SYNTHETIC',()=>{
   expect(result.catalog.total).toBe(51);expect(result.catalog.rows[0].sourcePostId).toBe('PAGE003');
  });
  it('never labels synthetic observations as REAL DATA',()=>{
-  expect(adapter().catalogPostView({...row(),synthetic:true},null,null).provenanceBadge).toBe('MOCK DATA');
-  expect(adapter().catalogPostView(row(),null,null).provenanceBadge).toBe('REAL DATA');
+  expect(adapter().catalogPostView({...row(),synthetic:true},null,null).provenanceBadge).toBe('SYNTHETIC');
+  expect(adapter().catalogPostView(row(),null,null).provenanceBadge).toBe('UNKNOWN');
  });
  it('counts pending reviews across the catalog, not the open session',()=>{
   const counts={QUALIFIED:3,QUEUED:1,REJECTED:2,QUARANTINED:1,SCORED:4,DISCOVERED:1,FAILED:1};

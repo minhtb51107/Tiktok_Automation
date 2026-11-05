@@ -1,5 +1,16 @@
 /** Browser-safe integration gates. No Node, model or service imports. */
 export type TargetType = 'POST' | 'COMMENT' | 'UNKNOWN';
+export type SourceProvenance = 'REAL' | 'SYNTHETIC' | 'UNKNOWN';
+/** Absence of a synthetic flag is not evidence of a real, verified source. */
+export function sourceProvenance(input:{sourceUrl?:unknown;sourcePostId?:unknown;provenance?:{synthetic?:unknown;identityEvidence?:unknown}}|null|undefined):SourceProvenance {
+  if(input?.provenance?.synthetic===true)return 'SYNTHETIC';
+  if(input?.provenance?.synthetic!==false)return 'UNKNOWN';
+  const id=canonicalTarget(input.sourceUrl);
+  return id&&id===input.sourcePostId&&['DOM_PERMALINK','PUBLIC_CANONICAL_METADATA','OFFICIAL_THREADS_API'].includes(String(input.provenance.identityEvidence))?'REAL':'UNKNOWN';
+}
+export function combinedProvenance(values:readonly SourceProvenance[]):SourceProvenance {
+  return values.length&&values.every(v=>v===values[0])?values[0]:'UNKNOWN';
+}
 export function canonicalTarget(value: unknown): string | null {
   try {
     if(typeof value!=='string')return null;

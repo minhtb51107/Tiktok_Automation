@@ -1,4 +1,4 @@
-import { matchCatalogIdentity, canonicalTarget, pendingReviewCount } from "../../../1_nest_backend/src/data-engine/studio-integration";
+import { matchCatalogIdentity, canonicalTarget, pendingReviewCount, combinedProvenance, sourceProvenance, type SourceProvenance } from "../../../1_nest_backend/src/data-engine/studio-integration";
 import type { StudioSession } from "../../../1_nest_backend/src/studio/studio.contracts";
 import type { LibraryAsset } from "../../../1_nest_backend/src/studio/public-assets";
 import { spokenAmbiguities } from "../../../1_nest_backend/src/studio/voice-settings";
@@ -7,13 +7,14 @@ import { spokenAmbiguities } from "../../../1_nest_backend/src/studio/voice-sett
  * Studio V2/V3 Data & Telemetry Adapter.
  *
  * Strictly distinguishes:
- * - REAL DATA: Persisted in `.studio-data` (StudioSession, RenderManifest, `/api/studio/data` DATA-01 engine, and `/api/studio/threads` DATA-02 engine).
- * - NEEDS REVIEW: Real items requiring explicit human confirmation (e.g. DATA-01 `UNKNOWN` entity type or ambiguous terms).
+ * - REAL: explicit non-synthetic marker plus verified canonical source identity.
+ * - SYNTHETIC / UNKNOWN: explicit test data, or source evidence unavailable/mixed.
  * - NOT CONNECTED: Backend endpoint unavailable or not yet imported.
- * - MOCK DATA: Explicitly labelled contract previews in Settings only (never shown as live dashboard metrics).
+ * Source origin is independent of review/approval. Legacy badge strings remain type-compatible.
  */
 
 export type DataProvenanceBadge =
+  | "REAL" | "SYNTHETIC" | "UNKNOWN"
   | "REAL DATA"
   | "NEEDS REVIEW"
   | "NOT CONNECTED"
@@ -53,9 +54,12 @@ export interface Data01CatalogRow {
   revision: number;
   /** True when the stored observation is labelled synthetic/mock; never shown as REAL DATA. */
   synthetic?: boolean;
+  provenance?: SourceProvenance;
 }
 
 export interface Data01CatalogResponse {
+  provenanceCounts?:Record<SourceProvenance,number>;
+  reviewSummary?:{pending:number;accepted:number;rejected:number;quarantined:number};
   schemaVersion: string;
   workflow: string;
   total: number;
@@ -114,6 +118,7 @@ export interface Data01PostDetailResponse {
     currentEvaluationId: string | null;
   };
   bronze: {
+    provenance?:{synthetic?:boolean;identityEvidence?:string};
     id: string;
     postId: string;
     sourcePlatform: string;
@@ -445,9 +450,9 @@ export async function fetchThreadsDiscoveryState(): Promise<{
 
 /** Posts the user still has to decide on, counted across the whole catalog (not the open session). */
 export function catalogPendingReview(
-  catalog: Data01CatalogResponse | null,
+  catalog: Data01CatalogResponse | null | undefined,
 ): number {
-  return pendingReviewCount(catalog?.counts);
+  return catalog?.reviewSummary?.pending ?? pendingReviewCount(catalog?.counts);
 }
 
 export function formatCompactNumber(value?: number | null): string {
@@ -494,17 +499,17 @@ export function computeMedallionItems(
       items: [],
       duplicates: [],
       counts: {
-        total: 0,
-        bronzeObservations: 0,
+        total: data01Catalog?.total || 0,
+        bronzeObservations: data01Catalog?.observations || 0,
         silverValidated: 0,
         goldScored: 0,
-        needsReview: 0,
+        needsReview: data01Connected ? catalogPendingReview(data01Catalog) : 0,
         qualified: 0,
         queued: 0,
         rejected: 0,
         quarantine: 0,
       },
-      dataProvenance: data01Connected ? "REAL DATA" : "NOT CONNECTED",
+      dataProvenance: data01Connected ? catalogProvenance(data01Catalog) : "NOT CONNECTED",
     };
   }
 
@@ -557,9 +562,7 @@ export function computeMedallionItems(
     const positiveSignals: string[] = [];
     const reviewBlockers: ReviewBlockerSignal[] = [];
 
-    let evaluationStatus: MedallionItem["evaluationStatus"] = "NEEDS_REVIEW";
-    let provenanceBadge: DataProvenanceBadge = "NEEDS REVIEW";
-    let data01State = "NOT_IMPORTED";
+    let evaluationStatus: MedallionItem["evaluationStatus"] = "NEEDS_REVIEW";    let data01State = "NOT_IMPORTED";
     let ruleScore: number | null = null;
     let data01Labels: string[] = [];
 
@@ -604,9 +607,7 @@ export function computeMedallionItems(
       }
 
       if (matchedRow.state === "QUARANTINED" || matchedRow.quarantine.length > 0) {
-        evaluationStatus = "QUARANTINED";
-        provenanceBadge = "NEEDS REVIEW";
-        reasons.push(...matchedRow.quarantine);
+        evaluationStatus = "QUARANTINED";        reasons.push(...matchedRow.quarantine);
         reviewBlockers.push({
           code: "QUARANTINE",
           title: "Bài viết bị cách ly kiểm tra",
@@ -614,18 +615,10 @@ export function computeMedallionItems(
           severity: "danger",
         });
       } else if (matchedRow.state === "QUEUED") {
-        evaluationStatus = "QUEUED";
-        provenanceBadge = "REAL DATA";
-      } else if (matchedRow.state === "QUALIFIED") {
-        evaluationStatus = "QUALIFIED";
-        provenanceBadge = "REAL DATA";
-      } else if (matchedRow.state === "REJECTED") {
-        evaluationStatus = "REJECTED";
-        provenanceBadge = "REAL DATA";
-      } else {
-        evaluationStatus = "NEEDS_REVIEW";
-        provenanceBadge = "NEEDS REVIEW";
-        reasons.push(
+        evaluationStatus = "QUEUED";      } else if (matchedRow.state === "QUALIFIED") {
+        evaluationStatus = "QUALIFIED";      } else if (matchedRow.state === "REJECTED") {
+        evaluationStatus = "REJECTED";      } else {
+        evaluationStatus = "NEEDS_REVIEW";        reasons.push(
           "Cần xác nhận đây là Bài đăng gốc hay Bình luận",
         );
         reviewBlockers.push({
@@ -657,9 +650,7 @@ export function computeMedallionItems(
         });
       }
     } else if (!data01Connected) {
-      evaluationStatus = "NOT_CONNECTED";
-      provenanceBadge = "NOT CONNECTED";
-      data01State = "API_NOT_CONNECTED";
+      evaluationStatus = "NOT_CONNECTED";      data01State = "API_NOT_CONNECTED";
       reasons.push("Chưa kết nối dữ liệu đánh giá từ API DATA-01 (/api/studio/data)");
       reviewBlockers.push({
         code: "DISCONNECTED",
@@ -668,9 +659,7 @@ export function computeMedallionItems(
         severity: "info",
       });
     } else {
-      evaluationStatus = "NEEDS_REVIEW";
-      provenanceBadge = "NEEDS REVIEW";
-      data01State = "UNIMPORTED_SESSION_ITEM";
+      evaluationStatus = "NEEDS_REVIEW";      data01State = "UNIMPORTED_SESSION_ITEM";
       reasons.push("Bài viết chưa được đồng bộ vào bộ đánh giá DATA-01");
       reviewBlockers.push({
         code: "UNIMPORTED",
@@ -701,7 +690,7 @@ export function computeMedallionItems(
       sharesCount: shares,
       evaluationStatus,
       data01State,
-      provenanceBadge,
+      provenanceBadge: matchedRow ? rowProvenance(matchedRow) : "UNKNOWN",
       ruleScore,
       data01Labels,
       selected: item.selected,
@@ -732,16 +721,14 @@ export function computeMedallionItems(
 
   const total = data01Catalog?.total ?? items.length;
   const bronzeObservations = data01Catalog?.observations ?? items.length;
-  const quarantine = items.filter((i) => i.evaluationStatus === "QUARANTINED").length;
+  const quarantine = data01Connected ? data01Catalog?.counts?.QUARANTINED || 0 : items.filter((i) => i.evaluationStatus === "QUARANTINED").length;
   const silverValidated = data01Connected ? Math.max(0, total - quarantine) : 0;
   const goldScored = data01Connected
     ? (data01Catalog?.counts?.SCORED ?? 0) +
       (data01Catalog?.counts?.QUALIFIED ?? 0) +
       (data01Catalog?.counts?.QUEUED ?? 0)
     : 0;
-  const needsReview = items.filter(
-    (i) => i.evaluationStatus === "NEEDS_REVIEW" || i.evaluationStatus === "NOT_CONNECTED",
-  ).length;
+  const needsReview = data01Connected ? catalogPendingReview(data01Catalog) : items.filter(i=>i.evaluationStatus==="NEEDS_REVIEW"||i.evaluationStatus==="NOT_CONNECTED").length;
   const qualified = items.filter((i) => i.evaluationStatus === "QUALIFIED").length;
   const queued = items.filter((i) => i.evaluationStatus === "QUEUED").length;
   const rejected = items.filter((i) => i.evaluationStatus === "REJECTED").length;
@@ -760,7 +747,7 @@ export function computeMedallionItems(
       rejected,
       quarantine,
     },
-    dataProvenance: data01Connected ? "REAL DATA" : "NOT CONNECTED",
+    dataProvenance: data01Connected ? catalogProvenance(data01Catalog) : "NOT CONNECTED",
   };
 }
 
@@ -817,14 +804,28 @@ export function catalogPostView(row:Data01CatalogRow, detail:Data01PostDetailRes
  const state=e?.state??row.state;
  const status:MedallionItem["evaluationStatus"]=state==="QUARANTINED"?"QUARANTINED":state==="QUEUED"?"QUEUED":state==="QUALIFIED"?"QUALIFIED":state==="REJECTED"?"REJECTED":"NEEDS_REVIEW";
  return {id:row.id,data01PostId:row.id,sourcePostId:row.sourcePostId,itemIndex:0,
- author:b?.author?.name||row.author?.name||row.author?.handle||"Unknown",handle:b?.author?.handle||row.author?.handle||"",avatarUrl:b?.author?.avatarUrl||null,
+ author:b?.author?.name||row.author?.name||row.author?.handle||"Unknown",handle:b?.author?.handle||row.author?.handle||"",avatarUrl:(item&&session?.sourceImages?.[item.id]?.uri)||b?.author?.avatarUrl||null,
  sourceUrl:row.sourceUrl||"",publishedAt:b?.publishedAt||null,entityType:type,
  likesCount:b?.engagement?.likes??null,repliesCount:b?.engagement?.replies??null,repostsCount:b?.engagement?.reposts??null,sharesCount:b?.engagement?.shares??null,
- evaluationStatus:status,data01State:state,provenanceBadge:row.synthetic?"MOCK DATA":"REAL DATA",ruleScore:e?.gold?.score??row.score,data01Labels:e?.gold?.labels||row.labels,
+ evaluationStatus:status,data01State:state,provenanceBadge:detail?.bronze?sourceProvenance(detail.bronze):rowProvenance(row),ruleScore:e?.gold?.score??row.score,data01Labels:e?.gold?.labels||row.labels,
  selected:item?.selected??false,inclusion:"TARGET",wordCount:raw.trim().split(/\s+/).filter(Boolean).length,charCount:raw.length,hasAvatar:!!b?.author?.avatarUrl,
  spokenApproved:!!item?.spokenApproval?.valid,audioStatus:"MISSING",audioDurationSec:null,ambiguities:spokenAmbiguities(item?.spokenText||raw),proposalStatus:"NO_PROPOSAL",
- reviewReasons:[...(e?.gold?.reasons||[]),...(e?.silver?.quarantineReasons||[])],positiveSignals:[],reviewBlockers:exact?[]:[{code:"DETAIL_REQUIRED",title:"Loading verified source identity",hint:"Review requires full post details",severity:"warning"}],
+ reviewReasons:[...(e?.gold?.reasons||[]),...(e?.silver?.quarantineReasons||[])],positiveSignals:[],reviewBlockers:exact?(!e?.review||e.review.decision!=="ACCEPT" ? [...new Set([...(e?.silver?.flags||[]),...(type==="UNKNOWN"&&!e?.review?.confirmedType?["UNKNOWN_ENTITY_TYPE"]:[])])].map(code=>({code,title:code==="UNKNOWN_ENTITY_TYPE"?"Chưa xác nhận bài gốc hay bình luận":"Nội dung cần người dùng kiểm tra",hint:code,severity:"warning" as const})):[]):[{code:"DETAIL_REQUIRED",title:"Loading verified source identity",hint:"Review requires full post details",severity:"warning"}],
  duplicateGroupId:row.duplicate?.postId||null,revision:item?.revision??0,data01Revision:e?.revision??row.revision,manualLocks:item?.manualLocks||[],
  originalText:raw,displayText:item?.displayText??raw,spokenText:item?.spokenText??raw,topic:b?.topic??null,
  scope:"CATALOG_POST",sessionItemId:item?.id||null,identityVerified:!!exact};
+}
+
+export function rowProvenance(row:Data01CatalogRow):SourceProvenance {
+ if(row.synthetic===true)return 'SYNTHETIC';
+ return ['REAL','SYNTHETIC','UNKNOWN'].includes(row.provenance||'')?row.provenance!:'UNKNOWN';
+}
+export function catalogProvenance(catalog:Data01CatalogResponse|null|undefined):SourceProvenance {
+ if(!catalog?.total)return 'UNKNOWN';
+ if(catalog.provenanceCounts){const entries=Object.entries(catalog.provenanceCounts).filter(([,n])=>n>0);return entries.length===1&&entries[0][1]===catalog.total?entries[0][0] as SourceProvenance:'UNKNOWN';}
+ return catalog.rows.length===catalog.total?combinedProvenance(catalog.rows.map(rowProvenance)):'UNKNOWN';
+}
+export function sessionProvenance(session:StudioSession|null,catalog:Data01CatalogResponse|null|undefined):SourceProvenance {
+ if(!session)return 'UNKNOWN';
+ return combinedProvenance(session.items.filter(i=>i.selected).map(i=>{const row=matchCatalogIdentity(i.sourceUrl,catalog?.rows||[]);return row?rowProvenance(row):'UNKNOWN';}));
 }

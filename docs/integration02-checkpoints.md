@@ -138,3 +138,13 @@ Source worktrees `90451cf` and `66b8d59` remain clean.
 Not verified: any LIVE crawl of Threads, Official API collection with a real token, real
 Kokoro/TTS generation inside the integrated Studio, FINAL render and publishing, and
 behaviour with real media/avatar downloads.
+
+## Subsequent handoff verification — INTEGRATION-03
+
+Checkpoint 6 was preserved and reviewed at `e0d7c94`. Its 38 checks verify observed
+synthetic UI/backend behavior; the old harness did not hard-block all unused network
+or mutation paths. Voice preflight also persists a job/session, so "read-only" above
+means no synthesis, not no storage write. INTEGRATION-03 removes the automatic mount
+preflight and uses a separate strictly read-only, outbound-disabled real-copy runtime.
+See `integration03-real-data-acceptance.md` for the 9-post acceptance, provenance
+corrections, exact before/after hashes and explicit remaining limits.

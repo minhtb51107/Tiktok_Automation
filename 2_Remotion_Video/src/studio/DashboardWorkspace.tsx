@@ -4,6 +4,7 @@ import type { StudioJob } from "../../../1_nest_backend/src/studio/progress";
 import type { RenderManifest } from "../../../1_nest_backend/src/studio/render.types";
 import {
   computeMedallionItems,
+  catalogProvenance, sessionProvenance,
   formatBytes,
   type Data01CatalogResponse,
 } from "./studio-v2-adapter";
@@ -37,6 +38,7 @@ export function DashboardWorkspace({
   onNavigateArea,
   onNavigateStep,
 }: DashboardProps) {
+  const projectOrigin=sessionProvenance(session,data01Catalog),catalogOrigin=catalogProvenance(data01Catalog);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
@@ -106,6 +108,7 @@ export function DashboardWorkspace({
     <section
       className="v3-dashboard"
       aria-label="Không gian Tổng quan Sáng tạo & Vận hành"
+      data-source-provenance={projectOrigin}
     >
       {/* ROW 1: 4 CHROMATIC BENTO HERO CARDS (ANSWERING THE 4 CORE QUESTIONS IN 3 SECONDS) */}
       <div className="v3-hero-grid">
@@ -148,7 +151,7 @@ export function DashboardWorkspace({
           </div>
           <div className="v3-chroma-top">
             <span className="v3-prov-pill prov-dark-ink">
-              <span className="v3-pulse-dot" /> REAL DATA ·{" "}
+              <span className="v3-pulse-dot" /> {projectOrigin} ·{" "}
               {runningJobs.length > 0 ? "ĐANG XỬ LÝ" : "BẢN NHÁP (DRAFT)"}
             </span>
             <span className="v3-card-step-tag">01 · Trạng thái</span>
@@ -192,8 +195,7 @@ export function DashboardWorkspace({
               <>
                 Cả <strong>{medallion.counts.needsReview}/{medallion.counts.total} bài</strong>{" "}
                 trong DATA-01 đang ở trạng thái <strong>NEEDS REVIEW</strong>{" "}
-                (chưa xác nhận loại bài <em>Post/Comment</em>; 2 bài có từ viết tắt{" "}
-                <code>đcđ</code>, <code>clm/cmn</code>).
+                (xem từng bài để xác nhận nguồn, loại Post/Comment và các cảnh báo thực tế).
               </>
             ) : (
               <>
@@ -226,7 +228,7 @@ export function DashboardWorkspace({
               )}
             </div>
             <span className="v3-stack-caption">
-              {medallion.counts.qualified} tự động duyệt · {medallion.counts.needsReview} chờ duyệt
+              {medallion.counts.qualified} đạt ngưỡng · {medallion.counts.needsReview} chờ duyệt
             </span>
           </div>
           <div className="v3-chroma-footer">
@@ -325,7 +327,7 @@ export function DashboardWorkspace({
           </div>
           <div className="v3-chroma-top">
             <span className="v3-prov-pill prov-dark-ink">
-              REAL DATA · {completedRenders.length} MP4
+              {projectOrigin} · {completedRenders.length} MP4
             </span>
             <span className="v3-card-step-tag">03 · Kết quả</span>
           </div>
@@ -366,7 +368,7 @@ export function DashboardWorkspace({
           <div className="v3-bento-head">
             <div>
               <div className="v3-eyebrow-row">
-                <span className="v3-prov-pill prov-real">REAL DATA · MP4</span>
+                <span className="v3-prov-pill prov-real">{projectOrigin} · MP4</span>
                 <span className="v3-subtle-tag">
                   Phiên {session?.id.slice(0, 8)} · {medallion.items.length} cảnh
                 </span>
@@ -448,7 +450,7 @@ export function DashboardWorkspace({
                   <div className="v3-pipe-body">
                     <div className="v3-pipe-title-row">
                       <strong>Nguồn bài Threads</strong>
-                      <span className="v3-prov-pill prov-real">REAL DATA</span>
+                      <span className="v3-prov-pill prov-real">{projectOrigin}</span>
                     </div>
                     <p>
                       Đã lưu {medallion.items.length} bài viết gốc &{" "}
@@ -479,7 +481,7 @@ export function DashboardWorkspace({
                     </div>
                     <p>
                       {data01Connected
-                        ? `${medallion.counts.bronzeObservations} Bronze → ${medallion.counts.silverValidated} Silver → ${medallion.counts.goldScored} Gold đã chấm điểm (${medallion.counts.qualified} tự động duyệt)`
+                        ? `${medallion.counts.bronzeObservations} Bronze → ${medallion.counts.silverValidated} Silver → ${medallion.counts.goldScored} Gold đã chấm điểm (${medallion.counts.qualified} đạt ngưỡng)`
                         : "Chưa kết nối API DATA-01"}
                     </p>
                   </div>
@@ -607,7 +609,7 @@ export function DashboardWorkspace({
                   }`}
                 >
                   {data01Connected
-                    ? `REAL DATA · ${medallion.counts.needsReview} NEEDS REVIEW`
+                    ? `${catalogOrigin} · ${data01Catalog?.reviewSummary?.pending ?? medallion.counts.needsReview} NEEDS REVIEW`
                     : "NOT CONNECTED"}
                 </span>
               </div>
@@ -741,7 +743,7 @@ export function DashboardWorkspace({
               <span>Trạng thái DATA-01 Engine</span>
               <strong>
                 {data01Connected
-                  ? `Đã kết nối (${medallion.counts.bronzeObservations} Bronze / ${medallion.counts.silverValidated} Silver / ${medallion.counts.goldScored} Gold · 0 tự động duyệt)`
+                  ? `Đã kết nối (${medallion.counts.bronzeObservations} Bronze / ${medallion.counts.silverValidated} Silver / ${medallion.counts.goldScored} Gold · 0 đạt ngưỡng)`
                   : "Chưa kết nối (/api/studio/data)"}
               </strong>
             </div>

@@ -26,6 +26,7 @@ import {
 import {
   catalogPendingReview,
   fetchData01Catalog,
+  catalogProvenance,
   type Data01CatalogResponse,
 } from "./studio-v2-adapter";
 
@@ -738,7 +739,7 @@ function App() {
                   : "Chưa kết nối API DATA-01"
               }
             >
-              {data01Connected ? "● DATA-01: REAL DATA" : "○ DATA-01: NOT CONNECTED"}
+              {data01Connected ? `● DATA-01: ${catalogProvenance(data01Catalog)}` : "○ DATA-01: NOT CONNECTED"}
             </span>
             <span className="badge v3-session-badge">
               Phiên cục bộ{" "}
@@ -965,6 +966,7 @@ function App() {
           />
         ) : step === "Video Editor" && session ? (
           <EditorWorkspace
+            data01Catalog={data01Catalog}
             onNavigate={navigateStep}
             onDirty={setEditorDirty}
             session={session}

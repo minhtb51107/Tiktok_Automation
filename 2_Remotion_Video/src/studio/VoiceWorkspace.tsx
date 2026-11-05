@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type {
   StudioSession,
   StudioItem,
@@ -256,7 +256,7 @@ export function VoiceWorkspace({
   act: (id: string, body: Record<string, unknown>) => Promise<void>;
   batch: (body: Record<string, unknown>) => Promise<void>;
 }) {
-  useEffect(()=>{if(!session.voiceRuntime)check();},[session.id]);
+  // Runtime preflight is explicit: opening this workspace never creates a job.
   const [gc, setGc] = useState("");
   const [allSpeed, setAllSpeed] = useState<number>(VOICE_SPEED.default);
   const [allVoice, setAllVoice] = useState("");

@@ -43,5 +43,8 @@ describe('catalog provenance — SYNTHETIC TEST DATA', () => {
     expect(rows).toHaveLength(2);
     expect(rows.find((r) => r.sourcePostId === 'FLAGSYN001')?.synthetic).toBe(true);
     expect(rows.find((r) => r.sourcePostId === 'FLAGREAL001')?.synthetic).toBe(false);
+    const catalog=await engine.catalog();
+    expect(catalog.provenanceCounts).toEqual({REAL:0,SYNTHETIC:1,UNKNOWN:1});
+    expect(catalog.reviewSummary.pending).toBe(2);
   });
 });
