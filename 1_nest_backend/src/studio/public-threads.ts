@@ -84,9 +84,15 @@ export interface SourceAttempt {
 async function publicGet(
   url: string,
   timeoutMs = 20000,
+  absoluteDeadline = false,
 ): Promise<{ status: number; location: string | null; html: string }> {
   const u = new URL(threadsUrl(url));
-  const addresses = await lookup(u.hostname, { all: true });
+  const resolving = lookup(u.hostname, { all: true });
+  let dnsDeadline: ReturnType<typeof setTimeout> | undefined;
+  const addresses = await (absoluteDeadline ? Promise.race([
+    resolving,
+    new Promise<never>((_,reject)=>{dnsDeadline=setTimeout(()=>reject(Error('Public DNS deadline exceeded')),timeoutMs);}),
+  ]).finally(()=>{if(dnsDeadline)clearTimeout(dnsDeadline);}) : resolving);
   // Pin a public IPv4 address so DNS cannot change between validation and connection.
   const a = addresses.find(
     (x) =>
@@ -127,9 +133,10 @@ async function publicGet(
         res.on('error', reject);
       },
     );
-    req.setTimeout(timeoutMs, () =>
-      req.destroy(Error('Public response timeout (20s)')),
-    );
+    req.setTimeout(timeoutMs, () => req.destroy(Error('Public response timeout')));
+    // DATA-04 controlled reads also bound total response time, not just idle socket time.
+    const deadline = absoluteDeadline ? setTimeout(()=>req.destroy(Error('Public response deadline exceeded')),timeoutMs) : undefined;
+    req.on('close',()=>{if(deadline)clearTimeout(deadline);});
     req.on('error', reject);
     req.end();
   });
@@ -163,7 +170,7 @@ export async function extractPublicThreads(
     let url = threadsUrl(input),
       html = '';
     for (let n = 0; n <= (controlled?2:5); n++) {
-      const response = await publicGet(url,controlled?8000:20000);
+      const response = await publicGet(url,controlled?8000:20000,controlled);
       out.redirects.push({
         url,
         status: response.status,

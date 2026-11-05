@@ -1,13 +1,92 @@
-import {describe,test,expect} from '@jest/globals';
-import {evaluateConversation} from './conversation-quality';
-import {collectEvidence} from './conversation-evidence';
-import type {PublicPost} from './conversation-contracts';
-const root:PublicPost={id:'P',url:'https://www.threads.com/@test/post/P',author:{handle:'test',name:null},originalText:'Công ty yêu cầu đi làm mỗi ngày, tôi chia sẻ trải nghiệm công việc.',publishedAt:null,engagement:{likes:null,replies:null,reposts:null,shares:null},provenance:{documentUrl:'https://www.threads.com/@test/post/P',observedAt:'2026-11-01T00:00:00Z',synthetic:true,method:'TEST DATA'}};
-const collection=(bodies:string[])=>collectEvidence(root,{url:root.url,observedAt:root.provenance.observedAt,synthetic:true,visibleUrls:bodies.map((_,i)=>`https://www.threads.com/@test/post/R${i}`),jsonLd:bodies.map((text,i)=>({'@type':'Comment',url:`https://www.threads.com/@test/post/R${i}`,author:{url:'https://www.threads.com/@test'},parentItem:root.url,text}))});
-describe('DATA04 quality — synthetic Vietnamese cases',()=>{
- test('emoji, short counterargument, experience, duplicate, ad and uncertainty distinct',()=>{const c=collection(['😂😂','Nhưng công ty sai.','Tôi từng đi làm tại công ty, mỗi ngày mất ba giờ đi đường.','Nhưng công ty sai.','Mua ngay giảm giá liên hệ zalo 0901234567','Có lẽ cuộc đời là một giấc mơ.']);const q=evaluateConversation(c,'2026-11-02T00:00:00Z');expect(q.replyQuality.map(x=>x.label)).toEqual(['LOW_INFORMATION','SUBSTANTIVE','SUBSTANTIVE','DUPLICATE','SPAM','UNCERTAIN']);expect(q.sample.substantiveRatio).toBe(2/6);expect(q.popularity.score).toBeNull();expect(q.precisionAt10.status).toBe('NOT_MEASURED');});
- test('employment and TOEIC discussion not advertisement by keywords alone',()=>{const q=evaluateConversation(collection(['Tôi từng làm công ty yêu cầu TOEIC nhưng lương thấp.']),'2026-11-02T00:00:00Z');expect(q.replyQuality[0].label).not.toBe('SPAM');});
- test('no verified sample means unknown, not bad quality or zero global replies',()=>{const q=evaluateConversation(collection([]),'2026-11-02T00:00:00Z');expect(q.conversation.score).toBeNull();expect(q.sample.substantiveRatio).toBeNull();expect(q.sample.collectionStatus).toBe('UNKNOWN');});
- test('scores reproducible and source immutable',()=>{const c=collection(['Nhưng công ty sai.']),before=JSON.stringify(c);expect(evaluateConversation(c,'2026-11-02T00:00:00Z')).toEqual(evaluateConversation(c,'2026-11-02T00:00:00Z'));expect(JSON.stringify(c)).toBe(before);});
- test('near duplicates need substantial lexical overlap, not merely same topic',()=>{const q=evaluateConversation(collection(['Tôi từng đi làm công ty mỗi ngày mất ba giờ trên đường vì đường rất xa nhà','Tôi từng đi làm công ty mỗi ngày mất ba giờ trên đường vì đường rất xa nhà nhé','Nhưng công ty yêu cầu tăng lương cần giải thích công bằng.']),'2026-11-02T00:00:00Z');expect(q.replyQuality[1].label).toBe('DUPLICATE');expect(q.replyQuality[2].label).not.toBe('DUPLICATE');});
+import { describe, test, expect } from '@jest/globals';
+import { evaluateConversation } from './conversation-quality';
+import { collectEvidence } from './conversation-evidence';
+import type { PublicPost } from './conversation-contracts';
+const root: PublicPost = {
+  id: 'P',
+  url: 'https://www.threads.com/@test/post/P',
+  author: { handle: 'test', name: null },
+  originalText:
+    'Công ty yêu cầu đi làm mỗi ngày, tôi chia sẻ trải nghiệm công việc.',
+  publishedAt: null,
+  engagement: { likes: null, replies: null, reposts: null, shares: null },
+  provenance: {
+    documentUrl: 'https://www.threads.com/@test/post/P',
+    observedAt: '2026-11-01T00:00:00Z',
+    synthetic: true,
+    method: 'TEST DATA',
+  },
+};
+const collection = (bodies: string[]) =>
+  collectEvidence(root, {
+    url: root.url,
+    observedAt: root.provenance.observedAt,
+    synthetic: true,
+    visibleUrls: bodies.map(
+      (_, i) => `https://www.threads.com/@test/post/R${i}`,
+    ),
+    jsonLd: bodies.map((text, i) => ({
+      '@type': 'Comment',
+      url: `https://www.threads.com/@test/post/R${i}`,
+      author: { url: 'https://www.threads.com/@test' },
+      parentItem: root.url,
+      text,
+    })),
+  });
+describe('DATA04 quality — synthetic Vietnamese cases', () => {
+  test('emoji, short counterargument, experience, duplicate, ad and uncertainty distinct', () => {
+    const c = collection([
+      '😂😂',
+      'Nhưng công ty sai.',
+      'Tôi từng đi làm tại công ty, mỗi ngày mất ba giờ đi đường.',
+      'Nhưng công ty sai.',
+      'Mua ngay giảm giá liên hệ zalo 0901234567',
+      'Có lẽ cuộc đời là một giấc mơ.',
+    ]);
+    const q = evaluateConversation(c, '2026-11-02T00:00:00Z');
+    expect(q.replyQuality.map((x) => x.label)).toEqual([
+      'LOW_INFORMATION',
+      'SUBSTANTIVE',
+      'SUBSTANTIVE',
+      'DUPLICATE',
+      'SPAM',
+      'UNCERTAIN',
+    ]);
+    expect(q.sample.substantiveRatio).toBe(2 / 6);
+    expect(q.popularity.score).toBeNull();
+    expect(q.precisionAt10.status).toBe('NOT_MEASURED');
+  });
+  test('employment and TOEIC discussion not advertisement by keywords alone', () => {
+    const q = evaluateConversation(
+      collection(['Tôi từng làm công ty yêu cầu TOEIC nhưng lương thấp.']),
+      '2026-11-02T00:00:00Z',
+    );
+    expect(q.replyQuality[0].label).not.toBe('SPAM');
+  });
+  test('no verified sample means unknown, not bad quality or zero global replies', () => {
+    const q = evaluateConversation(collection([]), '2026-11-02T00:00:00Z');
+    expect(q.conversation.score).toBeNull();
+    expect(q.sample.substantiveRatio).toBeNull();
+    expect(q.sample.collectionStatus).toBe('UNKNOWN');
+  });
+  test('scores reproducible and source immutable', () => {
+    const c = collection(['Nhưng công ty sai.']),
+      before = JSON.stringify(c);
+    expect(evaluateConversation(c, '2026-11-02T00:00:00Z')).toEqual(
+      evaluateConversation(c, '2026-11-02T00:00:00Z'),
+    );
+    expect(JSON.stringify(c)).toBe(before);
+  });
+  test('near duplicates need substantial lexical overlap, not merely same topic', () => {
+    const q = evaluateConversation(
+      collection([
+        'Tôi từng đi làm công ty mỗi ngày mất ba giờ trên đường vì đường rất xa nhà',
+        'Tôi từng đi làm công ty mỗi ngày mất ba giờ trên đường vì đường rất xa nhà nhé',
+        'Nhưng công ty yêu cầu tăng lương cần giải thích công bằng.',
+      ]),
+      '2026-11-02T00:00:00Z',
+    );
+    expect(q.replyQuality[1].label).toBe('DUPLICATE');
+    expect(q.replyQuality[2].label).not.toBe('DUPLICATE');
+  });
 });
