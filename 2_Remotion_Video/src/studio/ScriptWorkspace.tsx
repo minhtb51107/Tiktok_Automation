@@ -1,3 +1,4 @@
+import {useRuntimeSafety} from './RuntimeSafety';
 import {EditorialDurationPanel} from './EditorialDurationPanel';
 import { useState } from "react";
 import type {
@@ -54,6 +55,7 @@ export function ScriptWorkspace({
   busy: boolean;
   dirty: boolean;
 }) {
+  const {locked}=useRuntimeSafety();
   const [focusId, setFocusId] = useState<string>("ALL");
   const selectedRows = session.items.filter((i) => i.selected).sort((a, b) => a.order - b.order);
   return (
@@ -147,7 +149,7 @@ export function ScriptWorkspace({
                 </label>
               </div>
               <button
-                disabled={busy || dirty || session.aiBillingBlocked}
+                disabled={locked || busy || dirty || session.aiBillingBlocked}
                 onClick={() => propose(item.id, "LIVE")}
               >
                 AI sửa chính tả

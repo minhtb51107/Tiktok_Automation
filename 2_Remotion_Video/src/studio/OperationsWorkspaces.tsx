@@ -1,3 +1,4 @@
+import {useRuntimeSafety,RuntimeRestriction} from './RuntimeSafety';
 import { ProductionBridge } from "./ProductionBridge";
 import { studioRequest } from "./integration-api";
 import { useState,useEffect } from "react";
@@ -966,6 +967,7 @@ export function SettingsWorkspace({
   onCheckVoiceRuntime: () => void;
   busy: boolean;
 }) {
+  const {locked}=useRuntimeSafety();
   const assetSummary = summarizePublicAssets(publicAssets);
   const runtime = session?.voiceRuntime;
 
@@ -976,7 +978,7 @@ export function SettingsWorkspace({
           <span className="v2-eyebrow">
             STUDIO CONFIGURATION · RUNTIME, VOICE, PRESETS & SAFETY THRESHOLDS
           </span>
-          <h2>Cấu hình Hệ thống & Giọng đọc</h2>
+          <h2>Cấu hình Hệ thống & Giọng đọc</h2><RuntimeRestriction/>
           <p>
             Kiểm tra trạng thái Kokoro TTS cục bộ, kho tài nguyên nền, giới hạn
             RAM an toàn và chế độ giao diện Sáng / Tối.
@@ -984,7 +986,7 @@ export function SettingsWorkspace({
         </div>
         <div className="v2-header-actions">
           <button
-            disabled={busy || !session}
+            disabled={locked || busy || !session}
             onClick={onCheckVoiceRuntime}
           >
             Kiểm tra Runtime Kokoro
@@ -1004,7 +1006,7 @@ export function SettingsWorkspace({
           <div className="v2-card-header">
             <div>
               <h3>Kokoro Local TTS & Voice Presets</h3>
-              <small>Real runtime status from backend preflight</small>
+              <small>Saved preflight snapshot, not a current runtime verification</small>
             </div>
             <span className="v2-status-pill status-success">
               {runtime?.status || "STANDBY"}
@@ -1014,8 +1016,8 @@ export function SettingsWorkspace({
             <div className="v2-kv-row">
               <span>Python & Package</span>
               <strong>
-                {runtime?.python || "Local Python"} · Kokoro{" "}
-                {runtime?.packageVersion || "0.9.4"}
+                {runtime?.python || "NOT_VERIFIED"} · Kokoro{" "}
+                {runtime?.packageVersion || "NOT_VERIFIED"}
               </strong>
             </div>
             <div className="v2-kv-row">
@@ -1029,7 +1031,7 @@ export function SettingsWorkspace({
               <span>Installed Voices</span>
               <strong>
                 {runtime?.voices.map((v) => v.label).join(", ") ||
-                  "My Yen, Nam Minh, Linh, An, Khoa (Run preflight to verify)"}
+                  "NOT_VERIFIED — no installed voices inferred"}
               </strong>
             </div>
             <div className="v2-kv-row">
@@ -1125,7 +1127,7 @@ export function SettingsWorkspace({
             ))}
             <div className="v2-kv-row">
               <span>Medallion Gold Threshold</span>
-              <strong>Score ≥ 76 · 0 Ambiguous Terms · Audio Linked</strong>
+              <strong>MOCK / design reference only — use DATA-01/Gold reports for actual rules</strong>
             </div>
           </div>
         </section>

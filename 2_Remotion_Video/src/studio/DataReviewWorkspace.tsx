@@ -1,3 +1,4 @@
+import {useRuntimeSafety} from './RuntimeSafety';
 import {ConversationPanel} from './ConversationPanel';
 import { targetType, reviewPayload, isUserAccepted, type TargetType } from "../../../1_nest_backend/src/data-engine/studio-integration";
 import { useEffect, useMemo, useState } from "react";
@@ -139,6 +140,7 @@ export function DataReviewWorkspace({
   onSave,
   onNavigateStep,
 }: DataReviewProps) {
+  const {locked}=useRuntimeSafety();
   const [filter, setFilter] = useState<FilterTab>("ALL");
   const [viewMode, setViewMode] = useState<ViewMode>("SPLIT_DETAIL");
   const [search, setSearch] = useState("");
@@ -751,7 +753,7 @@ export function DataReviewWorkspace({
               <button
                 type="button"
                 className="s2-decision-btn btn-accept"
-                disabled={reviewPending}
+                disabled={locked || reviewPending}
                 onClick={() => requestBatchReview("ACCEPT")}
               >
                 ✓ Chấp nhận ({batchCheckedIds.length})
@@ -759,7 +761,7 @@ export function DataReviewWorkspace({
               <button
                 type="button"
                 className="s2-decision-btn btn-hold"
-                disabled={reviewPending}
+                disabled={locked || reviewPending}
                 onClick={() => requestBatchReview("NEEDS_REVIEW")}
               >
                 ⏳ Cần xem lại
@@ -767,7 +769,7 @@ export function DataReviewWorkspace({
               <button
                 type="button"
                 className="s2-decision-btn btn-reject"
-                disabled={reviewPending}
+                disabled={locked || reviewPending}
                 onClick={() => requestBatchReview("REJECT")}
               >
                 ✕ Từ chối
@@ -867,7 +869,7 @@ export function DataReviewWorkspace({
               <button
                 type="button"
                 className="s2-btn-secondary"
-                disabled={reviewPending}
+                disabled={locked || reviewPending}
                 onClick={() => {
                   setReviewError("");
                   setConfirmation(null);
@@ -878,7 +880,7 @@ export function DataReviewWorkspace({
               <button
                 type="button"
                 className="s2-btn-primary"
-                disabled={reviewPending || !confirmation.reason.trim()}
+                disabled={locked || reviewPending || !confirmation.reason.trim()}
                 onClick={() => void executeConfirmedAction()}
                 data-testid="confirm-review-submit"
               >
@@ -1111,7 +1113,7 @@ export function DataReviewWorkspace({
                     <button
                       type="button"
                       className="s2-decision-btn btn-accept"
-                      disabled={reviewPending}
+                      disabled={locked || reviewPending}
                       onClick={() => requestSingleReview(item, "ACCEPT")}
                     >
                       ✓ Chấp nhận
@@ -1119,7 +1121,7 @@ export function DataReviewWorkspace({
                     <button
                       type="button"
                       className="s2-decision-btn btn-hold"
-                      disabled={reviewPending}
+                      disabled={locked || reviewPending}
                       onClick={() => requestSingleReview(item, "NEEDS_REVIEW")}
                     >
                       ⏳ Cần xem lại
@@ -1127,7 +1129,7 @@ export function DataReviewWorkspace({
                     <button
                       type="button"
                       className="s2-decision-btn btn-reject"
-                      disabled={reviewPending}
+                      disabled={locked || reviewPending}
                       onClick={() => requestSingleReview(item, "REJECT")}
                     >
                       ✕ Từ chối
@@ -1366,7 +1368,7 @@ export function DataReviewWorkspace({
                           <button
                             type="button"
                             className="s2-decision-btn btn-accept large"
-                            disabled={reviewPending}
+                            disabled={locked || reviewPending}
                             onClick={() =>
                               requestSingleReview(activeItem, "ACCEPT")
                             }
@@ -1377,7 +1379,7 @@ export function DataReviewWorkspace({
                           <button
                             type="button"
                             className="s2-decision-btn btn-hold large"
-                            disabled={reviewPending}
+                            disabled={locked || reviewPending}
                             onClick={() =>
                               requestSingleReview(activeItem, "NEEDS_REVIEW")
                             }
@@ -1388,7 +1390,7 @@ export function DataReviewWorkspace({
                           <button
                             type="button"
                             className="s2-decision-btn btn-reject large"
-                            disabled={reviewPending}
+                            disabled={locked || reviewPending}
                             onClick={() =>
                               requestSingleReview(activeItem, "REJECT")
                             }
@@ -1422,7 +1424,7 @@ export function DataReviewWorkspace({
                           <button
                             type="button"
                             className="s2-btn-primary"
-                            onClick={() => requestEnqueue(activeItem)}
+                            disabled={locked} onClick={() => requestEnqueue(activeItem)}
                           >
                             🚀 Đưa vào Hàng đợi Sản xuất
                           </button>

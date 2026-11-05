@@ -280,7 +280,7 @@ export function DashboardWorkspace({
             </li>
             <li className="done">
               <span className="v3-check-box">✓</span>
-              <span>Tạo 5 giọng đọc nháp Kokoro ({totalDurationSec.toFixed(0)}s)</span>
+              <span>Mở Voice Studio — không tự tạo giọng đọc ({totalDurationSec.toFixed(0)}s)</span>
             </li>
             <li className="pending">
               <span className="v3-check-box">!</span>
@@ -501,7 +501,7 @@ export function DashboardWorkspace({
                       </span>
                     </div>
                     <p>
-                      Giọng Mai Linh · {totalDurationSec.toFixed(1)}s tổng thời
+                      Giọng theo manifest từng cảnh · {totalDurationSec.toFixed(1)}s tổng thời
                       lượng · {medallion.items.length - cleanScriptScenes.length}{" "}
                       cảnh lưu ý từ lóng/số
                     </p>

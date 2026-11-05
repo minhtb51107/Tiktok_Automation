@@ -1,0 +1,13 @@
+import {useEffect,useState} from 'react';
+type Runtime={mode:string;sourceHead?:string;branch?:string;sourceDirty?:boolean;bundleHash?:string;reason?:string;capabilities?:Record<string,boolean>};
+let current:Runtime={mode:'UNKNOWN'},started=false;const listeners=new Set<(r:Runtime)=>void>();
+function start(){if(started)return;started=true;void fetch('/api/studio/runtime').then(async r=>{if(!r.ok)return {mode:'UNKNOWN'};const j=await r.json();return j.data??j}).catch(()=>({mode:'UNKNOWN'})).then(r=>{current=r;listeners.forEach(fn=>fn(r))})}
+export function useRuntimeSafety(){const [runtime,setRuntime]=useState(current);useEffect(()=>{listeners.add(setRuntime);start();setRuntime(current);return()=>{listeners.delete(setRuntime)}},[]);return {runtime,locked:runtime.mode==='REAL_DATA_COPY'};}
+export function RuntimeSafetyBanner(){const {runtime,locked}=useRuntimeSafety();return <details data-testid="runtime-safety" style={{position:'relative',flexShrink:0,zIndex:70,fontSize:12,lineHeight:1.2,margin:0,padding:0,border:0,background:'transparent'}}>
+ <summary style={{cursor:'pointer',padding:'5px 8px',border:'1px solid #a98b45',borderRadius:8,whiteSpace:'nowrap'}}>{runtime.mode} · {locked?'isolated':'unverified'}</summary>
+ <div className="v2-card" style={{position:'absolute',right:0,top:'100%',marginTop:8,padding:16,width:'min(520px,85vw)',maxHeight:'70vh',overflow:'auto',whiteSpace:'normal',background:'var(--ed-panel, #202332)',color:'var(--ed-text, #eef0f7)',boxShadow:'0 8px 24px #0006'}}>
+ <strong>{locked?'Isolated saved Threads catalog; production is not connected':'Runtime origin not verified'}</strong>
+ {runtime.sourceHead&&<small style={{display:'block'}}>Backend {runtime.sourceHead.slice(0,7)} · {runtime.branch}{runtime.sourceDirty?' · source WIP':''} · frontend SHA256 {runtime.bundleHash?.slice(0,16)}</small>}
+ {locked&&<><p style={{margin:'5px 0'}}>WORKING: catalog, reports, saved Script/Editor edits, local preview and existing audio playback. DISABLED_BY_SAFETY: LIVE collection, OAuth, TTS, render, publishing, approvals/enqueue, uploads and scheduler.</p><small>REAL describes stored source provenance, not new online verification or rights approval. No synthetic posts/tones are injected. This is acceptance mode, not production readiness.</small></>}
+ </div></details>}
+export function RuntimeRestriction(){const {locked}=useRuntimeSafety();return locked?<p role="status" data-testid="safety-restriction">DISABLED_BY_SAFETY · REAL_DATA_COPY. No LIVE worker, approval/queue changes or credential operation is authorized here.</p>:null}

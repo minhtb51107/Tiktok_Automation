@@ -1,3 +1,4 @@
+import {useRuntimeSafety} from './RuntimeSafety';
 import { useEffect, useState } from "react";
 import type { StudioSession } from "../../../1_nest_backend/src/studio/studio.contracts";
 import { studioRequest } from "./integration-api";
@@ -10,6 +11,7 @@ export function EditorialDurationPanel({
   busy?: boolean;
   onApprove?: (revision: number, reason: string) => void;
 }) {
+  const {locked}=useRuntimeSafety();
   const [report, setReport] = useState<any>(null),
     [error, setError] = useState(""),
     [reason, setReason] = useState(""),
@@ -76,7 +78,7 @@ export function EditorialDurationPanel({
           />
           <button
             data-testid="editorial-script-approve"
-            disabled={busy || !reviewed || !reason.trim()}
+            disabled={locked || busy || !reviewed || !reason.trim()}
             onClick={() => onApprove(session.revision, reason)}
           >
             Approve script only

@@ -1,3 +1,4 @@
+import {useRuntimeSafety,RuntimeRestriction} from './RuntimeSafety';
 import { useState } from "react";
 import type {
   StudioSession,
@@ -19,6 +20,7 @@ function VoiceScene({
   busy: boolean;
   act: (id: string, body: Record<string, unknown>) => Promise<void>;
 }) {
+  const {locked}=useRuntimeSafety();
   const runtime = session.voiceRuntime,
     runnable = runtime?.voices || [],
     defaultVoice = runnable.find(v=>v.id === "my_yen")?.id || runnable[0]?.id || "";
@@ -43,7 +45,7 @@ function VoiceScene({
   const settingsDirty =
     voice !== (item.voiceSettings?.voice || "") ||
     speed !== (item.voiceSettings?.speed ?? VOICE_SPEED.default);
-  const blockReason = busy
+  const blockReason = locked ? "DISABLED_BY_SAFETY: REAL_DATA_COPY; use existing audio playback only." : busy
     ? "Another operation is running (one at a time)."
     : runtime?.status !== "READY"
         ? "Voice runtime is not READY — press Check local runtime."
@@ -88,7 +90,7 @@ function VoiceScene({
         Item revision {item.revision}
       </p>
       <button
-        disabled={busy || item.spokenApproval?.valid}
+        disabled={locked || busy || item.spokenApproval?.valid}
         onClick={() => {
           if (
             !ambiguities.length ||
@@ -105,7 +107,7 @@ function VoiceScene({
         <label>
           Kokoro voice
           <select
-            disabled={busy}
+            disabled={locked || busy}
             value={voice}
             onChange={(e) => setVoice(e.target.value)}
           >
@@ -131,7 +133,7 @@ function VoiceScene({
             min={VOICE_SPEED.min}
             max={VOICE_SPEED.max}
             step={VOICE_SPEED.step}
-            disabled={busy}
+            disabled={locked || busy}
             value={speed}
             onChange={(e) => setSpeed(Number(e.target.value))}
           />
@@ -139,7 +141,7 @@ function VoiceScene({
       </div>
       <div className="actions">
         <button
-          disabled={busy || !settingsDirty}
+          disabled={locked || busy || !settingsDirty}
           onClick={() =>
             void act(item.id, {
               action: "SETTINGS",
@@ -196,7 +198,7 @@ function VoiceScene({
           <div>
             <button
               disabled={
-                busy ||
+                locked || busy ||
                 asset.status !== "GENERATED" ||
                 !item.spokenApproval?.valid
               }
@@ -261,6 +263,7 @@ export function VoiceWorkspace({
   const [allSpeed, setAllSpeed] = useState<number>(VOICE_SPEED.default);
   const [allVoice, setAllVoice] = useState("");
   const [chosen, setChosen] = useState<string[]>([]), [focusId, setFocusId] = useState<string>("ALL");
+  const {locked}=useRuntimeSafety();
   const runtime = session.voiceRuntime;
   const selected = session.items.filter((i) => i.selected);
   const names = new Map(session.items.map((i) => [i.id, i.author.displayName]));
@@ -268,12 +271,12 @@ export function VoiceWorkspace({
     <>
       <section className="source-header">
         <div>
-          <h2>03 / Voice Studio</h2>
+          <h2>03 / Voice Studio</h2><RuntimeRestriction/>
           <p>
             Generate DRAFT để nghe thử mà không cần duyệt nội dung. Chỉ duyệt spoken text/audio sau khi kiểm tra; luôn xử lý từng cảnh một.
           </p>
         </div>
-        <button disabled={busy || dirty} onClick={check}>
+        <button disabled={locked || busy || dirty} onClick={check}>
           Check local runtime
         </button>
       </section>
@@ -281,7 +284,7 @@ export function VoiceWorkspace({
         <h3>All selected scenes ({selected.length})</h3>
         <div className="actions">
           <button
-            disabled={busy || dirty}
+            disabled={locked || busy || dirty}
             onClick={() => {
               if (
                 window.confirm(
@@ -297,7 +300,7 @@ export function VoiceWorkspace({
             Giọng áp dụng hàng loạt
             <select
               value={allVoice}
-              disabled={busy}
+              disabled={locked || busy}
               onChange={(e) => setAllVoice(e.target.value)}
             >
               <option value="">Chọn giọng</option>
@@ -322,14 +325,14 @@ export function VoiceWorkspace({
               min={VOICE_SPEED.min}
               max={VOICE_SPEED.max}
               step={VOICE_SPEED.step}
-              disabled={busy}
+              disabled={locked || busy}
               value={allSpeed}
               onChange={(e) => setAllSpeed(Number(e.target.value))}
             />
           </label>
           <button
             disabled={
-              busy || dirty || !runtime?.voices.some((v) => v.id === allVoice)
+              locked || busy || dirty || !runtime?.voices.some((v) => v.id === allVoice)
             }
             title="Áp dụng cho các cảnh đánh dấu, hoặc tất cả nếu không đánh dấu cảnh nào"
             onClick={() =>
@@ -345,7 +348,7 @@ export function VoiceWorkspace({
           </button>
           <button
             className="primary"
-            disabled={busy || dirty || runtime?.status !== "READY"}
+            disabled={locked || busy || dirty || runtime?.status !== "READY"}
             title={
               runtime?.status === "READY"
                 ? "Skips unapproved scenes and unchanged valid audio"
@@ -370,7 +373,7 @@ export function VoiceWorkspace({
               <input
                 type="checkbox"
                 checked={chosen.includes(i.id)}
-                disabled={busy}
+                disabled={locked || busy}
                 onChange={(e) =>
                   setChosen(
                     e.target.checked
@@ -434,7 +437,7 @@ export function VoiceWorkspace({
           </p>
         )}
         <button
-          disabled={busy}
+          disabled={locked || busy}
           onClick={() =>
             void fetch(`/api/studio/sessions/${session.id}/voice-gc-preview`)
               .then((r) => r.json())

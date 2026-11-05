@@ -1,3 +1,4 @@
+import {useRuntimeSafety} from './RuntimeSafety';
 import { useEffect, useState, useRef } from "react";
 import type { EditorialPlan } from "../../../1_nest_backend/src/data-engine/editorial-contracts";
 import { studioRequest, exportJson } from "./integration-api";
@@ -17,6 +18,7 @@ export function EditorialPanel({
     [error, setError] = useState(""),
     [selection, setSelection] = useState(false),
     [confirm, setConfirm] = useState(false);
+  const {locked}=useRuntimeSafety();
   const lock = useRef(false);
   async function load(active = () => true) {
     const plans = await studioRequest<EditorialPlan[]>(base + "/plans"),
@@ -97,7 +99,7 @@ export function EditorialPanel({
           </label>
           <button
             data-testid="editorial-create-plan"
-            disabled={busy || !selection}
+            disabled={locked || busy || !selection}
             onClick={() =>
               void action(async () => {
                 const p = await studioRequest<EditorialPlan>(base + "/plans", {
@@ -162,7 +164,7 @@ export function EditorialPanel({
                 <select
                   aria-label={"Kind " + s.id}
                   value={s.kind}
-                  disabled={s.locked || busy}
+                  disabled={locked || s.locked || busy}
                   onChange={(e) => {
                     setPlan({
                       ...plan,
@@ -187,7 +189,7 @@ export function EditorialPanel({
                 <textarea
                   aria-label={"Display " + s.id}
                   value={s.displayText}
-                  disabled={busy || s.locked || s.kind === "QUOTE"}
+                  disabled={locked || busy || s.locked || s.kind === "QUOTE"}
                   onChange={(e) => {
                     setPlan({
                       ...plan,
@@ -207,7 +209,7 @@ export function EditorialPanel({
                   data-testid={"editorial-narration-" + s.id}
                   value={s.narrationText}
                   rows={4}
-                  disabled={busy || s.locked || s.kind === "QUOTE"}
+                  disabled={locked || busy || s.locked || s.kind === "QUOTE"}
                   onChange={(e) => {
                     setPlan({
                       ...plan,
@@ -247,7 +249,7 @@ export function EditorialPanel({
                 Manual lock (save unlock separately before editing)
               </label>
               <button
-                disabled={index === 0 || busy}
+                disabled={locked || index === 0 || busy}
                 onClick={() => {
                   const sections = [...plan.sections];
                   [sections[index - 1], sections[index]] = [
@@ -264,7 +266,7 @@ export function EditorialPanel({
           ))}
           <button
             data-testid="editorial-save"
-            disabled={busy || !dirty}
+            disabled={locked || busy || !dirty}
             onClick={() =>
               void action(async () => {
                 setPlan(
@@ -315,7 +317,7 @@ export function EditorialPanel({
           </label>
           <button
             data-testid="editorial-create-project"
-            disabled={busy || dirty || !ready || !queued || !confirm}
+            disabled={locked || busy || dirty || !ready || !queued || !confirm}
             onClick={() =>
               void action(async () => {
                 const e = root.evaluation,

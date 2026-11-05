@@ -1,3 +1,4 @@
+import {useRuntimeSafety} from './RuntimeSafety';
 import {EditorialPanel} from './EditorialPanel';
 import { useEffect, useRef, useState } from "react";
 import type {
@@ -32,6 +33,7 @@ export function ConversationPanel({
 }: {
   sourceUrl?: string | null;
 }) {
+  const {locked}=useRuntimeSafety();
   const [options, setOptions] = useState<any>(null),
     [runs, setRuns] = useState<ConversationRun[]>([]),
     [runId, setRunId] = useState(""),
@@ -158,6 +160,7 @@ export function ConversationPanel({
         <strong>DATA-04 · Conversation Review</strong> — Popularity ≠ quality ≠
         approval
       </summary>
+      {locked&&!visibleRuns.length&&<p data-testid="conversation-empty">PARTIAL · No verified conversation collection exists in this real-data copy. Reply/Editorial tools require a separately approved DATA-04 LIVE pilot; no synthetic replies are substituted.</p>}
       <p>
         Public relationship evidence only. Cron OFF · LIVE{" "}
         {options?.liveEnabled
@@ -193,7 +196,7 @@ export function ConversationPanel({
       )}
       <button
         data-testid="conversation-start"
-        disabled={busy || !(options?.liveEnabled || options?.syntheticEnabled)}
+        disabled={locked || busy || !(options?.liveEnabled || options?.syntheticEnabled)}
         onClick={() => void start()}
       >
         {sourceUrl ? "Enrich selected source" : "Discover conversations"}
@@ -253,7 +256,7 @@ export function ConversationPanel({
             <>
               <p role="alert">{run.error}</p>
               <button
-                disabled={busy || !options?.liveEnabled}
+                disabled={locked || busy || !options?.liveEnabled}
                 onClick={() =>
                   void action(async () => {
                     const r = await studioRequest<ConversationRun>(
@@ -436,7 +439,7 @@ export function ConversationPanel({
           />
           <button
             data-testid="conversation-feedback-save"
-            disabled={busy || !reason.trim()}
+            disabled={locked || busy || !reason.trim()}
             onClick={() =>
               void action(async () => {
                 const review = await studioRequest<ConversationReview>(

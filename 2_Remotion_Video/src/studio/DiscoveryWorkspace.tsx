@@ -1,3 +1,4 @@
+import {useRuntimeSafety} from './RuntimeSafety';
 import {ConversationPanel} from './ConversationPanel';
 import { ControlledDiscovery } from "./ControlledDiscovery";
 import { useEffect, useState, useRef } from "react";
@@ -82,6 +83,7 @@ export function DiscoveryWorkspace({
   onCreateProject,
   onRefreshData01,
 }: DiscoveryWorkspaceProps) {
+  const {locked}=useRuntimeSafety();
   const collectorLock=useRef(false);
   const [activeTab, setActiveTab] =
     useState<AcquisitionTab>("URLS_AND_MANUAL");
@@ -155,7 +157,7 @@ export function DiscoveryWorkspace({
   };
 
   useEffect(() => {
-    void loadThreadsApiState();
+    void loadThreadsApiState().catch(e=>setApiError(e.message));
   }, []);
 
   const addKeyword = (kw: string) => {
@@ -602,7 +604,7 @@ export function DiscoveryWorkspace({
             <UrlRows
               key={session.id}
               session={session}
-              disabled={busy || dirty}
+              disabled={locked || busy || dirty}
               onFetch={onFetchUrls}
             />
 
@@ -690,7 +692,7 @@ export function DiscoveryWorkspace({
                   <button
                     type="button"
                     className="s2-btn-primary"
-                    disabled={busy || dirty || !manualText.trim()}
+                    disabled={locked || busy || dirty || !manualText.trim()}
                     onClick={() =>
                       void onManualImport({
                         text: manualText,
@@ -856,7 +858,7 @@ export function DiscoveryWorkspace({
               <button
                 type="button"
                 className="s2-btn-primary"
-                disabled={!isAuthReady || apiBusy || keywords.length === 0}
+                disabled={locked || !isAuthReady || apiBusy || keywords.length === 0}
                 onClick={() => void handleStartCollectorRun()}
                 data-testid="discovery-start-collector-btn"
                 title={
@@ -1066,7 +1068,7 @@ export function DiscoveryWorkspace({
               <button
                 type="button"
                 className="s2-btn-secondary"
-                disabled={apiBusy}
+                disabled={locked || apiBusy}
                 onClick={() => void handleVerifyAuth()}
                 data-testid="threads-verify-auth-btn"
               >
@@ -1100,7 +1102,7 @@ export function DiscoveryWorkspace({
                 type="button"
                 className="s2-btn-secondary"
                 disabled={apiBusy}
-                onClick={() => void loadThreadsApiState()}
+                onClick={() => void loadThreadsApiState().catch(e=>setApiError(e.message))}
               >
                 ↻ Làm mới lịch sử Collector
               </button>
@@ -1335,7 +1337,7 @@ export function DiscoveryWorkspace({
                           <button
                             type="button"
                             className="s2-btn-primary"
-                            disabled={apiBusy}
+                            disabled={locked || apiBusy}
                             onClick={() =>
                               void handleResumeCollectorRun(activeRun.id)
                             }
@@ -1617,7 +1619,7 @@ export function DiscoveryWorkspace({
                 <button
                   type="button"
                   disabled={
-                    busy ||
+                    locked || busy ||
                     dirty ||
                     session.items.some((i) => i.sourceUrl === c.url)
                   }
@@ -1740,7 +1742,7 @@ export function DiscoveryWorkspace({
 
                 <ThreadsPreview
                   item={i}
-                  disabled={busy || dirty}
+                  disabled={locked || busy || dirty}
                   onRefresh={() => onRefreshMetadata(i.id)}
                 />
 
@@ -1759,7 +1761,7 @@ export function DiscoveryWorkspace({
                   </details>
                   <TopicEditor
                     item={i}
-                    disabled={busy || dirty}
+                    disabled={locked || busy || dirty}
                     save={(body) => onSaveTopic(i.id, body)}
                   />
                   <MetadataEditor

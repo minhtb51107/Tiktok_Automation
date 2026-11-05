@@ -1,3 +1,4 @@
+import {useRuntimeSafety} from './RuntimeSafety';
 import { useState } from "react";
 import type { LibraryAsset } from "../../../1_nest_backend/src/studio/public-assets";
 import type { StudioMediaAsset } from "../../../1_nest_backend/src/studio/editor.types";
@@ -31,6 +32,7 @@ export function ContextAssets({
   onAudition: () => void;
   recategorize: (id: string, category: string) => void;
 }) {
+  const {locked}=useRuntimeSafety();
   const [query, setQuery] = useState(""),
     [limit, setLimit] = useState(12),
     [audition, setAudition] = useState<string | null>(null);
@@ -130,7 +132,7 @@ export function ContextAssets({
             aria-label="Upload category media"
             type="file"
             accept={accept[category]}
-            disabled={busy}
+            disabled={locked || busy}
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) {
@@ -218,7 +220,7 @@ export function ContextAssets({
                 <select
                   aria-label={"Category " + a.name}
                   value={a.category}
-                  disabled={busy}
+                  disabled={locked || busy}
                   onChange={(e) => recategorize(a.id, e.target.value)}
                 >
                   {(a.kind === "AUDIO"
@@ -236,7 +238,7 @@ export function ContextAssets({
                   Remove from timeline
                 </button>
                 <button
-                  disabled={busy || !canDelete(a.id)}
+                  disabled={locked || busy || !canDelete(a.id)}
                   onClick={() =>
                     deleteUpload(uploads.find((x) => x.id === a.id)!)
                   }

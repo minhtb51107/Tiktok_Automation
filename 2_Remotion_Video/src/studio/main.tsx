@@ -1,4 +1,5 @@
 import {studioRequest} from './integration-api';
+import {RuntimeSafetyBanner} from './RuntimeSafety';
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type {
@@ -730,6 +731,7 @@ function App() {
             <h1>{session?.title || "Your next story starts here"}</h1>
           </div>
           <div className="v2-topbar-controls">
+            <RuntimeSafetyBanner/>
             <span
               className={`v3-prov-pill ${
                 data01Connected ? "prov-real" : "prov-disconnected"

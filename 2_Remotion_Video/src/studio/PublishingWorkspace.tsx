@@ -1,3 +1,4 @@
+import {useRuntimeSafety} from './RuntimeSafety';
 import { useEffect, useState } from "react";
 import type { StudioSession } from "../../../1_nest_backend/src/studio/studio.contracts";
 import type {
@@ -218,7 +219,8 @@ export function PublishingWorkspace({
       ...Object.keys(info?.rights || {}),
     ]),
   );
-  const disabled = busy || pending;
+  const {locked}=useRuntimeSafety();
+  const disabled = locked || busy || pending;
   return (
     <section className="publish-workspace" data-testid="publishing-workspace">
       <header>
