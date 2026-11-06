@@ -125,6 +125,7 @@ export interface Transition {
   error: string | null;
 }
 export interface Evaluation {
+  reviewHistory?: Array<{revision:number;decision:'ACCEPT'|'REJECT'|'NEEDS_REVIEW';reason:string;at:string;confirmedType:'POST'|'COMMENT'|null}>;
   schemaVersion: typeof DATA_SCHEMA;
   id: string;
   postId: string;

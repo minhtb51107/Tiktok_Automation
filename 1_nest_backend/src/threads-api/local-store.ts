@@ -7,7 +7,7 @@ export class ThreadsStore {
   private file(key: string) {
     if (
       !/^(?:auth|runs|pages|audit)\/[A-Za-z0-9-]+\.json$/.test(key) &&
-      key !== 'scheduler.json'
+      key !== 'scheduler.json' && key !== 'collection-plan.json'
     )
       throw Error('Invalid Threads storage key');
     return path.join(this.root, key);

@@ -28,6 +28,8 @@ Confirmed source causes:
 
 ## Implementation and validation checkpoints
 
-Pending: navigation/project selection, catalog-only Library and parent evidence, sandbox review, complete run exports, configuration-only automation controls, unified theme/layout, isolated browser acceptance and preservation hashes.
+Backend foundation verified: TypeScript/build PASS and 8/8 isolated executable contract checks PASS. These cover UNKNOWN classification, explicit project IDs, full 27-observation export beyond a 25-row page, review history/revision/immutable source, same-author identity, nested parent evidence, independent Gold feedback and configuration-only state transitions. All fixtures are explicitly SYNTHETIC; real-copy browser acceptance remains pending. No LIVE action or production approval occurred.
+
+Focused Jest was initially deferred at 504 MiB available RAM (resource gate); this is not a FAIL or a PASS. Pending: final frontend navigation/theme/layout regression, isolated real-copy browser acceptance and preservation hashes.
 
 Full Jest is conditional on RAM. The previous UI-OPS-01 17-policy / 15-browser / 7-handover results do not establish UI-OPS-02 PASS. No P0 may be declared resolved from component rendering alone.

@@ -1,6 +1,9 @@
 import {describe,it,expect} from '@jest/globals';
 const {allowed}=require('../../scripts/studio-copy-policy.cjs');
 describe('REAL_DATA_COPY safety boundary',()=>{
+ it('enables explicit sandbox content review independently of production queue',()=>{const id='a'.repeat(64);expect(allowed('POST','/api/studio/data/posts/'+id+'/review')).toBe(true);expect(allowed('POST','/api/studio/data/posts/'+id+'/enqueue')).toBe(false)});
+ it('allows configuration states but never starts a collector',()=>{expect(allowed('POST','/api/studio/ops/collection-config',{action:'SAVE'})).toBe(true);expect(allowed('POST','/api/studio/ops/collection-config',{action:'START'})).toBe(false)});
+ it('allows planning but not project creation or script/production approval',()=>{const id='b'.repeat(64);expect(allowed('POST','/api/studio/data/editorial/plans')).toBe(true);expect(allowed('POST','/api/studio/data/editorial/plans/'+id+'/project')).toBe(false);expect(allowed('POST','/api/studio/data/editorial/sessions/x/approve-script')).toBe(false)});
  it('allows saved sessions and local preview without any live worker',()=>{
   const id='35b8a880-b8b5-49ec-be42-0991228eb45e';
   expect(allowed('GET','/api/studio/data/posts')).toBe(true);

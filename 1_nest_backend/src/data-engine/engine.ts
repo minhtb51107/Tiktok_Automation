@@ -500,12 +500,14 @@ export class DataEngine {
         throw Error(
           'Confirm target POST/COMMENT explicitly; raw UNKNOWN remains unchanged',
         );
+      const priorReview=e.review;
       e.review = {
         decision,
         reason,
         at: this.clock(),
         confirmedType: confirmedType || null,
       };
+      e.reviewHistory=[...(e.reviewHistory||(priorReview?[{...priorReview,revision:e.revision}]:[])),{...e.review,revision:e.revision+1}];
       e.gold!.eligibility =
         decision === 'ACCEPT'
           ? 'ELIGIBLE'
