@@ -33,7 +33,7 @@ export function ConversationPanel({
 }: {
   sourceUrl?: string | null;
 }) {
-  const {locked}=useRuntimeSafety();
+  const {locked,runtime}=useRuntimeSafety();const reviewLocked=locked&&!runtime.capabilities?.review;
   const [options, setOptions] = useState<any>(null),
     [runs, setRuns] = useState<ConversationRun[]>([]),
     [runId, setRunId] = useState(""),
@@ -439,7 +439,7 @@ export function ConversationPanel({
           />
           <button
             data-testid="conversation-feedback-save"
-            disabled={locked || busy || !reason.trim()}
+            disabled={reviewLocked || busy || !reason.trim()}
             onClick={() =>
               void action(async () => {
                 const review = await studioRequest<ConversationReview>(

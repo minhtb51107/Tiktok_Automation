@@ -956,14 +956,12 @@ export function SettingsWorkspace({
   session,
   publicAssets,
   theme,
-  onChangeTheme,
   onCheckVoiceRuntime,
   busy,
 }: {
   session: StudioSession | null;
   publicAssets: LibraryAsset[];
   theme: "DARK" | "LIGHT";
-  onChangeTheme: (next: "DARK" | "LIGHT") => void;
   onCheckVoiceRuntime: () => void;
   busy: boolean;
 }) {
@@ -991,12 +989,7 @@ export function SettingsWorkspace({
           >
             Kiểm tra Runtime Kokoro
           </button>
-          <button
-            className="primary"
-            onClick={() => onChangeTheme(theme === "DARK" ? "LIGHT" : "DARK")}
-          >
-            Chuyển sang giao diện {theme === "DARK" ? "Sáng" : "Tối"}
-          </button>
+          <span>Studio theme: {theme} · change using the single header control.</span>
         </div>
       </div>
 

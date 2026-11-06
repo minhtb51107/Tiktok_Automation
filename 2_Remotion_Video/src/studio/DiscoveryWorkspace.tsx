@@ -18,6 +18,7 @@ import {
 } from "./studio-v2-adapter";
 
 interface DiscoveryWorkspaceProps {
+  projectSourceOnly?: boolean;
   session: StudioSession | null;
   busy: boolean;
   dirty: boolean;
@@ -82,6 +83,7 @@ export function DiscoveryWorkspace({
   onNavigateArea,
   onCreateProject,
   onRefreshData01,
+  projectSourceOnly=false,
 }: DiscoveryWorkspaceProps) {
   const {locked}=useRuntimeSafety();
   const collectorLock=useRef(false);
@@ -387,7 +389,7 @@ export function DiscoveryWorkspace({
 
   if (!session) {
     return (
-      <section className="v2-workspace s2-discovery-workspace"><ConversationPanel/><ControlledDiscovery onRefresh={onRefreshData01} onReview={()=>onNavigateArea("data-review")}/>
+      <section className="v2-workspace s2-discovery-workspace">{!projectSourceOnly&&<><ConversationPanel/><ControlledDiscovery onRefresh={onRefreshData01} onReview={()=>onNavigateArea("data-review")}/></>}
         <div className="s2-empty-hero">
           <span className="hero-icon">✦</span>
           <h2>Bắt đầu câu chuyện mới từ Threads</h2>
@@ -427,7 +429,7 @@ export function DiscoveryWorkspace({
       aria-label="Khám phá và thu thập nguồn bài Threads"
       data-testid="discovery-workspace"
     >
-      <ConversationPanel/><ControlledDiscovery onRefresh={onRefreshData01} onReview={()=>onNavigateArea("data-review")}/>
+      {!projectSourceOnly&&<><ConversationPanel/><ControlledDiscovery onRefresh={onRefreshData01} onReview={()=>onNavigateArea("data-review")}/></>}
       {/* Hero Header with 3-Step Visual Guide & Primary Action */}
       <div className="s2-hero-banner s2-hero-discovery">
         <div className="s2-hero-copy">
@@ -550,7 +552,7 @@ export function DiscoveryWorkspace({
           role="tab"
           aria-selected={activeTab === "KEYWORD_API"}
           className={`s2-mode-tab ${activeTab === "KEYWORD_API" ? "active" : ""}`}
-          onClick={() => setActiveTab("KEYWORD_API")}
+          disabled={projectSourceOnly} title={projectSourceOnly?"Use Discovery / Data Collection for catalog collection":""} onClick={() => setActiveTab("KEYWORD_API")}
           data-testid="discovery-tab-keywords"
         >
           <span className="s2-mode-icon">🔍</span>
@@ -570,7 +572,7 @@ export function DiscoveryWorkspace({
           role="tab"
           aria-selected={activeTab === "FUTURE_SCHEDULE"}
           className={`s2-mode-tab ${activeTab === "FUTURE_SCHEDULE" ? "active" : ""}`}
-          onClick={() => setActiveTab("FUTURE_SCHEDULE")}
+          disabled={projectSourceOnly} title={projectSourceOnly?"Use Discovery / Data Collection for scheduling":""} onClick={() => setActiveTab("FUTURE_SCHEDULE")}
           data-testid="discovery-tab-schedule"
         >
           <span className="s2-mode-icon">🗓</span>

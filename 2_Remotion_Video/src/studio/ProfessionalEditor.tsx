@@ -79,9 +79,6 @@ export function ProfessionalEditor({
     [frame, setFrame] = useState(0),
     [safe, setSafe] = useState(true),
     [stageSize, setStageSize] = useState({ width: 350, height: 600 });
-  const [theme, setTheme] = useState(
-    () => localStorage.getItem("studio-appearance") || "DARK",
-  );
   const [selectedClip, setSelectedClip] = useState(""), [mobilePane, setMobilePane] = useState<"CANVAS" | "SCENES" | "INSPECTOR">("CANVAS");
   const gesture = useRef<Draft | null>(null);
   const player = useRef<PlayerRef>(null),
@@ -93,13 +90,6 @@ export function ProfessionalEditor({
   const dirty = serialize(draft) !== baseline,
     blocked = busy || working;
   const base = "/api/studio/sessions/" + session.id;
-  useEffect(() => {
-    document.documentElement.dataset.studioTheme = theme;
-    localStorage.setItem("studio-appearance", theme);
-    return () => {
-      delete document.documentElement.dataset.studioTheme;
-    };
-  }, [theme]);
   useEffect(() => {
     onDirty(dirty);
   }, [dirty, onDirty]);
@@ -635,7 +625,7 @@ export function ProfessionalEditor({
     <section className="pro-editor" data-testid="professional-editor" data-source-provenance={provenance} data-mobile-pane={mobilePane}>
       <div className="editor-toolbar">
         <div>
-          <strong>{session.title}</strong><span className="v3-prov-pill" data-testid="editor-provenance">{provenance}</span>
+          <strong>Scene editing</strong><span className="v3-prov-pill" data-testid="editor-provenance">{provenance}</span>
           <small>
             {session.id.slice(0, 8)} ·{" "}
             <span data-testid="save-state">
@@ -675,14 +665,7 @@ export function ProfessionalEditor({
           >
             Save project
           </button>
-          <select
-            aria-label="Studio appearance"
-            value={theme}
-            onChange={(e) => setTheme(e.target.value)}
-          >
-            <option value="DARK">Studio: Dark</option>
-            <option value="LIGHT">Studio: Light</option>
-          </select>
+
         </div>
       </div>
       {(error || live.error || notice) && (

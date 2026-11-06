@@ -15,11 +15,15 @@ import { ScriptWorkspace } from "./ScriptWorkspace";
 import { VoiceWorkspace } from "./VoiceWorkspace";
 import { ProgressPanel } from "./ProgressPanel";
 import { EditorWorkspace } from "./EditorWorkspace";
-import { DataWorkspace } from "./DataWorkspace";
+
 import { PublishingWorkspace } from "./PublishingWorkspace";
 import { RenderWorkspace } from "./RenderWorkspace";
 import { DashboardWorkspace } from "./DashboardWorkspace";
-import { DataReviewWorkspace } from "./DataReviewWorkspace";
+import {ContentLibraryWorkspace} from "./ContentLibraryWorkspace";
+import {CollectionWorkspace} from "./CollectionWorkspace";
+import {ProjectList} from "./ProjectList";
+import {studioRoute} from "../../../1_nest_backend/src/studio/studio-navigation";
+import "./uiops02.css";
 import { DiscoveryWorkspace } from "./DiscoveryWorkspace";
 import {
   ProductionQueueWorkspace,
@@ -48,8 +52,8 @@ const STEP_LABELS: Record<(typeof WORKFLOW_STEPS)[number], string> = {
   Script: "Kịch bản",
   Voice: "Giọng đọc",
   "Video Editor": "Bàn dựng 9:16",
-  Render: "Kết xuất MP4",
-  Publish: "Kiểm duyệt",
+  Render: "MP4 Output",
+  Publish: "Review",
 };
 
 const STUDIO_AREAS = [
@@ -274,7 +278,7 @@ function App() {
   const [data01Catalog, setData01Catalog] =
     useState<Data01CatalogResponse | null>(null);
   const [data01Connected, setData01Connected] = useState<boolean>(false);
-  const [projectsExpanded, setProjectsExpanded] = useState<boolean>(false);
+  const [projectPicker,setProjectPicker]=useState(true);const [routeReady,setRouteReady]=useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.studioTheme = theme;
@@ -282,13 +286,11 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
-    if (!session) return;
-    const u = new URL(window.location.href);
-    u.searchParams.set("session", session.id);
-    u.searchParams.set("step", step);
-    u.searchParams.set("area", area);
-    window.history.replaceState(null, "", u.pathname + u.search);
-  }, [session?.id, step, area]);
+    if(!routeReady)return;const u=new URL(window.location.href);const projectRoute=area==='Video Studio'&&!projectPicker;
+    if(projectRoute&&session)u.searchParams.set('session',session.id);else u.searchParams.delete('session');
+    u.searchParams.set('area',area);u.searchParams.set('step',projectRoute?step:'Source');if(projectPicker&&area==='Video Studio')u.searchParams.set('view','projects');else u.searchParams.delete('view');
+    window.history.replaceState(null,'',u.pathname+u.search);
+  },[session?.id,step,area,projectPicker,routeReady]);
 
   const busy = localBusy || jobActive;
 
@@ -308,6 +310,7 @@ function App() {
     setData01Catalog(res.catalog);
   };
 
+  useEffect(()=>{const changed=()=>void refreshData01(0);window.addEventListener('studio-catalog-changed',changed);return()=>window.removeEventListener('studio-catalog-changed',changed)},[]);
   useEffect(() => {
     void refreshData01();
     fetch("/api/studio/public-assets")
@@ -315,45 +318,8 @@ function App() {
       .then((j) => setPublicAssets(j.data ?? j ?? []))
       .catch(() => {});
 
-    const query = new URLSearchParams(window.location.search),
-      id = query.get("session"),
-      requestedArea = query.get("area") as StudioArea | null,
-      requestedStep = query.get("step");
-    if (requestedStep === "Data") setArea("Data Review");
-
-    if (requestedArea && STUDIO_AREAS.includes(requestedArea)) {
-      setArea(requestedArea);
-    }
-
-    void refresh()
-      .then((list) => {
-        const targetId =
-          id && /^[a-f0-9-]{36}$/.test(id)
-            ? id
-            : list[0]?.id;
-        if (!targetId) return;
-        return api<StudioSession>("/" + targetId).then((s) => {
-          setSession(s);
-          if (
-            requestedStep &&
-            WORKFLOW_STEPS.includes(
-              requestedStep as (typeof WORKFLOW_STEPS)[number],
-            )
-          ) {
-            setStep(requestedStep);
-            if (!requestedArea) {
-              setArea(
-                requestedStep === "Video Editor"
-                  ? "Video Studio"
-                  : requestedStep === "Render" || requestedStep === "Publish"
-                    ? "Production Queue"
-                    : "Discovery",
-              );
-            }
-          }
-        });
-      })
-      .catch((e) => setError(e.message));
+    const route=studioRoute(window.location.search);setArea(route.area as StudioArea);setStep(route.step);setProjectPicker(route.picker);
+    void refresh().then(()=>{if(!route.projectId)return;return api<StudioSession>('/'+route.projectId).then(s=>{setSession(s);if(route.area==='Video Studio')setProjectPicker(route.picker);});}).catch(e=>{setError('Project could not be opened: '+e.message);setProjectPicker(true);setArea('Video Studio');}).finally(()=>setRouteReady(true));
 
     const failed = (e: Event) => setError((e as CustomEvent<string>).detail);
     window.addEventListener("studio-job-error", failed);
@@ -461,45 +427,13 @@ function App() {
     setDirty(true);
   };
 
-  const navigateStep = (nextStep: string) => {
-    if (nextStep === step && ["Discovery", "Video Studio"].includes(area))
-      return;
-    if (!canLeave()) return;
-    setStep(nextStep);
-    if (nextStep === "Video Editor") {
-      setArea("Video Studio");
-    } else if (["Render","Publish"].includes(nextStep)) {
-      setArea("Production Queue");
-    } else {
-      setArea("Discovery");
-    }
-  };
-
-  const navigateArea = (nextArea: StudioArea) => {
-    if (nextArea === area) return;
-    if (!canLeave()) return;
-    setArea(nextArea);
-    if (nextArea === "Video Studio") {
-      setStep("Video Editor");
-    } else if (nextArea === "Discovery" && step === "Video Editor") {
-      setStep("Source");
-    }
-  };
-
-  const navigateAreaBySlug = (slug: AreaSlug) => {
-    navigateArea(SLUG_TO_AREA[slug]);
-  };
-
-  const isEditorFull =
-    step === "Video Editor" &&
-    session !== null &&
-    !["Dashboard", "Data Review", "Settings"].includes(area);
-
-  // Contextual workflow step bar ONLY appears inside manual Video Studio / Script / Voice / Render / Publish steps
-  const showContextualStepBar =
-    area === "Video Studio" ||
-    (area === "Discovery" && step !== "Source") ||
-    (area === "Production Queue" && ["Render", "Publish"].includes(step));
+  const navigateStep=(next:string)=>{if(!canLeave())return;setArea('Video Studio');if(!session){setProjectPicker(true);setNotice('Choose a project first.');return;}setProjectPicker(false);setStep(next);};
+  const navigateArea=(next:StudioArea)=>{if(!canLeave())return;setArea(next);if(next==='Video Studio'){setProjectPicker(true);setStep('Source');}else if(next==='Discovery'||next==='Production Queue')setStep('Source');};
+  const navigateAreaBySlug=(slug:AreaSlug)=>navigateArea(SLUG_TO_AREA[slug]);
+  const openProject=(id:string)=>{if(!canLeave())return;void run(async()=>{accept(await api('/'+id));setArea('Video Studio');setProjectPicker(false);setStep('Source');});};
+  const createProject=()=>{if(!canLeave())return;void run(async()=>{accept(await api('','POST'));await refresh();setArea('Video Studio');setProjectPicker(false);setStep('Source');});};
+  const isEditorFull=area==='Video Studio'&&!projectPicker&&step==='Video Editor'&&session!==null;
+  const showContextualStepBar=area==='Video Studio'&&!projectPicker&&session!==null;
 
   const completedRendersCount = sessionRenders.filter(
     (r) => r.status === "COMPLETED",
@@ -511,19 +445,19 @@ function App() {
   > = {
     Dashboard: { title: "Tổng quan Studio", badge: "Home" },
     Discovery: {
-      title: "Nguồn bài Threads",
-      badge: session?.items.length ?? 0,
+      title: "Discovery / Data Collection",
+      badge: "Manual",
     },
     "Data Review": {
-      title: "Duyệt dữ liệu",
+      title: "Content Library / Data Review",
       badge: `${catalogPendingReview(data01Catalog)} chờ`,
     },
     "Production Queue": {
       title: "Kho Video & Hàng đợi",
       badge: `${completedRendersCount} MP4`,
     },
-    "Video Studio": { title: "Bàn dựng 9:16", badge: "Canvas" },
-    Settings: { title: "Cấu hình", badge: "5 giọng" },
+    "Video Studio": { title: "Video Projects", badge: sessions.length },
+    Settings: { title: "Settings", badge: "Runtime" },
   };
 
   return (
@@ -574,11 +508,11 @@ function App() {
             role="navigation"
             aria-label="Điều hướng chính"
           >
-            {STUDIO_AREAS.map((a) => (
+            {STUDIO_AREAS.filter(a=>a!=="Production Queue").map((a) => (
               <button
                 key={a}
                 data-area={a}
-                className={"v2-area-btn " + (area === a ? "active" : "")}
+                className={"v2-area-btn " + ((area===a||(a==="Video Studio"&&area==="Production Queue"))?"active":"")}
                 onClick={() => navigateArea(a)}
               >
                 <span className="v3-nav-item-left">
@@ -591,126 +525,16 @@ function App() {
           </div>
         </div>
 
-        {/* Tactile Featured Project Card (Inspired by Reference 1's 3D Book Card) */}
-        <div className="v3-sidebar-spotlight">
-          <div className="v3-spotlight-top">
-            <span className="v3-spotlight-pill">● Đang mở</span>
-            <span className="v3-spotlight-meta">
-              {session?.items.length ?? 0} cảnh
-            </span>
-          </div>
-          <div className="v3-spotlight-body">
-            <div className="v3-spotlight-copy">
-              <strong>{session?.title || "Untitled project"}</strong>
-              <p>
-                {completedRendersCount} bản nháp MP4 ·{" "}
-                {data01Connected ? "DATA-01 đã kết nối" : "Cục bộ"}
-              </p>
-            </div>
-            <div className="v3-spotlight-3d" aria-hidden="true">
-              <svg viewBox="0 0 56 56" fill="none">
-                <rect
-                  x="10"
-                  y="6"
-                  width="32"
-                  height="44"
-                  rx="7"
-                  transform="rotate(-8 10 6)"
-                  fill="#fde067"
-                />
-                <rect
-                  x="16"
-                  y="8"
-                  width="32"
-                  height="44"
-                  rx="7"
-                  transform="rotate(6 16 8)"
-                  fill="#9d8df1"
-                />
-                <path d="M28 24L37 29.5L28 35V24Z" fill="#13131a" />
-              </svg>
-            </div>
-          </div>
-          <div className="v3-spotlight-actions">
-            <button
-              type="button"
-              className="v3-spot-btn-ghost"
-              onClick={() => setProjectsExpanded((v) => !v)}
-            >
-              {projectsExpanded
-                ? "Ẩn danh sách"
-                : `Đổi dự án (${sessions.length})`}
-            </button>
-            <button
-              type="button"
-              className="v3-spot-btn-primary"
-              onClick={() => navigateArea("Video Studio")}
-            >
-              Bàn dựng ↗
-            </button>
-          </div>
-        </div>
-
-        {/* Progressive Disclosure Project Switcher */}
-        {projectsExpanded && (
-          <div className="sessions v3-sessions-drawer">
-            {sessions.map((s) => (
-              <button
-                className={session?.id === s.id ? "chosen" : ""}
-                key={s.id}
-                disabled={busy}
-                onClick={() => {
-                  if (canLeave())
-                    void run(async () => {
-                      accept(await api("/" + s.id));
-                      if (step === "Video Editor") setStep("Source");
-                    });
-                }}
-              >
-                {s.title}
-                <small>Phiên {s.id.slice(0, 8)}</small>
-              </button>
-            ))}
-          </div>
-        )}
+        {session&&<div className="v2-card"><small>Current project (not catalog scope)</small><strong>{session.title}</strong><button onClick={()=>navigateArea('Video Studio')}>Choose another project</button></div>}
 
         {/* Bottom Dock: Theme Switcher Pill + Dashed New Project Card (Inspired by Reference 2) */}
         <div className="v3-sidebar-dock">
-          <div
-            className="v3-theme-pill-dock"
-            role="group"
-            aria-label="Giao diện Sáng / Tối"
-          >
-            <button
-              type="button"
-              className={theme === "LIGHT" ? "active" : ""}
-              onClick={() => setTheme("LIGHT")}
-            >
-              ☀ Sáng
-            </button>
-            <button
-              type="button"
-              className={theme === "DARK" ? "active" : ""}
-              onClick={() => setTheme("DARK")}
-            >
-              🌙 Tối
-            </button>
-          </div>
-
           <button
             type="button"
             className="v3-new-project-card"
             aria-label="New project"
             disabled={busy}
-            onClick={() => {
-              if (canLeave())
-                void run(async () => {
-                  accept(await api("", "POST"));
-                  await refresh();
-                  setStep("Source");
-                  setArea("Discovery");
-                });
-            }}
+            onClick={createProject}
           >
             <span className="v3-plus-circle">＋</span>
             <strong>Tạo dự án Threads mới</strong>
@@ -726,9 +550,9 @@ function App() {
               <span className="v3-live-dot" />
               <span>Threads Studio</span>
               <span>/</span>
-              <strong>{AREA_LABELS[area].title}</strong>
+              <button className="uiops-breadcrumb" onClick={()=>navigateArea('Video Studio')}>Video Projects</button><strong>{showContextualStepBar?session?.title+' → '+STEP_LABELS[step as keyof typeof STEP_LABELS]:AREA_LABELS[area].title}</strong>
             </div>
-            <h1>{session?.title || "Your next story starts here"}</h1>
+            {!isEditorFull&&<h1>{showContextualStepBar?session?.title:AREA_LABELS[area].title}</h1>}
           </div>
           <div className="v2-topbar-controls">
             <RuntimeSafetyBanner/>
@@ -755,7 +579,7 @@ function App() {
             <button
               type="button"
               className="v2-theme-toggle"
-              aria-label="Toggle Light or Dark theme"
+              data-testid="global-theme" aria-label="Toggle Light or Dark theme"
               onClick={() => setTheme(theme === "DARK" ? "LIGHT" : "DARK")}
             >
               {theme === "DARK" ? "☀ Light" : "☾ Dark"}
@@ -770,7 +594,7 @@ function App() {
               <button
                 className={step === name ? "current" : ""}
                 onClick={() => navigateStep(name)}
-                key={name}
+                key={name} data-step={name}
               >
                 <b>{n + 1}</b>
                 <span>{STEP_LABELS[name]}</span>
@@ -824,7 +648,7 @@ function App() {
         )}
 
         {/* Primary Area Router */}
-        {area === "Dashboard" ? (
+        {area==='Video Studio'&&(projectPicker||!session)?<ProjectList projects={sessions} busy={busy} onOpen={openProject} onCreate={createProject} onQueue={()=>navigateArea('Production Queue')}/>:area === "Dashboard" ? (
           <DashboardWorkspace
             sessionsCount={sessions.length}
             session={session}
@@ -836,42 +660,14 @@ function App() {
             onNavigateStep={navigateStep}
           />
         ) : area === "Data Review" ? (
-          <>
-          <DataReviewWorkspace
-            session={session}
-            busy={busy}
-            dirty={dirty}
-            data01Catalog={data01Catalog}
-            data01Connected={data01Connected}
-            onRefreshData01={()=>refreshData01()}
-            onPageChange={page=>refreshData01(page)}
-            onUpdateItem={(id, patch) =>
-              update(id, patch as Partial<StudioItem>)
-            }
-            onMoveItem={(index, delta) => {
-              const item = session?.items[index];
-              if (item) move(item.id, delta);
-            }}
-            onRestoreItem={(id) => {
-              const item = session?.items.find((i) => i.id === id);
-              if (item) {
-                update(id, {
-                  displayText: item.contentMapping?.bodyText || item.originalText,
-                  spokenText: item.contentMapping?.bodyText || item.originalText,
-                });
-              }
-            }}
-            onSave={() => void run(save)}
-            onNavigateStep={navigateStep}
-          />
-          {session && <details className="v2-card"><summary>DATA-01 technical library / import and recovery</summary><DataWorkspace session={session} /></details>}
-          </>
+          <ContentLibraryWorkspace/>
+        ) : area==='Discovery'?(
+          <CollectionWorkspace onReview={()=>navigateArea('Data Review')}/>
         ) : area === "Settings" ? (
           <SettingsWorkspace
             session={session}
             publicAssets={publicAssets}
             theme={theme}
-            onChangeTheme={setTheme}
             busy={busy}
             onCheckVoiceRuntime={() => {
               if (!session) return;
@@ -893,7 +689,7 @@ function App() {
               }).then(() => setNotice("Đã gửi yêu cầu hủy tác vụ."));
             }}
             onOpenStep={navigateStep}
-            onOpenProject={async(project,step)=>{if(!canLeave())return;const s=await api<StudioSession>("/"+project);accept(s);await refresh();setStep(step);setArea(step==="Video Editor"?"Video Studio":"Discovery");}}
+            onOpenProject={async(project,step)=>{if(!canLeave())return;const s=await api<StudioSession>("/"+project);accept(s);await refresh();setStep(step);setProjectPicker(false);setArea("Video Studio");}}
           />
         ) : step === "Script" && session ? (
           <ScriptWorkspace
@@ -1007,7 +803,7 @@ function App() {
             <button onClick={() => setStep("Source")}>Return to Source</button>
           </section>
         ) : (
-          <DiscoveryWorkspace
+          <DiscoveryWorkspace projectSourceOnly
             session={session}
             busy={busy}
             dirty={dirty}
