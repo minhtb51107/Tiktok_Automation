@@ -9,6 +9,7 @@ import type {
   ReplyLabel,
 } from "../../../1_nest_backend/src/data-engine/conversation-contracts";
 import { studioRequest, exportJson } from "./integration-api";
+import { copyReport } from "./copy-report";
 type View = {
   record: {
     id: string;
@@ -152,7 +153,24 @@ export function ConversationPanel({
     });
   }
   function reportMarkdown() {
-    return `# DATA-04 Conversation Report\n\nExecution: ${run?.execution || "UNKNOWN"}\nRun: ${run?.id || "—"}\nStatus: ${run?.status || "UNKNOWN"}\nElapsed: ${run?.elapsedMs ?? "—"} ms\nRanking: ${run?.ranking?.status || "UNKNOWN"} — ${run?.ranking?.reasons.join("; ") || ""}\n\n## Exact source\n${c?.root.url || ""}\n@${c?.root.author.handle || ""}\n${c?.root.originalText || ""}\n\nCollection: ${c?.status || "UNKNOWN"}\nReported replies: ${c?.reportedReplyCount ?? "UNKNOWN"}; observed: ${c?.observedReplyCount ?? 0}; verified: ${c?.verifiedReplyCount ?? 0}; unverified: ${c?.unverifiedCandidateCount ?? 0}\nPopularity: ${score(q?.popularity.score)}; Conversation: ${score(q?.conversation.score)}; Video suitability: ${score(q?.videoSuitability.score)}\nRatios apply only to VERIFIED_OBSERVED_SAMPLE. Precision@10: NOT_MEASURED. Rights: UNKNOWN. Production approval: unchanged.\n\n## Verified replies\n${c?.replies.map((r) => `${r.id} @${r.author.handle} → parent ${r.parentId}\n${r.url}\n${r.originalText}\nQuality: ${q?.replyQuality.find((x) => x.replyId === r.id)?.label}\nEvidence: ${r.evidence.kind}\n`).join("\n") || "No verified replies; not evidence of no comments."}\n## Persisted human review\n${JSON.stringify(view?.review, null, 2)}\n\nWarnings: ${c?.warnings.join("; ") || ""}`;
+    const media =
+      c?.root.attachments
+        ?.map(
+          (a) =>
+            `${a.status} ${a.kind} ${a.width || "?"}x${a.height || "?"} ${a.bytes ?? "?"} bytes SHA-256 ${a.sha256 || "UNKNOWN"}\nSource: ${a.sourceUrl}\nOCR: ${a.ocrStatus}; rights: ${a.rightsStatus}`,
+        )
+        .join("\n") || "No exact-root attachment observed.";
+    return `# DATA-04 Conversation Report\n\nExecution: ${run?.execution || "UNKNOWN"}\nRun: ${run?.id || "—"}\nStatus: ${run?.status || "UNKNOWN"}\nElapsed: ${run?.elapsedMs ?? "—"} ms\nRanking: ${run?.ranking?.status || "UNKNOWN"} — ${run?.ranking?.reasons.join("; ") || ""}\n\n## Exact source\n${c?.root.url || ""}\n@${c?.root.author.handle || ""}\n${c?.root.originalText || ""}\nType: ${c?.root.itemType || "UNKNOWN"}\n\n## Exact-root attachments\n${media}\n\nCollection: ${c?.status || "UNKNOWN"}\nReported replies: ${c?.reportedReplyCount ?? "UNKNOWN"}; observed: ${c?.observedReplyCount ?? 0}; verified: ${c?.verifiedReplyCount ?? 0}; unverified: ${c?.unverifiedCandidateCount ?? 0}\nPopularity: ${score(q?.popularity.score)}; Conversation: ${score(q?.conversation.score)}; Video suitability: ${score(q?.videoSuitability.score)}\nRatios apply only to VERIFIED_OBSERVED_SAMPLE. Precision@10: NOT_MEASURED. Rights: UNKNOWN. Production approval: unchanged.\n\n## Verified replies\n${c?.replies.map((r) => `${r.id} @${r.author.handle} → parent ${r.parentId}\n${r.url}\n${r.originalText}\nQuality: ${q?.replyQuality.find((x) => x.replyId === r.id)?.label}\nEvidence: ${r.evidence.kind}\n`).join("\n") || "No verified replies; not evidence of no comments."}\n## Persisted human review\n${JSON.stringify(view?.review, null, 2)}\n\nWarnings: ${c?.warnings.join("; ") || ""}`;
+  }
+  function exportMarkdown() {
+    const url = URL.createObjectURL(
+      new Blob([reportMarkdown()], { type: "text/markdown;charset=utf-8" }),
+    );
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "conversation-report.md";
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   return (
     <details className="v2-card" data-testid="conversation-panel">
@@ -302,6 +320,33 @@ export function ConversationPanel({
             Exact source
           </a>
           <p style={{ whiteSpace: "pre-wrap" }}>{c.root.originalText}</p>
+          <p>
+            Type {c.root.itemType || "UNKNOWN"} · provenance {c.root.provenance.method}
+          </p>
+          {!!c.root.attachments?.length && (
+            <section data-testid="conversation-root-media">
+              <h4>Exact-root attachments</h4>
+              {c.root.attachments.map((attachment) => (
+                <figure key={attachment.id}>
+                  {attachment.status === "DOWNLOADED" && attachment.localUri ? (
+                    <img
+                      src={attachment.localUri}
+                      alt="Threads root attachment; OCR not run"
+                      style={{ maxWidth: "100%", maxHeight: 420, objectFit: "contain" }}
+                    />
+                  ) : (
+                    <p>Image preview {attachment.status}</p>
+                  )}
+                  <figcaption>
+                    {attachment.status} · {attachment.mimeType || "MIME UNKNOWN"} · {attachment.width ?? "?"}×{attachment.height ?? "?"} · {attachment.bytes ?? "?"} bytes · OCR NOT_RUN · rights UNKNOWN
+                  </figcaption>
+                  <a href={attachment.sourceUrl} target="_blank" rel="noreferrer">
+                    Public source image
+                  </a>
+                </figure>
+              ))}
+            </section>
+          )}
           <p>{c.root.publishedAt || "Publication time UNKNOWN"}</p>
           <p>
             Likes {c.root.engagement.likes ?? "UNKNOWN"} · Replies{" "}
@@ -466,13 +511,15 @@ export function ConversationPanel({
           <button
             data-testid="conversation-copy-report"
             onClick={() =>
-              void navigator.clipboard
-                .writeText(reportMarkdown())
+              void copyReport(reportMarkdown())
                 .then(() => setNotice("Persisted report copied"))
                 .catch((e) => setError(e.message))
             }
           >
             Copy Report
+          </button>
+          <button data-testid="conversation-export-markdown" onClick={exportMarkdown}>
+            Export Markdown
           </button>
           <button
             data-testid="conversation-export-json"

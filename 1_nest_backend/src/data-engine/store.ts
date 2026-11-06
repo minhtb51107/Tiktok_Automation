@@ -6,7 +6,11 @@ import {DATA_SCHEMA} from './contracts';
 import {hash} from './rules';
 /** Same local JSON/atomic-rename strategy as Studio. One backend writer only. */
 export class DataStore {
-  constructor(readonly root = path.resolve('.studio-data/data-engine')) {}
+  constructor(
+    readonly root = process.env.STUDIO_DATA_ROOT
+      ? path.resolve(process.env.STUDIO_DATA_ROOT, 'data-engine')
+      : path.resolve('.studio-data/data-engine'),
+  ) {}
   private file(key: string) {
     if (!/^(posts|bronze|evaluations|runs|production-jobs|crawler-runs|gold-shadows|gold-feedback|conversation-runs|thread-collections|thread-replies|conversation-feedback|editorial-plans)\/[a-f0-9]{64}\.json$/.test(key))
       throw Error('Invalid data storage key');

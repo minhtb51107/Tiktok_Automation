@@ -20,6 +20,24 @@ export interface PublicPost {
   originalText: string;
   publishedAt: string | null;
   topic?: string | null;
+  itemType?: 'POST' | 'COMMENT' | 'UNKNOWN';
+  attachments?: Array<{
+    id: string;
+    kind: 'IMAGE';
+    sourceUrl: string;
+    relationEvidence: 'EXACT_ROOT_DOM_MEDIA';
+    status: 'DOWNLOADED' | 'URL_ONLY' | 'UNAVAILABLE';
+    mimeType: string | null;
+    width: number | null;
+    height: number | null;
+    bytes: number | null;
+    sha256: string | null;
+    localUri: string | null;
+    error: string | null;
+    observedAt: string;
+    ocrStatus: 'NOT_RUN';
+    rightsStatus: 'UNKNOWN';
+  }>;
   rawPayload?: unknown;
   engagement: {
     likes: number | null;

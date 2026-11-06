@@ -9,13 +9,16 @@ import {
   ForbiddenException,
   BadRequestException,
   ConflictException,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { DataStudioService } from './data.controller';
 import { ConversationEngine } from './conversation-engine';
 import {
   discoverConversations,
   enrichConversation,
 } from './conversation-public';
+import { conversationMediaFile } from './conversation-media';
 @Injectable()
 export class ConversationStudioService {
   readonly engine: ConversationEngine;
@@ -122,5 +125,14 @@ export class ConversationController {
   }
   @Get('collections/:id/bundle') bundle(@Param('id') id: string) {
     return this.call(() => this.service.engine.bundle(id));
+  }
+  @Get('media/:sha')
+  async media(@Param('sha') sha: string, @Res() response: Response) {
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Cache-Control', 'private, max-age=3600');
+    return response.sendFile(await conversationMediaFile(sha), {
+      // The validated hash lives under the intentional .studio-data root.
+      dotfiles: 'allow',
+    });
   }
 }

@@ -492,7 +492,9 @@ export class StudioService {
       throw new BadRequestException('Unknown local media');
     return path.join(this.root, 'media', id, asset.fileName);
   }
-  private root = path.resolve(process.cwd(), '.studio-data');
+  private root = process.env.STUDIO_DATA_ROOT
+    ? path.resolve(process.env.STUDIO_DATA_ROOT)
+    : path.resolve(process.cwd(), '.studio-data');
   private busy = false;
   private voice = new KokoroRuntime();
   onModuleDestroy() {

@@ -17,6 +17,7 @@ import type {
   PublicPost,
   ThreadCollection,
 } from './conversation-contracts';
+import { cacheConversationImages } from './conversation-media';
 /** Function deliberately self-contained: executed in public DOM, no credential/session access. */
 export function observePublicDocument() {
   const cards = [
@@ -235,6 +236,7 @@ export async function enrichConversation(
       author: { handle: target.handle, name: source.author.name },
       originalText: source.originalBody!,
       topic: source.topic,
+      itemType: 'UNKNOWN',
       rawPayload: source.rawPayload,
       publishedAt: source.publishedAt,
       engagement: {
@@ -250,6 +252,14 @@ export async function enrichConversation(
         method: 'EXISTING_EXACT_TARGET_EXTRACTOR',
       },
     };
+    root.attachments = await cacheConversationImages(
+      root.id,
+      (attempt.records[0]?.media || []).map((x) => ({
+        url: x.url,
+        kind: x.kind,
+      })),
+      now,
+    );
     const cardObservations = observed.rows
       .filter((r) => r.urls.length === 1)
       .map((r) => {
