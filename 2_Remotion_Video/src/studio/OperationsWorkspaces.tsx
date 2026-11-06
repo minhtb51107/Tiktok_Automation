@@ -12,6 +12,7 @@ import {
   summarizePublicAssets,
 } from "./studio-v2-adapter";
 import { VOICE_SPEED } from "../../../1_nest_backend/src/studio/voice-settings";
+import { technicalJobView } from './capability-fixes';
 
 type QueueZoneFilter = "ALL" | "MP4_OUTPUTS" | "ACTIVE_PRODUCTION" | "TECH_JOBS";
 
@@ -74,6 +75,7 @@ export function ProductionQueueWorkspace({
   onOpenStep: (step: string) => void;
   onOpenProject:(project:string,step:string)=>Promise<void>;
 }) {
+  const {locked}=useRuntimeSafety();
   const [zoneFilter, setZoneFilter] = useState<QueueZoneFilter>("ALL");
   const [stageFilter, setStageFilter] = useState<string>("ALL");
   const [playingRenderId, setPlayingRenderId] = useState<string | null>(null);
@@ -532,7 +534,7 @@ export function ProductionQueueWorkspace({
                 </strong>
                 <small>
                   {runningJobs.length > 0
-                    ? `Đang chạy ${runningJobs.length} tác vụ nền...`
+                    ? `${runningJobs.length} bản ghi QUEUED/RUNNING; chưa xác minh worker đang hoạt động`
                     : isFullyProductionApproved
                       ? "Tất cả cảnh đã được duyệt kịch bản đọc và giọng đọc chính thức."
                       : "⚠ Audio hiện tại là bản nháp (DRAFT) để nghe thử & dựng nháp. Cần hoàn tất duyệt lời đọc (Spoken Approval) và duyệt giọng đọc (Voice Approval) trước khi đạt chuẩn sản xuất."}
@@ -745,9 +747,9 @@ export function ProductionQueueWorkspace({
               </span>
               <h3>Nhật ký Tác vụ Kỹ thuật ({filteredJobs.length})</h3>
               <p>
-                Các tác vụ chạy tuần tự (FIFO) phục vụ trích xuất nguồn, chuẩn
-                hóa kịch bản, tạo giọng đọc và kết xuất. Có thể xem cảnh báo/lỗi
-                chi tiết và thử lại mà không làm mất dữ liệu.
+                Nhật ký trạng thái đã lưu, không phải danh sách worker đang hoạt động.
+                QUEUED/RUNNING không xác nhận tiến trình còn sống. Mở bước tương ứng
+                để kiểm tra; không tự động chạy lại tác vụ.
               </p>
             </div>
 
@@ -776,7 +778,8 @@ export function ProductionQueueWorkspace({
             data-testid="production-jobs-table"
           >
             {filteredJobs.map((j) => {
-              const isRunning = ["QUEUED", "RUNNING"].includes(j.status);
+              const view = technicalJobView(j);
+              const isRunning = view.pending;
               const isFailed = j.status === "FAILED";
               const meta = STAGE_META[j.currentStage] || {
                 icon: "⚙",
@@ -784,12 +787,7 @@ export function ProductionQueueWorkspace({
                 stepTarget: "Source",
                 colorClass: "stage-default",
               };
-              const pct =
-                j.total !== null && j.completed !== null && j.total > 0
-                  ? Math.min(100, Math.floor((j.completed / j.total) * 100))
-                  : isRunning
-                    ? 40
-                    : 100;
+              const pct = view.percent;
               const isExpanded = expandedJobId === j.jobId;
               const hasDiagnostics = Boolean(j.error || j.warnings.length > 0);
 
@@ -824,13 +822,14 @@ export function ProductionQueueWorkspace({
                     <div className="s2-job-progress-col">
                       <div className="s2-job-progress-top">
                         <span>
-                          {j.total !== null && j.completed !== null
+                          {pct !== null
                             ? `${j.completed} / ${j.total} đơn vị (${pct}%)`
                             : j.currentStep}
                         </span>
                         <b>⏱ {(j.elapsedMs / 1000).toFixed(1)}s</b>
                       </div>
-                      <div className="s2-job-bar-track">
+                      <small>{view.workerEvidence}</small>
+                      {pct !== null ? <div className="s2-job-bar-track" role="progressbar" aria-label="Tiến trình đo được" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
                         <div
                           className={`s2-job-bar-fill ${
                             isFailed
@@ -841,7 +840,7 @@ export function ProductionQueueWorkspace({
                           }`}
                           style={{ width: `${pct}%` }}
                         />
-                      </div>
+                      </div> : isRunning ? <progress aria-label="Chưa đo được tiến trình; worker chưa xác minh"/> : <small>Không có số liệu tiến trình.</small>}
                     </div>
 
                     {/* Right: Status Badge + Diagnostics Toggle + Safe Retry / Open Button */}
@@ -852,14 +851,10 @@ export function ProductionQueueWorkspace({
                             ? "badge-queued"
                             : isFailed
                               ? "badge-rejected"
-                              : "badge-qualified"
+                              : j.status === 'SUCCEEDED' ? "badge-qualified" : "badge-needs-review"
                         }`}
                       >
-                        {isRunning
-                          ? "⏳ Đang chạy"
-                          : isFailed
-                            ? "✕ Thất bại"
-                            : "✓ Hoàn tất"}
+                        {view.label}
                       </span>
 
                       {hasDiagnostics && (
@@ -883,7 +878,8 @@ export function ProductionQueueWorkspace({
                         <button
                           type="button"
                           className="s2-btn-secondary"
-                          disabled={j.cancelRequested}
+                          disabled={locked || j.cancelRequested}
+                          title={locked ? 'REAL_DATA_COPY: không điều khiển worker; đây là nhật ký đã lưu.' : 'Yêu cầu hủy job; không xác nhận worker còn hoạt động.'}
                           onClick={() => onCancelJob(j.jobId)}
                         >
                           {j.cancelRequested ? "Đang dừng..." : "⏹ Dừng tác vụ"}

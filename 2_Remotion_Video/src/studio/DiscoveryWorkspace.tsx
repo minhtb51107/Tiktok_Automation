@@ -10,6 +10,7 @@ import { UrlRows, MetadataEditor, MediaPreview } from "./SourceReview";
 import { StageReportPanel } from "./StageReportPanel";
 import { ThreadsPreview } from "./ThreadsPreview";
 import { TopicEditor } from "./VisualControls";
+import { restoreSourceText } from './capability-fixes';
 import {
   fetchThreadsDiscoveryState,
   type ThreadsAuthStatusResponse,
@@ -1803,13 +1804,10 @@ export function DiscoveryWorkspace({
                     <button
                       type="button"
                       onClick={() =>
-                        onUpdateItem(i.id, {
-                          displayText: i.originalText,
-                          spokenText: i.originalText,
-                        })
+                        onUpdateItem(i.id, restoreSourceText(i))
                       }
                     >
-                      Restore original text
+                      Restore source body text
                     </button>
                   </div>
                 </details>

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { StudioSession } from "../../../1_nest_backend/src/studio/studio.contracts";
 import type { StudioJob } from "../../../1_nest_backend/src/studio/progress";
 import type { RenderManifest } from "../../../1_nest_backend/src/studio/render.types";
@@ -41,6 +41,7 @@ export function DashboardWorkspace({
   const projectOrigin=sessionProvenance(session,data01Catalog),catalogOrigin=catalogProvenance(data01Catalog);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackError,setPlaybackError]=useState('');
 
   const medallion = useMemo(
     () => computeMedallionItems(session, data01Catalog, data01Connected),
@@ -48,10 +49,10 @@ export function DashboardWorkspace({
   );
 
   const completedRenders = useMemo(
-    () => renders.filter((r) => r.status === "COMPLETED"),
-    [renders],
+    () => renders.filter((r) => r.status === "COMPLETED" && r.sessionId===session?.id),
+    [renders,session?.id],
   );
-  const latestRender = completedRenders[0] || renders[0] || null;
+  const latestRender = completedRenders[0] || null;
   const runningJobs = useMemo(
     () => jobs.filter((j) => ["QUEUED", "RUNNING"].includes(j.status)),
     [jobs],
@@ -87,10 +88,13 @@ export function DashboardWorkspace({
 
   const togglePlayPreview = () => {
     const v = videoRef.current;
-    if (!v) return;
+    if (!v) {setPlaybackError('Chưa có MP4 COMPLETED cho dự án đang chọn.');return;}
     if (v.paused) {
-      void v.play();
-      setIsPlaying(true);
+      setPlaybackError('');
+      void v.play().catch(()=>{
+        setIsPlaying(false);
+        setPlaybackError('Không phát được MP4. Kiểm tra file/codec hoặc mở MP4 Output để thử lại.');
+      });
     } else {
       v.pause();
       setIsPlaying(false);
@@ -103,6 +107,8 @@ export function DashboardWorkspace({
       : null;
 
   const latestDownloadUrl = latestVideoUrl ? `${latestVideoUrl}?download=1` : null;
+  const noVideoReason=!session?'Chọn một dự án để xem MP4.':!latestVideoUrl?'Dự án chưa có MP4 COMPLETED để phát.':'';
+  useEffect(()=>{setIsPlaying(false);setPlaybackError('')},[latestVideoUrl]);
 
   return (
     <section
@@ -152,13 +158,13 @@ export function DashboardWorkspace({
           <div className="v3-chroma-top">
             <span className="v3-prov-pill prov-dark-ink">
               <span className="v3-pulse-dot" /> {projectOrigin} ·{" "}
-              {runningJobs.length > 0 ? "ĐANG XỬ LÝ" : "BẢN NHÁP (DRAFT)"}
+              {runningJobs.length > 0 ? "TRẠNG THÁI ĐÃ LƯU" : "BẢN NHÁP (DRAFT)"}
             </span>
             <span className="v3-card-step-tag">01 · Trạng thái</span>
           </div>
           <h3 className="v3-chroma-title">
             {runningJobs.length > 0
-              ? `Đang chạy ${runningJobs.length} tác vụ`
+              ? `${runningJobs.length} bản ghi QUEUED/RUNNING; worker chưa xác minh`
               : "5/5 Audio nháp · Chờ duyệt"}
           </h3>
           <p className="v3-chroma-desc">
@@ -400,6 +406,7 @@ export function DashboardWorkspace({
                     controls
                     onPlay={() => setIsPlaying(true)}
                     onPause={() => setIsPlaying(false)}
+                    onError={()=>{setIsPlaying(false);setPlaybackError('Không mở được MP4 đã lưu. Kiểm tra file tại MP4 Output.')}}
                   />
                 ) : (
                   <div className="v3-phone-empty">
@@ -418,10 +425,15 @@ export function DashboardWorkspace({
                 <button
                   type="button"
                   className="v3-play-pill"
+                  disabled={!!noVideoReason}
+                  title={noVideoReason || 'Phát/tạm dừng MP4 đã lưu'}
+                  data-testid="dashboard-play"
                   onClick={togglePlayPreview}
                 >
                   {isPlaying ? "⏸ Tạm dừng xem thử" : "▶ Phát thử Video nháp"}
                 </button>
+                {noVideoReason&&<small data-testid="dashboard-play-reason">{noVideoReason}</small>}
+                {playbackError&&<p role="alert">{playbackError}</p>}
                 {latestDownloadUrl && (
                   <a
                     href={latestDownloadUrl}
