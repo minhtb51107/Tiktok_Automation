@@ -36,3 +36,24 @@ export function analyzeSourceCards(cards: PublicRecord[],rootText:string) {
     return {index,version:'source-quality/1',characters:projection.text.length,lexicalOverlap:overlap,duplicateOf,nearDuplicateOf:nearDuplicateOf<0?null:nearDuplicateOf,reasons,bucket:low?'LOW_VALUE':argument||overlap>=2?'RECOMMENDED':'NEEDS_REVIEW',projection,relationship:'OBSERVED_ON_TARGET_PAGE' as const,parentId:null};
   });
 }
+
+export const SOURCE_QUALITY_V2={version:'source-quality/2',SERIOUS:{relevance:25,structure:30,context:25,engagement:10,media:10},FUNNY:{relevance:30,structure:20,context:20,engagement:15,media:15}};
+/** Lexical advisory, never a semantic verdict or approval. OCR must be reviewed. */
+export function analyzeSourceCardsV2(cards:PublicRecord[],rootText:string,style:'SERIOUS'|'FUNNY'='SERIOUS',images:Record<number,{text:string;reviewed:boolean}>={},rootIndex=-1){
+ const v1=analyzeSourceCards(cards,rootText),cfg=SOURCE_QUALITY_V2[style];
+ const expanded=analyzeSourceCards(cards.map((card,n)=>{const text=cleanSourceProjection(card).text+(images[n]?.reviewed?'\n'+images[n].text:'');return {...card,text,bodyText:text}}),rootText);
+ return v1.map((old,index)=>{
+  const card=cards[index],image=images[index],text=old.projection.text+(image?.reviewed?'\n'+image.text:''),words=text.trim().split(/\s+/u).filter(Boolean),reasons=old.reasons.filter(r=>!['SHORT_LOW_INFORMATION','DIALOGUE_ARGUMENT_OR_EXPERIENCE_MARKER','EXACT_DUPLICATE','NEAR_DUPLICATE_LEXICAL_0_9','MISSING_CONTENT'].includes(r));
+  const lexical=analyzeSourceCards([{...card,text,bodyText:text}],rootText)[0];
+  const clauses=text.split(/[.!?;\n]/).filter(x=>x.trim().split(/\s+/).length>=4).length;
+  const argument=clauses>=2&&/(vì|nhưng|bởi|nên|tuy nhiên|ví dụ)/iu.test(text)&&words.length>=18;
+  const observed=card.fields?.likeCount,likes=observed?.status==='AVAILABLE'&&typeof observed.value==='number'&&observed.value>=0?observed.value:null;
+  const breakdown={relevance:Math.min(1,lexical.lexicalOverlap/4)*cfg.relevance,structure:argument?cfg.structure:0,context:Math.min(1,words.length/60)*cfg.context,engagement:likes===null?0:Math.min(1,Math.log10(1+likes)/4)*cfg.engagement,media:image?.reviewed&&image.text.trim()?cfg.media:0};
+  const isRoot=index===rootIndex,hasImage=card.media?.some(m=>m.kind!=='VIDEO'),duplicate=(!hasImage||image?.reviewed)&&(expanded[index].duplicateOf!==null||expanded[index].nearDuplicateOf!==null),low=!isRoot&&!hasImage&&words.length<5&&!argument;
+  reasons.push('LEXICAL_RULES_NOT_SEMANTIC_PROOF',likes===null?'ENGAGEMENT_UNAVAILABLE':`DIRECT_LABEL_LIKES${observed?.approximate?'_APPROXIMATE':''}`,argument?'MULTI_CLAUSE_REASONING_SIGNAL':'ARGUMENT_UNCERTAIN');
+  if(hasImage&&!image?.reviewed)reasons.push('IMAGE_CONTENT_NEEDS_REVIEW');if(low)reasons.push('SHORT_LOW_INFORMATION');if(isRoot)reasons.push('ROOT_SHORT_OR_QUESTION_ALLOWED');
+  if(duplicate)reasons.push('DUPLICATE_COMBINED_TEXT');if(!text.trim())reasons.push(hasImage?'MISSING_IMAGE_TRANSCRIPTION':'MISSING_CONTENT');
+  const score=duplicate?0:Math.round(Object.values(breakdown).reduce((a,b)=>a+b,0));
+  return {...old,version:SOURCE_QUALITY_V2.version,v1:old,style,score,breakdown,lexicalOverlap:lexical.lexicalOverlap,duplicateOf:duplicate?expanded[index].duplicateOf:null,nearDuplicateOf:duplicate?expanded[index].nearDuplicateOf:null,reviewedOcrCharacters:image?.reviewed?image.text.length:0,engagement:{likes,approximate:observed?.approximate??null},reasons,bucket:duplicate||low?'LOW_VALUE':isRoot||argument&&lexical.lexicalOverlap>0?'RECOMMENDED':'NEEDS_REVIEW',accuracy:'NOT_MEASURED'};
+ });
+}

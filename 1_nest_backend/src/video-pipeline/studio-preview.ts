@@ -88,6 +88,7 @@ export function buildStudioPreview(
     }));
     project.mediaAssets.push(...sourceMedia);
     const scene: StoryboardScene = {
+      imageNarration:structuredClone(i.mediaNarrationApplied||[]),
       ...(i.editorial?{editorial:{kind:i.editorial.kind,stage:i.editorial.stage}}:{}),
       visual: {
         ...normalizeVisual(x.visual),

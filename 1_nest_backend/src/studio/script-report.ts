@@ -10,6 +10,7 @@ export function scriptReport(s: StudioSession): StageReport {
   const latest = runs[runs.length - 1];
   const latency = runs.reduce((n, r) => n + r.latencyMs, 0);
   return {
+    imageNarration:s.items.filter(i=>i.mediaOcr).map(i=>({itemId:i.id,applied:!!i.mediaNarrationAppliedHash,records:Object.values(i.mediaOcr!).map(o=>({...o,sourceUrl:o.sourceUrl.split('?')[0]}))})),
     projectId: s.project.id,
     sessionId: s.id,
     stageName: 'SCRIPT',

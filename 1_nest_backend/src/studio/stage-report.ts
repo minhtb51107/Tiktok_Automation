@@ -1,5 +1,5 @@
 import type { StudioSession } from './studio.contracts';
-import {analyzeSourceCards,cleanSourceProjection} from './source-quality';
+import {analyzeSourceCardsV2,cleanSourceProjection} from './source-quality';
 export type StageName =
   | 'SOURCE'
   | 'SCRIPT'
@@ -8,6 +8,7 @@ export type StageName =
   | 'RENDER'
   | 'PUBLISH';
 export interface StageReport {
+  imageNarration?:Array<{itemId:string;records:unknown[];applied:boolean}>;
   sourceCards?: Array<{role:'ROOT'|'CONTEXT';author:string;permalink:string|null;originalText:string;displayText:string|null;spokenText:string|null;selected:boolean;materialized:boolean;relationship:string;evidence:unknown;media:unknown[];quality:unknown;warnings:string[]}>;
   timing?: {crawlMs:number;studioImportMs:number|null;reportMs:number|null};
   voice?: {
@@ -166,7 +167,9 @@ export function sourceReport(s: StudioSession): StageReport {
     .map((x) => x.originalUrl);
   const sourceCards: NonNullable<StageReport['sourceCards']>=[];
   for(const a of unique.values()){
-    const quality=analyzeSourceCards(a.contextCandidates||[],a.records[0]?.text||'');
+    const context=a.contextCandidates||[];
+    const images=Object.fromEntries(context.map((raw,n)=>{const item=s.items.find(i=>i.sourceUrl===raw.url),ocr=Object.values(item?.mediaOcr||{}).filter(o=>o.review==='REVIEWED');return [n,{reviewed:ocr.length>0,text:ocr.map(o=>o.correctedText).join('\n')}]}));
+    const quality=analyzeSourceCardsV2(context,a.records[0]?.text||'','SERIOUS',images);
     for(const [index,raw] of [...(a.records[0]?[a.records[0]]:[]),...(a.contextCandidates||[])].entries()){
       const url=typeof raw.url==='string'?raw.url:index===0?a.canonicalUrl:null;
       const item=s.items.find(i=>i.sourceUrl===url);
@@ -314,6 +317,7 @@ export function reportMarkdown(r: StageReport): string {
           JSON.stringify(r.voice, null, 2),
         ]
       : []),
+    ...(r.imageNarration?.length?['## Image OCR / narration (not publication approval)',JSON.stringify(r.imageNarration,null,2)]:[]),
     `## Warnings / errors`,
     ...r.warnings.concat(r.errors).map((x) => '- ' + x),
     '',

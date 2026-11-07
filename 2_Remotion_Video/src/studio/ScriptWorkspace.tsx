@@ -6,6 +6,7 @@ import type {
   StudioItem,
 } from "../../../1_nest_backend/src/studio/studio.contracts";
 import { StageReportPanel } from "./StageReportPanel";
+import {MediaOcrPanel} from './MediaOcrPanel';
 function PronunciationEditor({item,edit}:{item:StudioItem;edit:(p:Partial<StudioItem>)=>void}){
  const [text,setText]=useState(JSON.stringify(item.pronunciationOverrides||{},null,2)),[message,setMessage]=useState('');
  return <details><summary>Pronunciation overrides (spoken/TTS only)</summary><textarea aria-label={'Pronunciation overrides '+item.id} value={text} onChange={e=>setText(e.target.value)} rows={4}/><button onClick={()=>{try{const value=JSON.parse(text);if(!value||typeof value!=='object'||Array.isArray(value)||Object.values(value).some(v=>typeof v!=='string'))throw Error();edit({pronunciationOverrides:value});setMessage('Override staged. Save Script; regenerate matching DRAFT audio.')}catch{setMessage('Enter a JSON object: {"NEU":"en e u"}')}}}>Apply pronunciation overrides</button><p role="status">{message}</p></details>;
@@ -39,6 +40,7 @@ function TextDifferences({ before, after }: { before: string; after: string }) {
   );
 }
 export function ScriptWorkspace({
+  onSession,
   session,
   approveEditorial,
   edit,
@@ -49,6 +51,7 @@ export function ScriptWorkspace({
   busy,
   dirty,
 }: {
+  onSession:(s:StudioSession)=>void;
   session: StudioSession;
   approveEditorial?:(revision:number,reason:string)=>void;
   edit: (id: string, p: Partial<StudioItem>) => void;
@@ -129,6 +132,7 @@ export function ScriptWorkspace({
               <label>Original text · read only</label>
               <blockquote>{item.originalText}</blockquote>
               <PronunciationEditor key={item.id} item={item} edit={patch=>edit(item.id,patch)}/>
+              <MediaOcrPanel session={session} item={item} onSession={onSession} disabled={locked||busy||dirty}/>
               <div className="edit-grid">
                 <label>
                   Display text

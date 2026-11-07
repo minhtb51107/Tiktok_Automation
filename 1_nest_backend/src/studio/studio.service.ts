@@ -1,4 +1,6 @@
 import { sessionReadiness } from "./session-readiness";
+import {localOcr,imageNarration} from './media-ocr';
+import {conversationMediaFile} from '../data-engine/conversation-media';
 import {speechProjection,validatePronunciations,SPEECH_DICTIONARY_VERSION} from './speech-dictionary';
 import {editorialScriptHash} from '../data-engine/editorial-script-state';
 import {uploadSignature,probeUpload,validCategory} from './uploaded-media';
@@ -57,6 +59,23 @@ export function threadsUrl(value: unknown): string {
 }
 @Injectable()
 export class StudioService {
+  async mediaOcr(id:string,itemId:string,sha:string,body:any){return this.exclusive(async()=>{
+    const s=await this.load(id);if(s.revision!==body?.revision)throw new ConflictException('STALE_REVISION');
+    const item=s.items.find(i=>i.id===itemId),asset=item?.localSourceMedia?.find(a=>a.sha256===sha&&a.status==='DOWNLOADED');if(!item||!asset)throw new BadRequestException('OCR requires a cached image belonging to this item');
+    item.mediaOcr??={};const old=item.mediaOcr[sha];
+    if(body.action==='OCR'){if(!old)item.mediaOcr[sha]=await localOcr(await conversationMediaFile(sha),sha,asset.sourceUrl);}
+    else if(body.action==='SAVE'){
+      if(!old||old.revision!==body.ocrRevision)throw new ConflictException('OCR_STALE_REVISION');
+      if(typeof body.text!=='string'||body.text.length>20000||typeof body.summary!=='string'||body.summary.length>10000||!['READ_FULL','SUMMARIZE','SKIP'].includes(body.mode)||body.confirmReview!==true||!['USER','AGENT_VISUAL'].includes(body.reviewer))throw new BadRequestException('Review OCR text and mode explicitly');
+      item.mediaOcr[sha]={...old,correctedText:body.text,summaryText:body.summary,mode:body.mode,review:'REVIEWED',reviewer:body.reviewer,revision:old.revision+1};
+    }else if(body.action==='APPLY'){
+      if(!old||old.revision!==body.ocrRevision)throw new ConflictException('OCR_STALE_REVISION');
+      if(item.mediaNarrationAppliedHash&&item.mediaNarrationAppliedHash!==textHash(item.spokenText))throw new ConflictException('Narration manually changed; preserve edits before rebuilding image narration');
+      if(item.manualLocks.includes('NARRATION_TEXT')&&body.confirmReplaceLocked!==true)throw new ConflictException('Narration locked; explicit replacement required');
+      const parts=imageNarration(item.mediaOcr,item.localSourceMedia!.map(a=>a.sha256).filter((h):h is string=>!!h));item.mediaNarrationBaseText??=item.spokenText;item.spokenText=[item.mediaNarrationBaseText,...parts].filter(Boolean).join('\n\n');item.mediaNarrationAppliedHash=textHash(item.spokenText);
+      item.mediaNarrationApplied=item.localSourceMedia!.map(a=>a.sha256?item.mediaOcr![a.sha256]:undefined).filter(o=>o?.review==='REVIEWED'&&o.mode!=='SKIP').map(o=>({imageHash:o!.imageHash,sourceUrl:o!.sourceUrl,mode:o!.mode as 'READ_FULL'|'SUMMARIZE',reviewer:o!.reviewer,ocrRevision:o!.revision,text:o!.mode==='SUMMARIZE'?o!.summaryText:o!.correctedText}));
+    }else throw new BadRequestException('Unknown OCR action');item.revision++;return this.persist(s);
+  });}
   readonly renders = new RenderStore();
   async readiness(id:string){return sessionReadiness(await this.load(id),this.root); }
   async saveRights(id:string,body:any){return this.exclusive(async()=>{

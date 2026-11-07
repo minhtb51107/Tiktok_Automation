@@ -140,6 +140,7 @@ export interface SceneTimingRequest {
 }
 
 export interface StoryboardScene {
+  imageNarration?:Array<{imageHash:string;sourceUrl:string;mode:'READ_FULL'|'SUMMARIZE';reviewer:'USER'|'AGENT_VISUAL'|null;ocrRevision:number;text:string}>;
   editorial?:{kind:import('../data-engine/editorial-contracts').EditorialKind;stage:string};
   visual?:import('./scene-visual').SceneVisual;
   sfxLayer?:{assetId:string;startMs:number;volume:number;durationMs?:number;sourceInMs?:number};

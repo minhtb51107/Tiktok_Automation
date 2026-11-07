@@ -693,6 +693,7 @@ function App() {
           />
         ) : step === "Script" && session ? (
           <ScriptWorkspace
+            onSession={accept}
             approveEditorial={(revision,reason)=>void run(async()=>accept(await studioRequest<StudioSession>('/data/editorial/sessions/'+session!.id+'/approve-script',{revision,confirmUserReview:true,reason})))}
             session={session}
             busy={busy}

@@ -2,7 +2,7 @@ import {useRuntimeSafety} from './RuntimeSafety';
 import {ConversationPanel} from './ConversationPanel';
 import { ControlledDiscovery } from "./ControlledDiscovery";
 import { useEffect, useState, useRef } from "react";
-import {analyzeSourceCards,cleanSourceProjection} from '../../../1_nest_backend/src/studio/source-quality';
+import {analyzeSourceCardsV2,cleanSourceProjection} from '../../../1_nest_backend/src/studio/source-quality';
 import type {
   StudioItem,
   StudioSession,
@@ -413,7 +413,7 @@ export function DiscoveryWorkspace({
     );
   }
 
-  const qualityRows=analyzeSourceCards(session.items.map(i=>i.rawExtraction!).filter(Boolean),session.items.find(i=>i.inclusion==='TARGET')?.originalText||'');
+  const qualityRows=analyzeSourceCardsV2(session.items.map(i=>i.rawExtraction||i.metadata||{text:i.originalText,bodyText:i.originalText,media:[],provenance:{}} as any),session.items.find(i=>i.inclusion==='TARGET')?.originalText||'','SERIOUS',Object.fromEntries(session.items.map((i,n)=>[n,{reviewed:Object.values(i.mediaOcr||{}).some(o=>o.review==='REVIEWED'),text:Object.values(i.mediaOcr||{}).filter(o=>o.review==='REVIEWED').map(o=>o.correctedText).join('\n')}])),session.items.findIndex(i=>i.inclusion==='TARGET'));
   const qualityFor=(id:string)=>qualityRows[session.items.findIndex(i=>i.id===id)];
   const visibleSourceItems = (session.items || []).filter(
     (i) =>
@@ -1754,7 +1754,7 @@ export function DiscoveryWorkspace({
                 )}
 
                 <p>{i.displayText.slice(0,160)}{i.displayText.length>160?'…':''}</p>
-                <small>{qualityFor(i.id)?.bucket} · {qualityFor(i.id)?.reasons.join(' · ')}</small>
+                <small>{qualityFor(i.id)?.bucket} · V2 {qualityFor(i.id)?.score}/100 (heuristic) · likes {qualityFor(i.id)?.engagement.likes??'UNKNOWN'} · {qualityFor(i.id)?.reasons.join(' · ')}</small>
                 <details><summary>Expand source card / edit</summary>
                 {i.rawExtraction&&<details><summary>Clean projection (does not change saved edits)</summary><p>{cleanSourceProjection(i.rawExtraction).text}</p><button onClick={()=>onUpdateItem(i.id,{displayText:cleanSourceProjection(i.rawExtraction!).text,spokenText:cleanSourceProjection(i.rawExtraction!).text})}>Apply clean projection to display / narration</button></details>}
                 <ThreadsPreview

@@ -4,6 +4,10 @@ import type {
   ContentAuthor,
 } from '../video-pipeline/contracts';
 export interface StudioItem {
+  mediaOcr?:Record<string,import('./media-ocr').MediaOcr>;
+  mediaNarrationBaseText?:string;
+  mediaNarrationAppliedHash?:string;
+  mediaNarrationApplied?:import('../video-pipeline/contracts').StoryboardScene['imageNarration'];
   pronunciationOverrides?: Record<string,string>;
   localSourceMedia?: NonNullable<import('../data-engine/conversation-contracts').PublicPost['attachments']>;
   observationEvidence?: {

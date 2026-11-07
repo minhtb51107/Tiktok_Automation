@@ -4,7 +4,7 @@ import { lookup } from 'dns/promises';
 import { existsSync } from 'fs';
 import {freemem} from 'os';
 import puppeteer from 'puppeteer';
-import {labelledCounts} from './metadata-fields';
+import {labelledCounts,contextLabelledCounts} from './metadata-fields';
 import { matchExactTarget } from './target-identity';
 import {existingPublicBrowser} from '../modules/core/scraper/public-discovery';
 
@@ -342,6 +342,7 @@ export async function extractPublicThreads(
               /^[\d.,]+[KkMm]?$/.test(s),
             );
             const controls=[...node.querySelectorAll('[role="button"],button')].map(c=>({label:c.querySelector('svg title')?.textContent||c.getAttribute('aria-label')||'',text:c.textContent||''}));
+            const metricIdentityCount=new Set([...node.querySelectorAll('a[href]')].map(a=>(a.getAttribute('href')||'').match(/^\/@[\w.-]+\/post\/([\w-]+)\/?$/)?.[1]).filter(Boolean)).size;
             const topicLinks=[...node.querySelectorAll('a[href]')].filter(a=>{try{const u=new URL(a.getAttribute('href')||'',location.origin);return u.pathname==='/search'&&u.searchParams.get('serp_type')==='tags'&&!!u.searchParams.get('tag_id');}catch{return false;}});
             const topicEvidence=topicLinks.length===1?{label:topicLinks[0].textContent?.trim()||'',href:topicLinks[0].getAttribute('href')||''}:null;
             const content = spans
@@ -370,6 +371,7 @@ export async function extractPublicThreads(
               permalink,
               visibleMetrics,
               controls,
+              metricIdentityCount,
               timestampLabel:time?.textContent||null,
               avatar,
               createdAt: time?.getAttribute('datetime') || null,
@@ -390,7 +392,7 @@ export async function extractPublicThreads(
         if(!live03||collected.size>=40){if(live03)stopReason='CARD_BUDGET';break;}
         if(step<4){await page.evaluate(()=>window.scrollBy(0,window.innerHeight));scrollCount++;await new Promise(r=>setTimeout(r,650));}
         }
-        const rows: Array<{permalink:string|null;content:string;bodyText:string;topicEvidence:{label:string;href:string}|null;controls:Array<{label:string;text:string}>;createdAt:string|null;timestampLabel:string|null;avatar:string|null;media:PublicRecord['media'];visibleMetrics:string[]}>=live03?[...collected.values()]:(snapshots[0] as any)?.rows||[];
+        const rows: Array<{metricIdentityCount?:number;permalink:string|null;content:string;bodyText:string;topicEvidence:{label:string;href:string}|null;controls:Array<{label:string;text:string}>;createdAt:string|null;timestampLabel:string|null;avatar:string|null;media:PublicRecord['media'];visibleMetrics:string[]}>=live03?[...collected.values()]:(snapshots[0] as any)?.rows||[];
         if(live03)out.boundedObservation={requests:requestCount+out.redirects.length,scrolls:scrollCount,stopReason,minimumAvailableMiB,snapshots};
         diagnostic(
           'dom',
@@ -472,6 +474,7 @@ export async function extractPublicThreads(
               continue;
             seen.add(related.permalink);
             const handle = related.permalink.split('/')[1].slice(1);
+            const metrics=contextLabelledCounts(related.controls,related.metricIdentityCount);
             out.contextCandidates!.push({
               bodyText:related.bodyText,
               text: related.content,
@@ -484,9 +487,11 @@ export async function extractPublicThreads(
               url: 'https://www.threads.com' + related.permalink,
               media: related.media,
               visibleMetrics: related.visibleMetrics,
-              likeCount: null,
-              replyCount: null,
-              repostCount: null,
+              fields:metrics,
+              likeCount:metrics.likeCount.value as number|null,
+              replyCount:metrics.replyCount.value as number|null,
+              repostCount:metrics.repostCount.value as number|null,
+              shareCount:metrics.shareCount.value as number|null,
               provenance: {
                 text: 'public DOM card below source in thread view; relationship unverified',
                 handle: 'DOM permalink',

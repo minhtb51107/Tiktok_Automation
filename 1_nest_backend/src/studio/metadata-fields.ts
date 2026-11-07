@@ -10,6 +10,12 @@ export interface ObservedField {
   source: string;
   approximate?: boolean;
 }
+/** Never attribute controls from a container with mixed/unknown post identities. */
+export function contextLabelledCounts(controls:{label:string;text:string}[],identityCount:number|undefined){
+ const fields=labelledCounts(identityCount===1?controls:[]);
+ for(const field of Object.values(fields))field.source='context DOM labelled control; single permalink identity required';
+ return fields;
+}
 export function labelledCounts(
   controls: { label: string; text: string }[],
 ): Record<string, ObservedField> {
