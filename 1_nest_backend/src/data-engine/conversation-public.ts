@@ -287,6 +287,12 @@ export async function enrichConversation(
       jsonLd: observed.jsonLd,
       cardObservations,
     };
-    return collectEvidence(root, doc, 20);
+    const collection = collectEvidence(root, doc, 20);
+    for(const candidate of collection.unverified){
+      const matching=observed.rows.filter(r=>r.urls.length===1&&canonicalPost(r.urls[0])?.url===canonicalPost(candidate.url)?.url);
+      const identity=canonicalPost(candidate.url);
+      if(identity&&matching.length===1&&matching[0].text.trim())candidate.observation={level:'OBSERVED_ON_TARGET_PAGE',targetUrl:target.url,observedAt:now,author:{handle:identity.handle,name:null},originalText:matching[0].text};
+    }
+    return collection;
   });
 }

@@ -69,6 +69,13 @@ export interface VerifiedReply extends PublicPost {
 export interface UnverifiedCandidate {
   url: string | null;
   reason: string;
+  observation?: {
+    level: 'OBSERVED_ON_TARGET_PAGE';
+    targetUrl: string;
+    observedAt: string;
+    author: { handle: string; name: string | null };
+    originalText: string;
+  };
 }
 export interface ThreadCollection {
   version: typeof CONVERSATION_VERSION;

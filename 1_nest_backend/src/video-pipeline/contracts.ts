@@ -39,6 +39,8 @@ export interface ThreadPost {
 }
 
 export interface ThreadComment {
+  relationshipStatus?: 'PARENT_VERIFIED' | 'OBSERVED_ON_TARGET_PAGE' | 'UNKNOWN';
+  observedTargetUrl?: string;
   id: string;
   sourceId: string;
   postId: string;

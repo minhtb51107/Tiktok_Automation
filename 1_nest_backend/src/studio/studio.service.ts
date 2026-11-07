@@ -726,11 +726,18 @@ export class StudioService {
                   s,
                   canonical,
                   attempt.records[0],
-                  s.scope === 'WITH_CONTEXT' ? attempt.records.slice(1) : [],
+                  s.scope === 'WITH_CONTEXT' ? attempt.contextCandidates || [] : [],
                 );
                 s.items.slice(first).forEach((item, index) => {
                   item.inclusion = index === 0 ? 'TARGET' : 'EXPLICIT_CONTEXT';
-                  const raw = attempt.records[index];
+                  const raw = index === 0 ? attempt.records[0] : attempt.contextCandidates![index - 1];
+                  item.observationEvidence = {
+                    level: index === 0 ? 'UNKNOWN' : 'OBSERVED_ON_TARGET_PAGE',
+                    targetUrl: canonical,
+                    observedAt: attempt.retrievedAt,
+                    parentId: null,
+                  };
+                  if(index > 0){const comment=s.project.comments.find(c=>c.id===item.id);if(comment){comment.relationshipStatus='OBSERVED_ON_TARGET_PAGE';comment.observedTargetUrl=canonical;}}
                   item.sourceUrl =
                     typeof raw.url === 'string' ? raw.url : canonical;
                   item.rawExtraction = structuredClone(raw);
@@ -792,12 +799,23 @@ export class StudioService {
           (a) => a.originalUrl === body.addContext.originalUrl,
         );
         const raw = attempt?.contextCandidates?.[body.addContext.index];
-        if (!raw || typeof raw.url !== 'string')
+        if (!raw || typeof raw.url !== 'string' || !raw.text?.trim())
           throw new BadRequestException('Context candidate not found');
         if (!s.items.some((i) => i.sourceUrl === raw.url)) {
           const first = s.items.length;
+          const target = s.items.find(i => i.inclusion === 'TARGET' && i.sourceUrl === attempt!.canonicalUrl);
+          const post = target && s.project.posts.find(p => p.id === target.sourceReference.entityId);
+          if (!target || !post) throw new BadRequestException('Exact target must exist before adding observed context');
+          // append builds the existing Studio item shape; rebind the result as a draft
+          // comment without claiming a technically verified parent relationship.
           this.append(s, threadsUrl(raw.url), raw, []);
           const item = s.items[first];
+          item.author = {displayName:raw.author,...(raw.handle?{handle:raw.handle}:{}),...(raw.avatar?{avatarUrl:raw.avatar}:{})};
+          s.project.posts = s.project.posts.filter(p => p.id !== item.id);
+          item.sourceReference = { entityType: 'COMMENT', entityId: item.id };
+          item.observationEvidence = {level:'OBSERVED_ON_TARGET_PAGE',targetUrl:target.sourceUrl,observedAt:attempt!.retrievedAt,parentId:null};
+          s.project.comments.push({id:item.id,sourceId:item.sourceId!,postId:post.id,author:item.author,text:raw.text,mediaAssetIds:[],relationshipStatus:'OBSERVED_ON_TARGET_PAGE',observedTargetUrl:target.sourceUrl});
+          post.commentIds.push(item.id);
           item.inclusion = 'EXPLICIT_CONTEXT';
           item.rawExtraction = structuredClone(raw);
           item.metadata = structuredClone(raw);
@@ -1683,6 +1701,7 @@ export class StudioService {
       else {
         commentIds.push(id);
         s.project.comments.push({
+          relationshipStatus: 'UNKNOWN',
           id,
           sourceId,
           postId,

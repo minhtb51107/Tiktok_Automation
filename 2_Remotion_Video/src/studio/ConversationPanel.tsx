@@ -448,6 +448,7 @@ export function ConversationPanel({
             {c.unverified.map((x, i) => (
               <p key={i}>
                 {x.url || "Unknown URL"} · {x.reason}
+                {x.observation ? <><br/>OBSERVED_ON_TARGET_PAGE · @{x.observation.author.handle}<br/>{x.observation.originalText}</> : <><br/>UNKNOWN · Nội dung card chưa được lưu trong lần thu thập này.</>}
               </p>
             ))}
           </details>

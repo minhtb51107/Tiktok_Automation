@@ -1617,7 +1617,7 @@ export function DiscoveryWorkspace({
                 <strong>{c.author}</strong>
                 <p>{c.text}</p>
                 <small>
-                  {String(c.url || "No permalink")} · Relationship unverified
+                  {String(c.url || "No permalink")} · OBSERVED_ON_TARGET_PAGE · Parent UNKNOWN
                 </small>
                 <button
                   type="button"
@@ -1630,7 +1630,7 @@ export function DiscoveryWorkspace({
                     void onAddContextCandidate(a.originalUrl, index)
                   }
                 >
-                  Thêm vào dự án
+                  Chọn cho bản nháp (parent chưa xác minh)
                 </button>
               </div>
             )),
