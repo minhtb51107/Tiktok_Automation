@@ -9,6 +9,10 @@ export function ThreadsPreview({
   disabled: boolean;
 }) {
   const m = item.metadata;
+  const media = (m?.media || []).map(a => {
+    const local = item.localSourceMedia?.find(x => x.sourceUrl === a.url && x.status === 'DOWNLOADED' && /^\/api\/studio\/data\/conversations\/media\/[a-f0-9]{64}$/.test(x.localUri || ''));
+    return {...a,url:local?.localUri || a.url};
+  });
   const date = m?.createdAt ? new Date(m.createdAt) : null;
   return (
     <section className="threads-preview">
@@ -43,7 +47,7 @@ export function ThreadsPreview({
       </div>
       <p className="threads-original">{item.contentMapping?.bodyText??m?.bodyText??item.originalText}</p>
       <div className="threads-media">
-        {m?.media.map((a, n) =>
+        {media.map((a, n) =>
           a.kind === "VIDEO" ? (
             <video src={a.url} key={n} controls preload="none" />
           ) : (

@@ -1732,6 +1732,11 @@ export function DiscoveryWorkspace({
                   </div>
                 </div>
 
+                {i.observationEvidence && <p data-testid="source-observation-evidence">
+                  {i.observationEvidence.level} · parent {i.observationEvidence.parentId ?? 'UNKNOWN'}
+                  {' · '}<a href={i.observationEvidence.targetUrl} target="_blank" rel="noreferrer">Trang đã quan sát</a>
+                </p>}
+
                 {i.sourceUrl && (
                   <a
                     className="s2-source-link"

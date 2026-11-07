@@ -4,6 +4,7 @@ import type {
   ContentAuthor,
 } from '../video-pipeline/contracts';
 export interface StudioItem {
+  localSourceMedia?: NonNullable<import('../data-engine/conversation-contracts').PublicPost['attachments']>;
   observationEvidence?: {
     level: 'PARENT_VERIFIED' | 'OBSERVED_ON_TARGET_PAGE' | 'UNKNOWN';
     targetUrl: string;
