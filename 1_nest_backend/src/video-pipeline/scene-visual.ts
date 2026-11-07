@@ -1,5 +1,11 @@
 import { ARIAL_METRICS } from './arial-metrics';
 export interface SceneVisual {
+  subtitlesEnabled?: boolean;
+  backgroundColor?: string;
+  imageMode?: 'FULL' | 'PAN';
+  imageZoom?: number;
+  imagePanX?: number;
+  imagePanY?: number;
   card: {
     enabled?:boolean;
     startMs?:number;
@@ -44,6 +50,8 @@ export interface SceneVisual {
   bgmEnabled: boolean;
 }
 export interface BackgroundMusic {
+  ducking?:boolean;
+  duckVolume?:number;
   sourceInMs?:number;
   durationMs?:number;
   enabled: boolean;
@@ -124,13 +132,14 @@ export function cardPages(
   text: string,
   visual: SceneVisual,
   sourceMediaCount = 0,
+  attachmentHeight?: number,
 ) {
   const { card, meme } = visual,
     width = card.width * card.scale,
     font = card.fontSize * card.scale,
     pad = card.padding * card.scale;
   const room = 1920 - card.y - 48 - (meme.enabled ? meme.height + meme.gap : 0);
-  const mediaHeight = sourceMediaCount ? 180 : 0,
+  const mediaHeight = sourceMediaCount ? attachmentHeight ?? 180 : 0,
     headerFooter = 220 + pad * 2 + mediaHeight;
   const usableWidth = Math.max(1, width - pad * 2 - 4),
     lineHeight = card.lineHeight ?? 1.45;

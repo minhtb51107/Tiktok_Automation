@@ -1,4 +1,5 @@
 import { sessionReadiness } from "./session-readiness";
+import {speechProjection,validatePronunciations,SPEECH_DICTIONARY_VERSION} from './speech-dictionary';
 import {editorialScriptHash} from '../data-engine/editorial-script-state';
 import {uploadSignature,probeUpload,validCategory} from './uploaded-media';
 import { replaceFile } from './atomic-file';
@@ -535,6 +536,7 @@ export class StudioService {
       if (
         !item ||
         a.textHash !== textHash(item.spokenText) ||
+        !!a.ttsInputHash&&a.ttsInputHash!==textHash(normalizeSpokenNumbers(speechProjection(item.spokenText,item.pronunciationOverrides).text).text) ||
         a.voice !== item.voiceSettings?.voice ||
         a.speed !== item.voiceSettings?.speed
       )
@@ -946,13 +948,16 @@ export class StudioService {
                 };
             }
           }
+          const pronunciationOverrides=patch.pronunciationOverrides===undefined?original.pronunciationOverrides:validatePronunciations(patch.pronunciationOverrides);
           const changed =
+            JSON.stringify(pronunciationOverrides)!==JSON.stringify(original.pronunciationOverrides)||
             // Text and metadata locks are independent; previous locks survive edits.
             JSON.stringify(metadata) !== JSON.stringify(original.metadata) ||
             original.displayText !== patch.displayText ||
             original.spokenText !== patch.spokenText;
           return {
             ...original,
+            pronunciationOverrides,
             metadata,
             ...(metadata
               ? {
@@ -1141,6 +1146,8 @@ export class StudioService {
     )
       throw new BadRequestException('Unknown Kokoro voice');
     item.voiceSettings = { voice: voice as string | null, speed };
+    s.voiceDefaults={...item.voiceSettings};
+    if(typeof voice==='string')s.voicePresets={...s.voicePresets,[voice]:{speed}};
   }
   private currentAsset(s: StudioSession, item: StudioSession['items'][number]) {
     const settings = item.voiceSettings;
@@ -1196,10 +1203,12 @@ export class StudioService {
       const settings = item.voiceSettings;
       if (!settings?.voice)
         throw Error('Select a locally available Kokoro voice');
-      const normalizedInput=normalizeSpokenNumbers(item.spokenText);
+      const speech=speechProjection(item.spokenText,item.pronunciationOverrides);
+      const normalizedInput=normalizeSpokenNumbers(speech.text);
+      const normalizationVersion=NUMBER_READING_VERSION+' / '+SPEECH_DICTIONARY_VERSION;
       if(normalizedInput.warnings.length)throw Error(normalizedInput.warnings.join('; '));
       const oldAsset=this.currentAsset(s,item);
-      const inputStale=/\d/.test(item.spokenText) && (oldAsset?.numberReadingVersion!==NUMBER_READING_VERSION || oldAsset?.ttsInputHash!==textHash(normalizedInput.text));
+      const inputStale=oldAsset?.numberReadingVersion!==normalizationVersion || oldAsset?.ttsInputHash!==textHash(normalizedInput.text);
       const modelStale=oldAsset&&oldAsset.modelVersion!==s.voiceRuntime.modelVersion+' / '+s.voiceRuntime.packageVersion;
       const existing = regenerate || inputStale || modelStale ? undefined : oldAsset;
       let usable = false;
@@ -1221,7 +1230,7 @@ export class StudioService {
           settings.speed,
           s.voiceRuntime,
           regenerate,
-          {itemId:item.id,normalizationVersion:NUMBER_READING_VERSION},
+          {itemId:item.id,normalizationVersion},
         );
         await this.tick('Saving asset');
         // Returning to cached settings reuses the existing manifest, not another ID.
@@ -1260,7 +1269,7 @@ export class StudioService {
             spokenText: item.spokenText,
             ttsInputText: normalizedInput.text,
             ttsInputHash: textHash(normalizedInput.text),
-            numberReadingVersion: NUMBER_READING_VERSION,
+            numberReadingVersion: normalizationVersion,
             voice: settings.voice,
             speed: settings.speed,
             model: s.voiceRuntime.model || 'Kokoro',
@@ -1689,6 +1698,7 @@ export class StudioService {
         order: s.items.length,
         revision: 0,
         manualLocks: [],
+        ...(s.voiceDefaults?{voiceSettings:{...s.voiceDefaults}}:{}),
       });
       if (index === 0)
         s.project.posts.push({

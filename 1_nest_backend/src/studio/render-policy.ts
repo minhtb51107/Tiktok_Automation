@@ -44,7 +44,7 @@ export function renderValidation(s: StudioSession, props: VideoPreviewProps) {
     else {
       if (!item.spokenApproval?.valid || item.spokenApproval.textHash!==a.textHash || a.status!=='APPROVED' || !a.approvedAt)
         finalBlockers.push(`${item.id}: spoken text and audio require explicit approval`);
-      if (spokenAmbiguities(item.spokenText).length || item.contentMapping?.status==='REVIEW_REQUIRED')
+      if (spokenAmbiguities(item.spokenText,item.pronunciationOverrides).length || item.contentMapping?.status==='REVIEW_REQUIRED')
         finalBlockers.push(`${item.id}: unresolved language/topic review`);
       if (t.scene.visual?.voiceEnabled===false) warnings.push(`${item.id}: voice is muted in saved Editor`);
       if (t.scene.visual?.voiceDurationMs!==undefined && t.scene.visual.voiceDurationMs<a.durationMs-(t.scene.visual.voiceSourceInMs||0))

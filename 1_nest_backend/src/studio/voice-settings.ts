@@ -1,3 +1,4 @@
+import {speechProjection} from './speech-dictionary';
 // Shared JSON settings contract used by the Studio UI and backend.
 export const VOICE_SPEED = {
   min: 0.5,
@@ -5,15 +6,8 @@ export const VOICE_SPEED = {
   step: 0.05,
   default: 1.2,
 } as const;
-export function spokenAmbiguities(text: string): string[] {
-  return [
-    ...new Set(
-      Array.from(
-        text.matchAll(/(?<![\p{L}\p{N}_])(t|đcđ|clm|cmn)(?![\p{L}\p{N}_])/giu),
-        (m) => m[1],
-      ),
-    ),
-  ];
+export function spokenAmbiguities(text: string,overrides:Record<string,string>={}): string[] {
+  return speechProjection(text,overrides).ambiguous;
 }
 export function validVoiceSpeed(value: unknown): value is number {
   return (

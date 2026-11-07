@@ -41,7 +41,7 @@ function VoiceScene({
           a.speed === speed &&
           a.spokenText === item.spokenText,
       );
-  const ambiguities = spokenAmbiguities(item.spokenText);
+  const ambiguities = spokenAmbiguities(item.spokenText,item.pronunciationOverrides);
   const settingsDirty =
     voice !== (item.voiceSettings?.voice || "") ||
     speed !== (item.voiceSettings?.speed ?? VOICE_SPEED.default);

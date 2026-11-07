@@ -27,6 +27,11 @@ export function validateVisual(
     throw new BadRequestException('Incomplete visual settings');
   const c = v.card,
     m = v.meme;
+  if(v.subtitlesEnabled!==undefined&&typeof v.subtitlesEnabled!=='boolean')throw new BadRequestException('Invalid subtitle option');
+  if(v.imageMode!==undefined&&!['FULL','PAN'].includes(v.imageMode))throw new BadRequestException('Invalid image mode');
+  if(v.imageZoom!==undefined)number(v.imageZoom,1,4);
+  for(const n of [v.imagePanX,v.imagePanY])if(n!==undefined)number(n,-100,100);
+  if(v.backgroundColor!==undefined&&!/^#[a-f0-9]{6}$/i.test(v.backgroundColor))throw new BadRequestException('Invalid background color');
   for(const n of [c.startMs,c.durationMs,v.voiceStartMs,v.voiceSourceInMs,v.voiceDurationMs,v.sfx.durationMs,v.sfx.sourceInMs])if(n!==undefined)number(n,0,86400000);
   for(const n of [c.durationMs,v.voiceDurationMs,v.sfx.durationMs])if(n!==undefined&&n<34)throw new BadRequestException('Clip duration must be at least one frame');
   number(c.x, 0, 1080);
@@ -77,6 +82,8 @@ export function validateBgm(
   known: (id: string) => boolean,
 ): BackgroundMusic {
   const v = structuredClone(value || defaultBgm()) as BackgroundMusic;
+  if(v.ducking!==undefined&&typeof v.ducking!=='boolean')throw new BadRequestException('Invalid ducking flag');
+  if(v.duckVolume!==undefined&&(!Number.isFinite(v.duckVolume)||v.duckVolume<0||v.duckVolume>0.25))throw new BadRequestException('Invalid duck volume');
   if(v.durationMs!==undefined&&v.durationMs<34)throw new BadRequestException('BGM clip duration must be positive');
   for(const n of [v.sourceInMs,v.durationMs])if(n!==undefined&&(!Number.isInteger(n)||n<0||n>86400000))throw new BadRequestException('Invalid BGM timing');
   if (

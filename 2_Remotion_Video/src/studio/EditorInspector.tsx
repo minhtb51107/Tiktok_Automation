@@ -177,6 +177,12 @@ export function EditorInspector({
               <option value="DARK">Dark card</option>
             </select>
           </label>
+          {check('Optional subtitles',v.subtitlesEnabled===true,subtitlesEnabled=>update({visual:{...v,subtitlesEnabled}}))}
+          <label>Attachment view<select value={v.imageMode||'FULL'} disabled={disabled} onChange={e=>update({visual:{...v,imageMode:e.target.value as 'FULL'|'PAN'}})}><option value="FULL">Full image (no crop)</option><option value="PAN">Zoom / pan (intentional crop)</option></select></label>
+          {n('Image zoom',v.imageZoom||1,1,4,imageZoom=>update({visual:{...v,imageZoom}}),0.1)}
+          {n('Pan end X (%)',v.imagePanX||0,-100,100,imagePanX=>update({visual:{...v,imagePanX}}))}
+          {n('Pan end Y (%)',v.imagePanY||0,-100,100,imagePanY=>update({visual:{...v,imagePanY}}))}
+          <label>Canvas color<input type="color" value={v.backgroundColor||'#e9edf4'} disabled={disabled} onChange={e=>update({visual:{...v,backgroundColor:e.target.value}})}/></label>
           <button
             disabled={disabled}
             onClick={() =>
@@ -489,7 +495,9 @@ export function EditorInspector({
           >
             Remove BGM
           </button>
-          <small>Gain only. Fade/ducking are not implemented.</small>
+          {check('Duck BGM during voice',bgm.ducking===true,ducking=>globalUpdate({backgroundMusic:{...bgm,ducking}}))}
+          {n('Ducked volume',bgm.duckVolume??0.03,0,0.25,duckVolume=>globalUpdate({backgroundMusic:{...bgm,duckVolume}}),0.01)}
+          <small>Deterministic voice-window ducking; fades not implemented.</small>
         </>
       )}
     </div>

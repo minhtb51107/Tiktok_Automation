@@ -26,7 +26,7 @@ const Image: React.FC<{
   const [failed, setFailed] = React.useState(false);
   return failed ? (
     avatar ? (
-      <div style={{ ...style, background: style.background ?? "#edf0f4" }} />
+      <div title="Avatar unavailable" style={{ ...style, background: style.background ?? "#edf0f4",display:'grid',placeItems:'center',fontSize:30 }}>?</div>
     ) : null
   ) : (
     animated ? <AnimatedGif key={uri} uri={uri} style={style} startMs={startMs}/> : <Img src={uri} style={style} onError={() => setFailed(true)} />
@@ -46,7 +46,8 @@ export const ThreadsVisual: React.FC<{
   const attachments = mediaAssets.filter(
     (a) => a.id.startsWith("source-") && a.kind !== "VIDEO",
   );
-  const layout = cardPages(item.scene.displayText, v, attachments.length),
+  const imageHeight=attachments.length?Math.min(700,Math.max(...attachments.map(a=>a.width&&a.height?(c.width-2*c.padding)*c.scale/attachments.length*a.height/a.width:180))):0;
+  const layout = cardPages(item.scene.displayText, v, attachments.length,imageHeight),
     contentStart = item.contentStartFrame - item.startFrame;
   const pageIndex = Math.min(
     layout.pages.length - 1,
@@ -78,7 +79,7 @@ export const ThreadsVisual: React.FC<{
   return (
     <AbsoluteFill
       style={{
-        background: transparent ? "transparent" : "#e9edf4",
+        background: transparent ? "transparent" : v.backgroundColor || "#e9edf4",
         fontFamily: "Arial, Helvetica, sans-serif",
         // Preserve the measured Editor base without inheriting its panel CSS.
         fontSize: 12,
@@ -160,14 +161,16 @@ export const ThreadsVisual: React.FC<{
             />
           ) : (
             <div
+              title="Avatar unavailable"
               style={{
                 width: 64,
                 height: 64,
                 minWidth: 64,
                 borderRadius: "50%",
                 background: palette.avatar,
+                display:'grid',placeItems:'center',fontSize:30,
               }}
-            />
+            >?</div>
           )}
           <div style={{ flex: 1, minWidth: 0, display:"flex",alignItems:"center",gap:12,flexWrap:"wrap" }}>
             <div
@@ -227,15 +230,16 @@ export const ThreadsVisual: React.FC<{
           {layout.pages[pageIndex]}
         </div>
         {attachments.length > 0 && (
-          <div style={{ display: "flex", gap: 12, height: 180, marginTop: 18 }}>
+          <div data-testid="threads-attachments" style={{ display: "flex", gap: 12, height: imageHeight, marginTop: 18,overflow:'hidden' }}>
             {attachments.map((a) => (
               <Image
                 key={a.id}
                 uri={a.uri}
                 style={{
                   width: `${100 / attachments.length}%`,
-                  height: 180,
+                  height: imageHeight,
                   objectFit: "contain",
+                  transform:v.imageMode==='PAN'?`translate(${(v.imagePanX||0)*Math.min(1,Math.max(0,frame-contentStart)/Math.max(1,item.contentEndFrame-item.contentStartFrame))}%, ${(v.imagePanY||0)*Math.min(1,Math.max(0,frame-contentStart)/Math.max(1,item.contentEndFrame-item.contentStartFrame))}%) scale(${v.imageZoom||1})`:undefined,
                   borderRadius: 12,
                 }}
               />

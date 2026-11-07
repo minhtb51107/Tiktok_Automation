@@ -83,6 +83,8 @@ export function buildStudioPreview(
       kind: m.kind,
       uri: i.localSourceMedia?.find(a=>a.sourceUrl===m.url&&a.status==='DOWNLOADED'&&/^\/api\/studio\/data\/conversations\/media\/[a-f0-9]{64}$/.test(a.localUri||''))?.localUri || m.url,
       availability: 'AVAILABLE' as const,
+      width:i.localSourceMedia?.find(a=>a.sourceUrl===m.url)?.width??undefined,
+      height:i.localSourceMedia?.find(a=>a.sourceUrl===m.url)?.height??undefined,
     }));
     project.mediaAssets.push(...sourceMedia);
     const scene: StoryboardScene = {
@@ -123,7 +125,7 @@ export function buildStudioPreview(
             }
           : undefined,
       // Scene-level captions follow measured narration bounds. No word alignment is claimed.
-      subtitles: audio ? [{id:`caption-${i.id}`,text:i.spokenText,startMs:0,endMs:audio.durationMs}] : [],
+      subtitles: audio && x.visual?.subtitlesEnabled===true ? [{id:`caption-${i.id}`,text:i.spokenText,startMs:0,endMs:audio.durationMs}] : [],
       timing: {
         paddingBeforeMs: x.paddingBeforeMs,
         paddingAfterMs: x.paddingAfterMs,
@@ -181,6 +183,7 @@ export function buildStudioPreview(
       scene.displayText,
       scene.visual!,
       sourceMedia.filter(m => m.kind !== 'VIDEO').length,
+      sourceMedia.length?Math.min(700,Math.max(...sourceMedia.map(m=>m.width&&m.height?(scene.visual!.card.width-2*scene.visual!.card.padding)*scene.visual!.card.scale/sourceMedia.length*m.height/m.width:180))):0,
     );
     if (pages.pages.length > 1)
       warnings.push(

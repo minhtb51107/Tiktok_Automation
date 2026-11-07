@@ -4,6 +4,7 @@ import type {
   ContentAuthor,
 } from '../video-pipeline/contracts';
 export interface StudioItem {
+  pronunciationOverrides?: Record<string,string>;
   localSourceMedia?: NonNullable<import('../data-engine/conversation-contracts').PublicPost['attachments']>;
   observationEvidence?: {
     level: 'PARENT_VERIFIED' | 'OBSERVED_ON_TARGET_PAGE' | 'UNKNOWN';
@@ -37,6 +38,8 @@ export interface StudioItem {
   manualLocks: string[];
 }
 export interface StudioSession {
+  voiceDefaults?: import('./voice.types').VoiceSettings;
+  voicePresets?: Record<string,{speed:number}>;
   productionOrigin?: import('../video-pipeline/contracts').ProductionOrigin;
   sourceImages?: Record<string,import('./source-images').LocalSourceImage>;
   mediaRights?: Record<string,{status:'UNKNOWN'|'OWNED'|'LICENSED'|'PERMISSION';evidence:string;at:string}>;

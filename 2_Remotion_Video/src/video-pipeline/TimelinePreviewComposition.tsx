@@ -1,4 +1,5 @@
 import {cardPages,normalizeVisual} from '../../../1_nest_backend/src/video-pipeline/scene-visual';
+import {bgmVolumeAtFrame} from '../../../1_nest_backend/src/video-pipeline/bgm-volume';
 import {frameRange} from '../../../1_nest_backend/src/video-pipeline/editing';
 import { ContinuousBackground } from "./ContinuousBackground";
 import { ThreadsVisual } from "./ThreadsVisual";
@@ -203,13 +204,7 @@ const TimelinePreviewComposition: React.FC<
               )}
               src={assetSource(audioById.get(backgroundMusic.assetId)!.uri)}
               loop
-              volume={
-                timeline.scenes.find(
-                  (s) => frame >= s.startFrame && frame < s.endFrame,
-                )?.scene.visual?.bgmEnabled === false
-                  ? 0
-                  : backgroundMusic.volume
-              }
+              volume={f=>bgmVolumeAtFrame(backgroundMusic,timeline,f+Math.ceil(backgroundMusic.startMs*timeline.fps/1000))}
             />
           </Sequence>
         )}
