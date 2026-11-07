@@ -81,7 +81,7 @@ export function buildStudioPreview(
     const sourceMedia = (meta?.media || []).map((m, index) => ({
       id: `source-${i.id}-${index}`,
       kind: m.kind,
-      uri: m.url,
+      uri: i.localSourceMedia?.find(a=>a.sourceUrl===m.url&&a.status==='DOWNLOADED'&&/^\/api\/studio\/data\/conversations\/media\/[a-f0-9]{64}$/.test(a.localUri||''))?.localUri || m.url,
       availability: 'AVAILABLE' as const,
     }));
     project.mediaAssets.push(...sourceMedia);
@@ -122,7 +122,8 @@ export function buildStudioPreview(
               durationMs:x.visual.sfx.durationMs, sourceInMs:x.visual.sfx.sourceInMs,
             }
           : undefined,
-      subtitles: [],
+      // Scene-level captions follow measured narration bounds. No word alignment is claimed.
+      subtitles: audio ? [{id:`caption-${i.id}`,text:i.spokenText,startMs:0,endMs:audio.durationMs}] : [],
       timing: {
         paddingBeforeMs: x.paddingBeforeMs,
         paddingAfterMs: x.paddingAfterMs,
