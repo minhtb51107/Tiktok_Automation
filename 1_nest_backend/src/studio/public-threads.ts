@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { request } from 'https';
 import { lookup } from 'dns/promises';
 import { existsSync } from 'fs';
+import {freemem} from 'os';
 import puppeteer from 'puppeteer';
 import {labelledCounts} from './metadata-fields';
 import { matchExactTarget } from './target-identity';
@@ -65,6 +66,7 @@ export interface PublicRecord {
   [key: string]: unknown;
 }
 export interface SourceAttempt {
+  boundedObservation?: {requests:number;scrolls:number;stopReason:string;minimumAvailableMiB:number;snapshots:unknown[]};
   scope?: 'TARGET_ONLY' | 'WITH_CONTEXT';
   matchedTargetId?: string | null;
   matchMethod?: 'DOM_PERMALINK' | 'PUBLIC_CANONICAL_METADATA' | 'UNVERIFIED';
@@ -145,6 +147,7 @@ export async function extractPublicThreads(
   input: string,
   scope: 'TARGET_ONLY' | 'WITH_CONTEXT' = 'TARGET_ONLY',
   controlled = false,
+  live03 = false,
 ): Promise<SourceAttempt> {
   const started = Date.now();
   const out: SourceAttempt = {
@@ -254,13 +257,22 @@ export async function extractPublicThreads(
       let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
       let stage = 'browser';
       let deadline: ReturnType<typeof setTimeout>|undefined;
+      let resourceGuard: ReturnType<typeof setInterval>|undefined;
       try {
         browser = await puppeteer.launch({
           executablePath: executable,
+          ...(live03?{timeout:Math.max(1,60000-(Date.now()-started))}:{}),
           headless: true,
           args: ['--disable-background-networking'],
         });
-        if(controlled)deadline=setTimeout(()=>void browser?.close().catch(()=>{}),20000);
+        let stopReason='COMPLETED',minimumAvailableMiB=Math.round(freemem()/1024**2),scrollCount=0;
+        if(live03){
+          out.boundedObservation={requests:out.redirects.length,scrolls:0,stopReason,minimumAvailableMiB,snapshots:[]};
+          resourceGuard=setInterval(()=>{minimumAvailableMiB=Math.min(minimumAvailableMiB,Math.round(freemem()/1024**2));if(minimumAvailableMiB<384){stopReason='RESOURCE_BELOW_384MIB';if(out.boundedObservation){out.boundedObservation.stopReason=stopReason;out.boundedObservation.minimumAvailableMiB=minimumAvailableMiB;}diagnostic('resource',stopReason,'Available RAM below 384 MiB; stopped.');void browser?.close().catch(()=>{});}},250);
+          if(minimumAvailableMiB<384)out.boundedObservation.stopReason='RESOURCE_BELOW_384MIB';
+          if(minimumAvailableMiB<384)throw Error('RESOURCE_BELOW_384MIB');
+        }
+        if(controlled)deadline=setTimeout(()=>{stopReason='TIME_BUDGET';void browser?.close().catch(()=>{});},live03?Math.max(1,60000-(Date.now()-started)):20000);
         const page = await browser.newPage();
         await page.setRequestInterception(true);
         let navCount = 0, requestCount=0;
@@ -281,7 +293,8 @@ export async function extractPublicThreads(
             if (r.isNavigationRequest() && r.frame() === page.mainFrame())
               navCount++;
             out.browserNavigations = navCount;
-            void (allowed && navCount <= (controlled?4:6) && (!controlled||(requestCount<=150&&!['image','media','font'].includes(r.resourceType()))) ? r.continue() : r.abort());
+            if(live03&&requestCount>147)stopReason='REQUEST_BUDGET';
+            void (allowed && navCount <= (live03?2:controlled?4:6) && (!controlled||(requestCount<=(live03?147:150)&&!['image','media','font'].includes(r.resourceType()))) ? r.continue() : r.abort());
           } catch {
             void r.abort();
           }
@@ -302,7 +315,14 @@ export async function extractPublicThreads(
           })
           .catch(() => {});
         stage = 'parser';
-        const rows = await page.evaluate(() => {
+        const snapshots:unknown[]=[];
+        const collected=new Map<string,any>();
+        for(let step=0;step<=(live03?4:0);step++){
+        const availableMiB=Math.round(freemem()/1024**2);minimumAvailableMiB=Math.min(minimumAvailableMiB,availableMiB);
+        if(live03&&availableMiB<384){stopReason='RESOURCE_BELOW_384MIB';break;}
+        if(live03&&stopReason!=='COMPLETED')break;
+        if(/\/(?:login|accounts|challenge|checkpoint)(?:\/|\?|$)/i.test(page.url())||await page.evaluate(()=>!!document.querySelector('input[type="password"],iframe[src*="captcha"],[data-testid*="captcha"]'))){stopReason='ACCESS_BLOCKED';break;}
+        const snapshot = await page.evaluate(() => {
           const nodes = [
             ...document.querySelectorAll('[data-pressable-container="true"]'),
           ];
@@ -345,6 +365,7 @@ export async function extractPublicThreads(
               topicEvidence,
               bodyText:bodySpans.join('\n'),
               spans,
+              rawInnerText:(node as HTMLElement).innerText,
               content,
               permalink,
               visibleMetrics,
@@ -363,6 +384,14 @@ export async function extractPublicThreads(
             };
           });
         });
+        snapshots.push({step,observedAt:new Date().toISOString(),rows:snapshot});
+        for(const row of snapshot){if(row.permalink&&!collected.has(row.permalink)&&collected.size<40)collected.set(row.permalink,row);}
+        if(live03)out.boundedObservation={requests:requestCount+out.redirects.length,scrolls:scrollCount,stopReason,minimumAvailableMiB,snapshots};
+        if(!live03||collected.size>=40){if(live03)stopReason='CARD_BUDGET';break;}
+        if(step<4){await page.evaluate(()=>window.scrollBy(0,window.innerHeight));scrollCount++;await new Promise(r=>setTimeout(r,650));}
+        }
+        const rows: Array<{permalink:string|null;content:string;bodyText:string;topicEvidence:{label:string;href:string}|null;controls:Array<{label:string;text:string}>;createdAt:string|null;timestampLabel:string|null;avatar:string|null;media:PublicRecord['media'];visibleMetrics:string[]}>=live03?[...collected.values()]:(snapshots[0] as any)?.rows||[];
+        if(live03)out.boundedObservation={requests:requestCount+out.redirects.length,scrolls:scrollCount,stopReason,minimumAvailableMiB,snapshots};
         diagnostic(
           'dom',
           rows.length ? 'DOM_FOUND' : 'DOM_UNAVAILABLE',
@@ -481,6 +510,7 @@ export async function extractPublicThreads(
           e instanceof Error ? e.message : 'Browser failed',
         );
       } finally {
+        if(resourceGuard)clearInterval(resourceGuard);
         if(deadline)clearTimeout(deadline);
         await browser?.close();
       }

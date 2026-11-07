@@ -1,0 +1,21 @@
+// One approved bounded capture; no automatic retry or reuse of a populated directory.
+const fs=require('fs'),p=require('path'),os=require('os');
+const base=p.resolve(__dirname,'../../../Tiktok_Automation_live03'),root=p.resolve(process.argv[2]||'');
+if(p.dirname(root)!==base||fs.existsSync(root))throw Error('NEW_LIVE03_SANDBOX_REQUIRED');
+if(os.freemem()<384*1024**2)throw Error('RESOURCE_BELOW_384MIB');
+const target='https://www.threads.com/@baongocghetmatcha/post/DfWJxiID7E5';
+fs.mkdirSync(root,{recursive:true});for(const k of Object.keys(process.env))if(/TOKEN|SECRET|PASSWORD|API_KEY|DATABASE_URL/i.test(k))delete process.env[k];
+const {extractPublicThreads}=require('../dist/studio/public-threads'),{analyzeSourceCards}=require('../dist/studio/source-quality'),{StudioService}=require('../dist/studio/studio.service'),{sourceReport,reportMarkdown,sourceQuickMarkdown}=require('../dist/studio/stage-report');
+(async()=>{const before=Math.round(os.freemem()/1024**2),started=Date.now(),capture=await extractPublicThreads(target,'WITH_CONTEXT',true,true);
+fs.writeFileSync(p.join(root,'capture.json'),JSON.stringify(capture,null,2));
+if(capture.boundedObservation?.stopReason==='ACCESS_BLOCKED'||capture.diagnostics.some(x=>/login|captcha|protection/i.test(x.message)))throw Error('ACCESS_BLOCKED_CAPTURE_RETAINED');
+if(capture.canonicalUrl!==target||capture.matchMethod!=='DOM_PERMALINK')throw Error('TARGET_NOT_CONFIRMED_CAPTURE_RETAINED');
+const cards=capture.contextCandidates||[],quality=analyzeSourceCards(cards,capture.records[0].text);
+const priority=[...quality].sort((a,b)=>({RECOMMENDED:0,NEEDS_REVIEW:1,LOW_VALUE:2}[a.bucket]-{RECOMMENDED:0,NEEDS_REVIEW:1,LOW_VALUE:2}[b.bucket])||a.index-b.index);
+const suggested=priority.filter(q=>q.bucket!=='LOW_VALUE').slice(0,20).map(q=>cards[q.index].url);
+const store=p.join(root,'backend/.studio-data'),service=new StudioService({});Object.assign(service,{root:store,extract:async()=>capture});
+try{let s=await service.create();s=await service.mutate(s.id,{revision:s.revision,urls:[target],scope:'WITH_CONTEXT'},true);
+const report=sourceReport(s);fs.writeFileSync(p.join(root,'report.json'),JSON.stringify({report,quality,suggested,rawCapture:'capture.json'},null,2));fs.writeFileSync(p.join(root,'quick.md'),sourceQuickMarkdown(report));fs.writeFileSync(p.join(root,'full.md'),reportMarkdown(report));
+const result={mode:'LIVE03_SANDBOX',target,sessionId:s.id,store,sessionRevision:s.revision,observedCards:cards.length,verifiedReplies:0,rootType:capture.records[0].type,reportedReplyCount:capture.records[0].replyCount,proposed:suggested.length,quality:quality.map(q=>({index:q.index,bucket:q.bucket,reasons:q.reasons})),elapsedMs:Date.now()-started,freeMiBBefore:before,freeMiBAfter:Math.round(os.freemem()/1024**2),budget:capture.boundedObservation};
+fs.writeFileSync(p.join(root,'result.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({...result,budget:result.budget?{...result.budget,snapshots:result.budget.snapshots.length}:null},null,2));
+}finally{service.onModuleDestroy()}})().catch(e=>{fs.writeFileSync(p.join(root,'error.json'),JSON.stringify({error:e.message}));console.error(e.message);process.exitCode=1});

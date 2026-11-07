@@ -1,0 +1,10 @@
+// Offline report for an already-finished capture. No collector import or network.
+const fs=require('fs'),p=require('path'),crypto=require('crypto');
+const parent=p.resolve(__dirname,'../../../Tiktok_Automation_live03'),root=p.resolve(process.argv[2]||'');
+if(p.dirname(root)!==parent)throw Error('LIVE03_SANDBOX_REQUIRED');
+const file=p.join(root,'capture.json'),capture=JSON.parse(fs.readFileSync(file));
+const blocked=capture.diagnostics.some(x=>/RESOURCE_BELOW_384MIB/.test(x.message)||x.code==='RESOURCE_BELOW_384MIB');
+const report={version:'live03-report/1',verdict:blocked?'BLOCKED_RESOURCE':'PARTIAL',target:capture.originalUrl,canonicalUrl:capture.canonicalUrl,identityEvidence:capture.matchMethod,elapsedMs:capture.elapsedMs,rootMetadataRecords:capture.records.length,domNavigations:capture.browserNavigations,domCards:capture.domCandidates,contexts:capture.contextCandidates.length,scrolls:capture.boundedObservation?.scrolls??(capture.browserNavigations===0?0:null),verifiedReplies:0,reportedReplies:capture.records[0]?.replyCount??null,resourceMinimumMiB:capture.boundedObservation?.minimumAvailableMiB??null,warnings:['No new quality/recall result can be measured without DOM cards.','The exact available RAM value at the first stop was not persisted; only the threshold exception is available.','No retry, TTS, render, publishing or production mutation.'],diagnostics:capture.diagnostics,captureSha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')};
+fs.writeFileSync(p.join(root,'report.json'),JSON.stringify(report,null,2));
+fs.writeFileSync(p.join(root,'report.md'),['# LIVE-03 — '+report.verdict,'',`Target: ${report.target}`,`Canonical: ${report.canonicalUrl}`,`Evidence: ${report.identityEvidence}`,`Elapsed: ${report.elapsedMs} ms`,`DOM navigations: ${report.domNavigations}; context cards: ${report.contexts}; verified replies: 0; scrolls: ${report.scrolls}`,'','The run stopped after browser launch because available RAM was below 384 MiB. Public canonical metadata is retained; no comment quality assessment or new draft was produced.',...report.warnings].join('\n'));
+console.log(JSON.stringify(report,null,2));
