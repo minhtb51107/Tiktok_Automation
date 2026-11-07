@@ -2,6 +2,7 @@ import {useRuntimeSafety} from './RuntimeSafety';
 import {ConversationPanel} from './ConversationPanel';
 import { ControlledDiscovery } from "./ControlledDiscovery";
 import { useEffect, useState, useRef } from "react";
+import {analyzeSourceCards,cleanSourceProjection} from '../../../1_nest_backend/src/studio/source-quality';
 import type {
   StudioItem,
   StudioSession,
@@ -91,6 +92,7 @@ export function DiscoveryWorkspace({
   const [activeTab, setActiveTab] =
     useState<AcquisitionTab>("URLS_AND_MANUAL");
   const [focusItemId, setFocusItemId] = useState<string>("ALL");
+  const [qualityFilter,setQualityFilter]=useState('ALL');
 
   // Manual import state
   const [manualOpen, setManualOpen] = useState(false);
@@ -411,9 +413,11 @@ export function DiscoveryWorkspace({
     );
   }
 
+  const qualityRows=analyzeSourceCards(session.items.map(i=>i.rawExtraction!).filter(Boolean),session.items.find(i=>i.inclusion==='TARGET')?.originalText||'');
+  const qualityFor=(id:string)=>qualityRows[session.items.findIndex(i=>i.id===id)];
   const visibleSourceItems = (session.items || []).filter(
     (i) =>
-      (focusItemId === "ALL" || i.id === focusItemId) &&
+      (focusItemId === "ALL" || i.id === focusItemId) && (qualityFilter==='ALL'||(qualityFilter==='RECOMMENDED'?qualityFor(i.id)?.bucket==='RECOMMENDED':qualityFor(i.id)?.bucket==='LOW_VALUE')) &&
       (i.inclusion === "EXPLICIT_CONTEXT" ||
         i.inclusion === "MANUAL" ||
         !session.attempts?.length ||
@@ -1690,6 +1694,7 @@ export function DiscoveryWorkspace({
           </div>
         ) : (
           <div className="s2-collected-grid">
+            <div className="actions"><label>Content quality <select value={qualityFilter} onChange={e=>setQualityFilter(e.target.value)}><option value="ALL">All</option><option value="RECOMMENDED">Recommended (heuristic)</option><option value="LOW_VALUE">Short / low-value</option></select></label><button onClick={()=>visibleSourceItems.forEach(i=>onUpdateItem(i.id,{selected:true}))}>Select visible</button><button onClick={()=>visibleSourceItems.forEach(i=>onUpdateItem(i.id,{selected:false}))}>Deselect visible</button></div>
             {visibleSourceItems.map((i, index) => (
               <article
                 className={
@@ -1748,6 +1753,10 @@ export function DiscoveryWorkspace({
                   </a>
                 )}
 
+                <p>{i.displayText.slice(0,160)}{i.displayText.length>160?'…':''}</p>
+                <small>{qualityFor(i.id)?.bucket} · {qualityFor(i.id)?.reasons.join(' · ')}</small>
+                <details><summary>Expand source card / edit</summary>
+                {i.rawExtraction&&<details><summary>Clean projection (does not change saved edits)</summary><p>{cleanSourceProjection(i.rawExtraction).text}</p><button onClick={()=>onUpdateItem(i.id,{displayText:cleanSourceProjection(i.rawExtraction!).text,spokenText:cleanSourceProjection(i.rawExtraction!).text})}>Apply clean projection to display / narration</button></details>}
                 <ThreadsPreview
                   item={i}
                   disabled={locked || busy || dirty}
@@ -1815,6 +1824,7 @@ export function DiscoveryWorkspace({
                       Restore source body text
                     </button>
                   </div>
+                </details>
                 </details>
               </article>
             ))}

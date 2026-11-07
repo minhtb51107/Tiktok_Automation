@@ -1,4 +1,5 @@
 import type { StudioSession } from './studio.contracts';
+import {analyzeSourceCards,cleanSourceProjection} from './source-quality';
 export type StageName =
   | 'SOURCE'
   | 'SCRIPT'
@@ -7,6 +8,8 @@ export type StageName =
   | 'RENDER'
   | 'PUBLISH';
 export interface StageReport {
+  sourceCards?: Array<{role:'ROOT'|'CONTEXT';author:string;permalink:string|null;originalText:string;displayText:string|null;spokenText:string|null;selected:boolean;materialized:boolean;relationship:string;evidence:unknown;media:unknown[];quality:unknown;warnings:string[]}>;
+  timing?: {crawlMs:number;studioImportMs:number|null;reportMs:number|null};
   voice?: {
     runtime: import('./voice.types').VoiceRuntime | null;
     items: unknown[];
@@ -161,7 +164,18 @@ export function sourceReport(s: StudioSession): StageReport {
   const unresolved = sources
     .filter((x) => !x.matchedTargetId)
     .map((x) => x.originalUrl);
+  const sourceCards: NonNullable<StageReport['sourceCards']>=[];
+  for(const a of unique.values()){
+    const quality=analyzeSourceCards(a.contextCandidates||[],a.records[0]?.text||'');
+    for(const [index,raw] of [...(a.records[0]?[a.records[0]]:[]),...(a.contextCandidates||[])].entries()){
+      const url=typeof raw.url==='string'?raw.url:index===0?a.canonicalUrl:null;
+      const item=s.items.find(i=>i.sourceUrl===url);
+      sourceCards.push({role:index===0?'ROOT':'CONTEXT',author:raw.author,permalink:url,originalText:raw.text,displayText:item?.displayText??null,spokenText:item?.spokenText??null,selected:item?.selected??false,materialized:!!item,relationship:item?.observationEvidence?.level||(index===0?'UNKNOWN':'OBSERVED_ON_TARGET_PAGE'),evidence:item?.observationEvidence||{targetUrl:a.canonicalUrl,observedAt:a.retrievedAt,parentId:null},media:raw.media.map(m=>({...m,url:safeUrl(m.url)})),quality:index===0?cleanSourceProjection(raw):quality[index-1],warnings:['Observed context is not parent verification; rights UNKNOWN.']});
+    }
+  }
   return {
+    sourceCards,
+    timing:{crawlMs:attempts.reduce((n,a)=>n+a.elapsedMs,0),studioImportMs:s.sourceRun?.elapsedMs??null,reportMs:null},
     projectId: s.project.id,
     sessionId: s.id,
     stageName: 'SOURCE',
@@ -179,6 +193,11 @@ export function sourceReport(s: StudioSession): StageReport {
     inputSummary: `${attempts.length} input URLs; scope ${s.scope || 'TARGET_ONLY'}`,
     outputSummary: `${s.items.length} project items, ${s.items.filter((i) => i.selected).length} selected; originals and manual changes stored separately`,
     counts: {
+      observed:sourceCards.length,
+      observedContext:sourceCards.filter(c=>c.role==='CONTEXT').length,
+      materialized:sourceCards.filter(c=>c.materialized).length,
+      excluded:sourceCards.filter(c=>!c.selected).length,
+      parentVerified:sourceCards.filter(c=>c.relationship==='PARENT_VERIFIED').length,
       inputUrls: attempts.length,
       distinctTargets: sources.length,
       resolvedTargets: sources.filter((x) => x.matchedTargetId).length,
@@ -230,6 +249,7 @@ export function reportMarkdown(r: StageReport): string {
     r.outputSummary,
     '',
     ...Object.entries(r.counts).map(([k, v]) => `- ${k}: ${v}`),
+    ...(r.sourceCards||[]).flatMap((c,i)=>[`## ${c.role} ${i+1} — ${c.author}`,`${c.permalink||'URL UNKNOWN'} | selected=${c.selected} | materialized=${c.materialized} | ${c.relationship}`,'Original text:',c.originalText,`Evidence: ${JSON.stringify(c.evidence)}`,`Media: ${c.media.length} references (see JSON)`,`Quality: ${JSON.stringify(c.quality)}`,...c.warnings,'']),
     '',
     ...r.sources.flatMap((s, i) => [
       `## Target ${i + 1}: ${s.status}`,
@@ -301,4 +321,9 @@ export function reportMarkdown(r: StageReport): string {
     'Costs: unavailable (not measured).',
     `Artifacts: ${r.artifacts.map((a) => a.kind + ': ' + a.id).join(', ')}`,
   ].join('\n');
+}
+
+/** Full bodies, concise metadata; no signed CDN URLs. */
+export function sourceQuickMarkdown(r:StageReport){
+ return [`# SOURCE quick report`, `Session ${r.sessionId} · revision ${r.revision}`,JSON.stringify(r.counts),`Crawl ${r.timing?.crawlMs??'UNKNOWN'} ms · Studio import ${r.timing?.studioImportMs??'UNKNOWN'} ms · report ${r.reportGenerationElapsedMs??'UNKNOWN'} ms`,...(r.sourceCards||[]).flatMap(c=>[`\n## ${c.role} · ${c.author}`,c.permalink||'URL UNKNOWN',`Selected ${c.selected} · ${c.relationship} · media ${c.media.length}`,c.originalText]),'Parent verification is independent of editorial selection. Rights UNKNOWN.'].join('\n');
 }

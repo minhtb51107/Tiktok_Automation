@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import {sourceQuickMarkdown} from '../../../1_nest_backend/src/studio/stage-report';
+import {copyReport} from './copy-report';
 import type { StageReport } from "../../../1_nest_backend/src/studio/stage-report";
 export function StageReportPanel({
   id,
@@ -75,8 +77,7 @@ export function StageReportPanel({
         <button
           disabled={dirty || !data}
           onClick={() =>
-            void navigator.clipboard
-              .writeText(data!.markdown)
+            void copyReport(stage==='SOURCE'?sourceQuickMarkdown({...data!.report,reportGenerationElapsedMs:data!.reportGenerationElapsedMs}):data!.markdown)
               .then(() => setMessage("Report copied."))
               .catch(() =>
                 setMessage(
@@ -90,6 +91,7 @@ export function StageReportPanel({
         <button disabled={dirty || !data} onClick={download}>
           Export JSON
         </button>
+        <button disabled={dirty||!data} onClick={()=>{const u=URL.createObjectURL(new Blob([data!.markdown],{type:'text/markdown;charset=utf-8'}));const a=document.createElement('a');a.href=u;a.download=`${stage.toLowerCase()}-report-${id}.md`;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}}>Export Markdown</button>
         <small role="status">
           {dirty ? "Save edits to refresh the report." : message}
         </small>

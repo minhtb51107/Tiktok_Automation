@@ -333,9 +333,17 @@ export async function extractPublicThreads(
                   !['·', 'Tác giả', 'Author', 'Đã ghim', 'Pinned'].includes(s),
               )
               .join('\n');
+            // Body projection excludes structural chrome. Keep `content`/spans
+            // intact as the raw observation; never strip arbitrary authored lines.
+            const bodySpans=[...node.querySelectorAll('span[dir="auto"]')].filter(x=>{
+              if(x.closest('time,button,[role="button"]'))return false;
+              const link=x.closest('a[href]');
+              if(link){const href=link.getAttribute('href')||'';if(href.startsWith('/search?')||/^\/@[\w.-]+\/?$/.test(href)||href===permalink)return false;}
+              return true;
+            }).map(x=>x.textContent?.trim()||'').filter(Boolean);
             return {
               topicEvidence,
-              bodyText:topicEvidence&&content.startsWith(topicEvidence.label+'\n')?content.slice(topicEvidence.label.length+1):content,
+              bodyText:bodySpans.join('\n'),
               spans,
               content,
               permalink,
@@ -436,6 +444,7 @@ export async function extractPublicThreads(
             seen.add(related.permalink);
             const handle = related.permalink.split('/')[1].slice(1);
             out.contextCandidates!.push({
+              bodyText:related.bodyText,
               text: related.content,
               author: handle,
               handle,

@@ -1011,6 +1011,7 @@ export class StudioService {
     const markdown = reportMarkdown(report);
     const generation = Date.now() - started;
     report.reportGenerationElapsedMs = generation;
+    if(report.timing)report.timing.reportMs=generation;
     return {
       report,
       markdown:
