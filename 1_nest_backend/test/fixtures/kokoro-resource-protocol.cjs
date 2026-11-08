@@ -1,5 +1,5 @@
 // SYNTHETIC protocol test only: no speech, Python, model or network.
-process.stdin.once('data',()=>{
+process.stdin.on('data',()=>{
  const emit=x=>process.stdout.write('@STUDIO@'+JSON.stringify(x)+'\n');
  if(process.argv[2]==='allocation')return emit({ok:false,category:'ALLOCATION_FAILURE',error:'ALLOCATION_FAILURE: MemoryError',details:{errorType:'MemoryError'}});
  if(process.argv[2]==='exit')return process.exit(1);

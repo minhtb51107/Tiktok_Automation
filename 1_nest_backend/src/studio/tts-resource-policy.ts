@@ -21,6 +21,16 @@ export function ttsFailureCategory(error:unknown):TtsFailureCategory {
 export interface BoundedProbeExecution {
  mode:'LOCAL_BOUNDED_PROBE';approvalId:string;leaseToken:string;approved:true;
 }
+export const DRAFT_TTS_LIMITS={workerTimeoutMs:240000,totalTimeoutMs:300000,maxCharacters:2000};
+export interface ApprovedDraftExecution {
+ mode:'LOCAL_DRAFT_BATCH';approvalId:string;leaseToken:string;approved:true;
+ inputHash:string;deadlineAt:number;
+}
+export type LocalTtsExecution=BoundedProbeExecution|ApprovedDraftExecution;
+export function validateLocalExecution(text:string,execution:LocalTtsExecution){
+ if(execution.mode==='LOCAL_BOUNDED_PROBE')return validateBoundedProbe(text,execution);
+ if(execution.mode!=='LOCAL_DRAFT_BATCH'||execution.approved!==true||!/^[a-f0-9-]{36}$/.test(execution.approvalId)||!/^[a-f0-9-]{36}$/.test(execution.leaseToken)||!/^[a-f0-9]{64}$/.test(execution.inputHash)||!text.trim()||[...text].length>DRAFT_TTS_LIMITS.maxCharacters||!Number.isFinite(execution.deadlineAt)||execution.deadlineAt<=Date.now()||execution.deadlineAt>Date.now()+DRAFT_TTS_LIMITS.totalTimeoutMs+1000)throw Error('INVALID_APPROVED_DRAFT_EXECUTION');
+}
 export function validateBoundedProbe(text:string,execution:BoundedProbeExecution){
  if(execution.mode!=='LOCAL_BOUNDED_PROBE'||execution.approved!==true||!/^[a-f0-9-]{36}$/.test(execution.approvalId)||!/^[a-f0-9-]{36}$/.test(execution.leaseToken)||!text.trim()||[...text].length>TTS_RESOURCE_POLICY.probeMaxCharacters)throw Error('INVALID_BOUNDED_PROBE_APPROVAL_OR_TEXT');
 }

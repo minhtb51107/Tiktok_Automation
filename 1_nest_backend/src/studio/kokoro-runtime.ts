@@ -5,7 +5,7 @@ import * as path from 'path';
 import type { VoiceRuntime } from './voice.types';
 import { atempoFilter } from './voice-settings';
 import {freemem} from 'os';
-import {TTS_RESOURCE_POLICY,ttsResourceBlock,ttsResourceWarnings,SynthesisMetrics,BoundedProbeExecution,validateBoundedProbe,TtsExecutionError} from './tts-resource-policy';
+import {TTS_RESOURCE_POLICY,ttsResourceBlock,ttsResourceWarnings,SynthesisMetrics,LocalTtsExecution,validateLocalExecution,TtsExecutionError,DRAFT_TTS_LIMITS} from './tts-resource-policy';
 import {assertNoLocalProbe} from './local-probe-lease';
 export const textHash = (text: string) =>
   createHash('sha256').update(text).digest('hex');
@@ -163,14 +163,14 @@ export class KokoroRuntime {
     voice: string,
     output: string,
     version: string,
-    execution?:BoundedProbeExecution,
+    execution?:LocalTtsExecution,
   ) {
     if (this.pending) throw Error('Sequential TTS worker busy');
     this.pending = true;
     if (this.idle) clearTimeout(this.idle);
     try {
       assertNoLocalProbe(execution?.leaseToken);
-      if(execution){validateBoundedProbe(text,execution);if(this.worker)throw Error('BOUNDED_PROBE_REQUIRES_COLD_IDLE_RUNTIME');}
+      if(execution){validateLocalExecution(text,execution);if(execution.mode==='LOCAL_BOUNDED_PROBE'&&this.worker)throw Error('BOUNDED_PROBE_REQUIRES_COLD_IDLE_RUNTIME');if(execution.mode==='LOCAL_DRAFT_BATCH'&&execution.inputHash!==textHash(text))throw Error('APPROVED_TTS_INPUT_CHANGED');}
       const key = JSON.stringify(this.cfg()) + version;
       this.resourceSamples=[];this.resourceInputHash=textHash(text);
       const block=ttsResourceBlock(freemem(),!!this.worker&&this.workerKey===key);
@@ -197,7 +197,8 @@ export class KokoroRuntime {
         let buffer = '';
         let settled=false;
         let resourceTimer:ReturnType<typeof setInterval>|undefined;
-        const timer = setTimeout(() => finish(new TtsExecutionError('TIMEOUT','Kokoro inference deadline exceeded')),execution?TTS_RESOURCE_POLICY.probeTimeoutMs:120000);
+        const duration=execution?.mode==='LOCAL_DRAFT_BATCH'?Math.min(DRAFT_TTS_LIMITS.workerTimeoutMs,execution.deadlineAt-Date.now()):execution?TTS_RESOURCE_POLICY.probeTimeoutMs:120000;
+        const timer = setTimeout(() => finish(new TtsExecutionError('TIMEOUT','Kokoro inference deadline exceeded')),Math.max(1,duration));
         const finish = (err?: Error,metrics?:SynthesisMetrics) => {
           if(settled)return;settled=true;
           clearTimeout(timer);
@@ -223,7 +224,7 @@ export class KokoroRuntime {
             if (line.startsWith('@STUDIO@')) {
               try {
                 const r = JSON.parse(line.slice(8));
-                if(r.resource){this.resourceSamples.push(r.resource);if(this.resourceSamples.length>512)this.resourceSamples.shift();if(r.resource.systemCommitAvailableMiB!==undefined&&r.resource.systemCommitAvailableMiB<TTS_RESOURCE_POLICY.commitStopMiB){finish(new TtsExecutionError('RESOURCE_GUARD_STOP','RESOURCE_GUARD_STOP: system commit reserve below 512 MiB'));continue;}}
+                if(r.resource){this.resourceSamples.push(r.resource);if(this.resourceSamples.length>2048)this.resourceSamples.shift();if(r.resource.systemCommitAvailableMiB!==undefined&&r.resource.systemCommitAvailableMiB<TTS_RESOURCE_POLICY.commitStopMiB){finish(new TtsExecutionError('RESOURCE_GUARD_STOP','RESOURCE_GUARD_STOP: system commit reserve below 512 MiB'));continue;}}
                 if(r.stage){this.onStage?.(r.stage);continue;}
                 if(r.ok===undefined)continue;
                 const category=['RESOURCE_GUARD_STOP','ALLOCATION_FAILURE','UNKNOWN'].includes(r.category)?r.category:'UNKNOWN';
@@ -252,11 +253,11 @@ export class KokoroRuntime {
     runtime: VoiceRuntime,
     force = false,
     context?:{itemId:string;normalizationVersion:string},
-    execution?:BoundedProbeExecution,
+    execution?:LocalTtsExecution,
   ) {
     const filter = atempoFilter(speed);
-    this.boundedDeadline=execution?Date.now()+120000:undefined;
-    if(execution){validateBoundedProbe(text,execution);if(!force)throw Error('BOUNDED_PROBE_MUST_MEASURE_UNCACHED_COLD_START');}
+    this.boundedDeadline=execution?.mode==='LOCAL_DRAFT_BATCH'?execution.deadlineAt:execution?Date.now()+120000:undefined;
+    if(execution){validateLocalExecution(text,execution);if(execution.mode==='LOCAL_BOUNDED_PROBE'&&!force)throw Error('BOUNDED_PROBE_MUST_MEASURE_UNCACHED_COLD_START');if(execution.mode==='LOCAL_DRAFT_BATCH'&&execution.inputHash!==textHash(text))throw Error('APPROVED_TTS_INPUT_CHANGED');}
     const cacheOnly=runtime.status==='BLOCKED_RUNTIME'&&runtime.blockers.length>0&&runtime.blockers.every(b=>b.includes('BLOCKED_RESOURCE'));
     if (
       runtime.status !== 'READY' && !cacheOnly ||

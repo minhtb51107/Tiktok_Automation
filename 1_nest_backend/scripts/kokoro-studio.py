@@ -87,7 +87,8 @@ def observe_memory():
             sample=memory_sample()
             if sample:
                 measurements.append(sample)
-                if len(measurements)>512: del measurements[0]
+                # Retain the complete 300-second approved batch (4 samples/s), bounded.
+                if len(measurements)>2048: del measurements[0]
                 emit({'resource':sample})
                 if sample['availableMiB']<256 or sample['systemCommitAvailableMiB']<512:
                     emit({'ok':False,'category':'RESOURCE_GUARD_STOP','error':'RESOURCE_GUARD_STOP: physical RAM or commit reserve below emergency floor'})

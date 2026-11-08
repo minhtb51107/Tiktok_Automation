@@ -1,6 +1,6 @@
 import { sessionReadiness } from "./session-readiness";
 import {assertNoLocalProbe} from './local-probe-lease';
-import {ttsFailureCategory} from './tts-resource-policy';
+import {ttsFailureCategory,LocalTtsExecution} from './tts-resource-policy';
 import {localOcr,imageNarration} from './media-ocr';
 import {conversationMediaFile} from '../data-engine/conversation-media';
 import {speechProjection,validatePronunciations,SPEECH_DICTIONARY_VERSION} from './speech-dictionary';
@@ -635,8 +635,8 @@ export class StudioService {
     await replaceFile(f + '.tmp', f);
     return s;
   }
-  private async exclusive<T>(fn: () => Promise<T>) {
-    assertNoLocalProbe();
+  private async exclusive<T>(fn: () => Promise<T>,leaseToken?:string) {
+    assertNoLocalProbe(leaseToken);
     if (this.busy)
       throw new ConflictException(
         'Another source operation is running. Try again after it finishes.',
@@ -1085,7 +1085,7 @@ export class StudioService {
       return this.persist(s);
     });
   }
-  async voiceAction(id: string, itemId: string, body: any) {
+  async voiceAction(id: string, itemId: string, body: any,execution?:LocalTtsExecution) {
     return this.exclusive(async () => {
       const s = await this.load(id);
       if (s.revision !== body?.revision)
@@ -1150,10 +1150,10 @@ export class StudioService {
             body.voice ?? item.voiceSettings?.voice ?? null,
             body.speed ?? item.voiceSettings?.speed ?? VOICE_SPEED.default,
           );
-        await this.generateItem(s, item, body.regenerate === true, undefined, body.draft === true);
+        await this.generateItem(s, item, body.regenerate === true, undefined, body.draft === true,execution);
       } else throw new BadRequestException('Unknown voice operation');
       return this.persist(s);
-    });
+    },execution?.leaseToken);
   }
   private applySettings(
     s: StudioSession,
@@ -1193,6 +1193,7 @@ export class StudioService {
     regenerate: boolean,
     preflighted?: NonNullable<StudioSession['voiceRuntime']>,
     draft = false,
+    execution?:LocalTtsExecution,
   ) {
     if (!draft && item.contentMapping?.status === 'REVIEW_REQUIRED')
       throw new ConflictException(
@@ -1255,6 +1256,7 @@ export class StudioService {
           s.voiceRuntime,
           regenerate,
           {itemId:item.id,normalizationVersion},
+          execution,
         );
         await this.tick('Saving asset');
         // Returning to cached settings reuses the existing manifest, not another ID.
