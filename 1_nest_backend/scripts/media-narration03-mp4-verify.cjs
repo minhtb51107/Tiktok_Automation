@@ -1,0 +1,30 @@
+// Decode and compare the new completed MP4 only; never invokes the renderer/TTS.
+const fs=require('fs'),p=require('path'),cp=require('child_process'),assert=require('assert/strict'),{createHash}=require('crypto');
+const base=p.resolve(__dirname,'../../../Tiktok_Automation_e2e01'),run=p.join(base,'run-media-narration03-render01'),read=f=>JSON.parse(fs.readFileSync(f)),hash=x=>createHash('sha256').update(x).digest('hex');
+const cfg=read(p.join(run,'config.json')),r=read(p.join(run,'report.json'));assert.equal(r.status,'COMPLETED');assert.equal(r.workerDone,true);
+const dir=p.join(cfg.store,'renders',cfg.sessionId,r.jobId),file=p.join(dir,'video.mp4'),snapshot=read(p.join(dir,'snapshot.json')),manifest=read(p.join(dir,'manifest.json'));
+assert.equal(manifest.status,'COMPLETED');assert.equal(manifest.mode,'DRAFT');assert.equal(manifest.publishable,false);
+const sha=hash(fs.readFileSync(file)),output=p.join(run,'decoded-'+sha.slice(0,12));fs.mkdirSync(output,{recursive:true});
+const command=(args)=>cp.spawnSync('ffmpeg',['-hide_banner','-threads','1',...args],{encoding:'utf8',windowsHide:true,timeout:120000,maxBuffer:2*1024**2});
+const probe=JSON.parse(cp.execFileSync('ffprobe',['-v','error','-count_frames','-show_streams','-show_format','-of','json',file],{encoding:'utf8',windowsHide:true}));
+const video=probe.streams.find(x=>x.codec_type==='video'),audio=probe.streams.find(x=>x.codec_type==='audio');
+assert.equal(video.codec_name,'h264');assert.equal(video.width,720);assert.equal(video.height,1280);assert.equal(video.r_frame_rate,'30/1');assert.equal(Number(video.nb_read_frames),1137);assert.equal(Number(video.duration),37.9);assert.equal(audio.codec_name,'aac');assert.equal(Number(audio.duration),37.9);
+assert.ok(!probe.streams.some(x=>x.codec_type==='subtitle'));assert.ok(snapshot.props.timeline.scenes.every(t=>t.subtitles.length===0));
+const indices=[0,6,430,862,863,869,975,976,982,1136],frames=indices.map((frame,i)=>({frame,file:p.join(output,'frame-'+String(i+1).padStart(2,'0')+'.png')}));
+if(!frames.every(f=>fs.existsSync(f.file))){const result=command(['-v','error','-i',file,'-vf',"select='"+indices.map(n=>'eq(n,'+n+')').join('+')+"'",'-vsync','0','-threads','1','-n',p.join(output,'frame-%02d.png')]);assert.equal(result.status,0,result.stderr);}
+const decoded=command(['-i',file,'-vf','blackdetect=d=0.03:pix_th=0.10:pic_th=0.98','-f','null','-']);assert.equal(decoded.status,0,decoded.stderr);assert.ok(!decoded.stderr.includes('black_start:'),'unexpected almost-all-black interval');
+function pcm(input,name){const file=p.join(output,name+'.f32');if(!fs.existsSync(file)){const out=command(['-v','error','-i',input,'-vn','-ac','1','-ar','16000','-f','f32le','-n',file]);assert.equal(out.status,0,out.stderr)}const b=fs.readFileSync(file);return new Float32Array(b.buffer,b.byteOffset,b.length/4);}
+const mp4=pcm(file,'mp4'),mix=pcm(p.join(dir,'mix.wav'),'mixer');
+function corr(a,b,offset,start,count){let x=0,y=0,xx=0,yy=0,xy=0;for(let i=start;i<start+count;i++){const v=a[i],w=b[i+offset];if(!Number.isFinite(w))return -1;x+=v;y+=w;xx+=v*v;yy+=w*w;xy+=v*w}return (count*xy-x*y)/Math.sqrt((count*xx-x*x)*(count*yy-y*y));}
+const mixerCorrelation=corr(mix,mp4,0,0,Math.min(mix.length,mp4.length));assert.ok(mixerCorrelation>0.98);
+const saved=read(p.join(cfg.store,cfg.sessionId+'.json')),comparisons=[];
+for(const scene of snapshot.props.timeline.scenes){const asset=saved.voiceAssets.find(a=>a.id===scene.scene.audioAssetId),reference=pcm(p.join(cfg.store,asset.filePath),scene.scene.id),nominal=Math.round(scene.audioStartFrame/30*16000),start=6400,count=Math.min(24000,reference.length-start);let best={correlation:-1,lagSamples:0};
+ for(let lag=-800;lag<=800;lag+=8){const c=corr(reference,mp4,nominal+lag,start,count);if(c>best.correlation)best={correlation:c,lagSamples:lag};}
+ const center=best.lagSamples;for(let lag=center-8;lag<=center+8;lag++){const c=corr(reference,mp4,nominal+lag,start,count);if(c>best.correlation)best={correlation:c,lagSamples:lag};}
+ const tailStart=Math.max(0,reference.length-24000),tailCount=Math.min(16000,reference.length-tailStart),tailCorrelation=corr(reference,mp4,nominal+best.lagSamples,tailStart,tailCount);
+ assert.ok(best.correlation>0.95&&tailCorrelation>0.95);assert.ok(Math.abs(best.lagSamples/16000)<1/30);
+ comparisons.push({itemId:scene.scene.id,inputHash:asset.ttsInputHash,expectedStartSeconds:scene.audioStartFrame/30,expectedEndSeconds:scene.audioStartFrame/30+asset.durationMs/1000,estimatedWaveformLagMs:best.lagSamples/16,correlation:best.correlation,tailCorrelation,sourceDurationMs:asset.durationMs});
+}
+assert.equal(hash(fs.readFileSync(file)),sha);
+const metrics=manifest.metrics,summary={status:'PASS_ACTUAL_MP4_DECODE_AND_WAVEFORM',file,sha256:sha,bytes:fs.statSync(file).size,probe:{video:{codec:video.codec_name,width:video.width,height:video.height,fps:video.r_frame_rate,frames:video.nb_read_frames,duration:video.duration},audio:{codec:audio.codec_name,sampleRate:audio.sample_rate,channels:audio.channels,duration:audio.duration},containerDuration:probe.format.duration},frames,blackIntervals:[],subtitles:'OFF_IN_SNAPSHOT_AND_NO_SUBTITLE_STREAM; visual frames require inspection',mixerCorrelation,comparisons,performance:{bundleMs:metrics.bundleMs,browserInitializationMs:metrics.browserInitializationMs,renderMediaMs:metrics.renderMediaMs,encodingWithinRemotionMs:metrics.encodedDoneIn,finalMuxMs:metrics.finalAudioEncodeMuxMs,endToEndMs:metrics.endToEndMs,averageFps:metrics.averageRenderedFps,workerSampledPeakRssMiB:metrics.workerPeakRssBytes/1024**2,treeSampledPeakRssMiB:Math.max(...metrics.samples.map(s=>s.workingBytes))/1024**2,treeSampledPeakPrivateMiB:Math.max(...metrics.samples.map(s=>s.privateBytes))/1024**2,minimumAvailableMiB:Math.min(...r.samples.map(s=>s.availableMiB)),peakSystemCommitMiB:Math.max(...r.samples.map(s=>s.systemCommitUsedMiB))},warnings:manifest.warnings,browser:'NOT_RUN_YET',semanticListening:'HUMAN_REVIEW_PENDING; waveform identity is not a transcript check'};
+fs.writeFileSync(p.join(run,'mp4-verification.json'),JSON.stringify(summary,null,2));console.log(JSON.stringify(summary,null,2));
