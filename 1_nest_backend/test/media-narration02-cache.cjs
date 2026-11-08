@@ -1,0 +1,9 @@
+// Real EXISTING comment WAV cache + FFprobe. No new synthesis or image narration.
+const fs=require('fs'),p=require('path'),assert=require('assert/strict'),{createHash}=require('crypto');
+const {KokoroRuntime}=require('../dist/studio/kokoro-runtime');
+(async()=>{const run=p.resolve(__dirname,'../../../Tiktok_Automation_e2e01/run-media-narration02'),cfg=JSON.parse(fs.readFileSync(p.join(run,'config.json'))),s=JSON.parse(fs.readFileSync(p.join(cfg.store,cfg.sessionId+'.json'))),comment=s.items.find(i=>i.selected&&i.inclusion==='EXPLICIT_CONTEXT'),asset=s.voiceAssets.find(a=>a.itemId===comment.id&&a.status==='GENERATED'&&a.speed===1.3),file=p.join(cfg.store,asset.filePath),hash=f=>createHash('sha256').update(fs.readFileSync(f)).digest('hex'),before=hash(file);process.chdir(cfg.cwd);
+ const runtime=new KokoroRuntime();runtime.synthesize=async()=>{throw Error('CACHE_TEST_MUST_NOT_INFER')};
+ try{const status={...s.voiceRuntime,status:'BLOCKED_RUNTIME',blockers:['BLOCKED_RESOURCE: static inspection only']},result=await runtime.generate(s.id,asset.ttsInputText,asset.voice,1.3,status,false,{itemId:asset.itemId,normalizationVersion:asset.numberReadingVersion});assert.equal(result.cacheHit,true);assert.equal(result.synthesisPerformed,false);assert.equal(result.durationMs,asset.durationMs);assert.equal(hash(file),before);assert.equal(runtime.diagnostics().workerPid,null);
+ await assert.rejects(runtime.generate(s.id,'SYNTHETIC uncached input',asset.voice,1.3,status,false,{itemId:asset.itemId,normalizationVersion:asset.numberReadingVersion}),/BLOCKED_RESOURCE/);assert.equal(runtime.diagnostics().workerPid,null);console.log(JSON.stringify({status:'PASS_EXISTING_CACHE_REAL_FFPROBE',durationMs:result.durationMs,cacheHit:true,modelWorkerStarted:false,uncachedInput:'BLOCKED_RESOURCE',imageNarration:'NOT_GENERATED'}));
+ }finally{runtime.close()}
+})().catch(e=>{console.error(e);process.exitCode=1});

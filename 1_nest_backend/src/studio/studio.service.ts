@@ -1217,13 +1217,14 @@ export class StudioService {
     try {
       await this.tick('Preparing audio');
       s.voiceRuntime = preflighted || (await this.voice.preflight());
-      if (s.voiceRuntime.status !== 'READY')
+      if (s.voiceRuntime.status !== 'READY' && !(s.voiceRuntime.blockers.length>0&&s.voiceRuntime.blockers.every(b=>b.includes('BLOCKED_RESOURCE'))))
         throw Error('BLOCKED_RUNTIME: ' + s.voiceRuntime.blockers.join('; '));
       const settings = item.voiceSettings;
       if (!settings?.voice)
         throw Error('Select a locally available Kokoro voice');
       const speech=speechProjection(item.spokenText,item.pronunciationOverrides);
       const normalizedInput=normalizeSpokenNumbers(speech.text);
+      job.inputCharacters=normalizedInput.text.length;job.ttsInputHash=textHash(normalizedInput.text);
       const normalizationVersion=NUMBER_READING_VERSION+' / '+SPEECH_DICTIONARY_VERSION;
       if(normalizedInput.warnings.length)throw Error(normalizedInput.warnings.join('; '));
       const oldAsset=this.currentAsset(s,item);
@@ -1306,6 +1307,7 @@ export class StudioService {
             cacheHit: result.cacheHit,
             baseCacheHit: result.baseCacheHit,
             synthesisPerformed: result.synthesisPerformed,
+            synthesisMetrics: result.synthesisMetrics,
           },
         ];
         job.assetId = assetId;
@@ -1314,6 +1316,8 @@ export class StudioService {
     } catch (e) {
       job.error = e instanceof Error ? e.message : 'TTS failed';
       job.status = 'ERROR';
+      const diagnostic=this.voice.diagnostics?.();
+      if(diagnostic&&diagnostic.inputHash===job.ttsInputHash){const samples=diagnostic.samples.filter(r=>r.atMs>=started);job.resourceDiagnostics={...diagnostic,workerPid:samples[samples.length-1]?.pid??null,samples:samples.slice(-16)};}
     }
     job.completedAt = new Date().toISOString();
     job.elapsedMs = Date.now() - started;

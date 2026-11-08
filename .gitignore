@@ -46,3 +46,7 @@ dist/
 1_nest_backend/tiktok_profile_drama/
 2_Remotion_Video/public/backgrounds/bg_temp_*
 2_Remotion_Video/public/backgrounds/source_minecraft*
+
+# Local Python runtime bytecode; never part of source checkpoints.
+__pycache__/
+*.pyc

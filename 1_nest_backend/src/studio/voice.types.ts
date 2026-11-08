@@ -10,6 +10,7 @@ export interface SpokenApproval {
   valid: boolean;
 }
 export interface VoiceAsset {
+  synthesisMetrics?:import('./tts-resource-policy').SynthesisMetrics;
   durationEvidence?:'FFPROBE'|'SYNTHETIC_FIXTURE';
   ttsInputText?: string;
   ttsInputHash?: string;
@@ -36,6 +37,9 @@ export interface VoiceAsset {
   baseCacheHit?: boolean;
 }
 export interface VoiceJob {
+  inputCharacters?:number;
+  ttsInputHash?:string;
+  resourceDiagnostics?:{inputHash:string|null;workerPid:number|null;samples:Record<string,number>[]};
   itemId: string;
   status: 'ERROR' | 'GENERATED' | 'APPROVED' | 'STALE';
   startedAt: string;

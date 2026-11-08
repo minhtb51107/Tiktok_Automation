@@ -4,6 +4,8 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import type { VoiceRuntime } from './voice.types';
 import { atempoFilter } from './voice-settings';
+import {freemem} from 'os';
+import {TTS_RESOURCE_POLICY,ttsResourceBlock,SynthesisMetrics} from './tts-resource-policy';
 export const textHash = (text: string) =>
   createHash('sha256').update(text).digest('hex');
 export function ttsCacheKeys(text:string,voice:string,speed:number,runtime:VoiceRuntime,context?:{itemId:string;normalizationVersion:string}) {
@@ -11,6 +13,9 @@ export function ttsCacheKeys(text:string,voice:string,speed:number,runtime:Voice
   return {baseKey,cacheKey:textHash(baseKey+':'+speed)};
 }
 export class KokoroRuntime {
+  private resourceSamples:Record<string,number>[]=[];
+  private resourceInputHash:string|null=null;
+  diagnostics(){return {inputHash:this.resourceInputHash,workerPid:this.worker?.pid??null,samples:structuredClone(this.resourceSamples)};}
   onStage?: (step:string)=>void;
   private worker?: ChildProcessWithoutNullStreams;
   private workerKey = '';
@@ -89,14 +94,14 @@ export class KokoroRuntime {
       stamps.push(file + ':' + stat?.size + ':' + stat?.mtimeMs);
     }
     const key = JSON.stringify([cfg, this.python(), stamps]);
-    if (!force && this.checked?.key === key && Date.now() - this.checked.at < 300000)
+    if (!force && this.checked?.key === key && Date.now() - this.checked.at < 300000 && !this.checked.result.blockers.some(b=>b.includes('BLOCKED_RESOURCE')))
       return this.checked.result;
     let data: any = {};
     try {
       data = JSON.parse(
         await this.run(this.python(), [
           path.resolve('scripts/kokoro-studio.py'),
-          '--preflight',
+          freemem()/1024**2<TTS_RESOURCE_POLICY.preflightMiB?'--inspect':'--preflight',
         ]),
       );
     } catch {
@@ -150,6 +155,9 @@ export class KokoroRuntime {
     if (this.idle) clearTimeout(this.idle);
     try {
       const key = JSON.stringify(this.cfg()) + version;
+      this.resourceSamples=[];this.resourceInputHash=textHash(text);
+      const block=ttsResourceBlock(freemem(),!!this.worker&&this.workerKey===key);
+      if(block)throw Error(block);
       if (!this.worker || this.workerKey !== key) {
         this.close();
         this.worker = spawn(
@@ -167,19 +175,24 @@ export class KokoroRuntime {
         });
       }
       const worker = this.worker;
-      await new Promise<void>((resolve, reject) => {
+      return await new Promise<SynthesisMetrics|undefined>((resolve, reject) => {
         let buffer = '';
+        let settled=false;
+        let resourceTimer:ReturnType<typeof setInterval>|undefined;
         const timer = setTimeout(() => {
           this.close();
           reject(Error('Kokoro inference timeout'));
         }, 120000);
-        const finish = (err?: Error) => {
+        const finish = (err?: Error,metrics?:SynthesisMetrics) => {
+          if(settled)return;settled=true;
           clearTimeout(timer);
+          if(resourceTimer)clearInterval(resourceTimer);
           worker.stdout.off('data', read);
           worker.off('close', closed);
           worker.off('error', failed);
-          err ? reject(err) : resolve();
+          if(err){this.close();reject(err);}else resolve(metrics);
         };
+        resourceTimer=setInterval(()=>{if(freemem()/1024**2<TTS_RESOURCE_POLICY.stopMiB)finish(Error('BLOCKED_RESOURCE: available RAM below 256 MiB; owned Kokoro worker stopped'));},250);
         const closed = () => finish(Error('Kokoro worker closed'));
         const failed = () => finish(Error('Kokoro worker launch failed'));
         const read = (chunk: Buffer) => {
@@ -195,8 +208,10 @@ export class KokoroRuntime {
             if (line.startsWith('@STUDIO@')) {
               try {
                 const r = JSON.parse(line.slice(8));
+                if(r.resource){this.resourceSamples.push(r.resource);if(this.resourceSamples.length>512)this.resourceSamples.shift();}
                 if(r.stage){this.onStage?.(r.stage);continue;}
-                finish(r.ok ? undefined : Error(r.error));
+                if(r.ok===undefined)continue;
+                finish(r.ok ? undefined : Error(r.error),r.metrics);
               } catch {
                 finish(Error('Kokoro worker protocol error'));
               }
@@ -223,8 +238,9 @@ export class KokoroRuntime {
     context?:{itemId:string;normalizationVersion:string},
   ) {
     const filter = atempoFilter(speed);
+    const cacheOnly=runtime.status==='BLOCKED_RUNTIME'&&runtime.blockers.length>0&&runtime.blockers.every(b=>b.includes('BLOCKED_RESOURCE'));
     if (
-      runtime.status !== 'READY' ||
+      runtime.status !== 'READY' && !cacheOnly ||
       !runtime.voices.some((v) => v.id === voice)
     )
       throw Error(
@@ -241,6 +257,7 @@ export class KokoroRuntime {
     let cacheHit = false;
     let synthesisPerformed = false;
     let baseCacheHit = false;
+    let synthesisMetrics:SynthesisMetrics|undefined;
     try {
       await fs.access(file);
       cacheHit = true;
@@ -250,8 +267,9 @@ export class KokoroRuntime {
         await fs.access(base);
         baseCacheHit = true;
       } catch {
+        if(cacheOnly)throw Error('BLOCKED_RESOURCE: matching cached audio unavailable; inference was not started');
         const raw = path.join(temp, baseKey + '-' + Date.now() + '.wav');
-        await this.synthesize(text, voice, raw, runtime.modelVersion);
+        synthesisMetrics=await this.synthesize(text, voice, raw, runtime.modelVersion);
         synthesisPerformed = true;
         await fs.rename(raw, base);
       }
@@ -295,6 +313,7 @@ export class KokoroRuntime {
       cacheHit,
       baseCacheHit,
       synthesisPerformed,
+      synthesisMetrics,
     };
   }
 }
