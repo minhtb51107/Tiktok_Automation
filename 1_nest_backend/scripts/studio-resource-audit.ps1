@@ -11,8 +11,9 @@ $listeners=@($tcp | Where-Object {$_.LocalPort -ge 3105 -and $_.LocalPort -le 31
 $httpProbes=@(3105..3110|ForEach-Object { $port=$_;try{$response=Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/studio/runtime?audit=$([DateTime]::UtcNow.Ticks)" -TimeoutSec 2 -Headers @{'Cache-Control'='no-cache'} -ErrorAction Stop;$data=if($response.data){$response.data}else{$response};[pscustomobject]@{port=$port;status='HTTP_REACHABLE';mode=$data.mode}}catch{[pscustomobject]@{port=$port;status='HTTP_UNREACHABLE_OR_ERROR';mode=$null}}})
 $workers=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -match '^(node|python|pythonw)\.exe$'} | ForEach-Object {
  $procId=$_.ProcessId;$live=$all | Where-Object Id -eq $procId
- $kind=if($procId -eq $auditParentPid){'OWNED_AUDIT_PROCESS'}elseif($_.CommandLine -match '(e2e01-runtime|studio-start|kokoro-studio)\.(cjs|py)'){'PROJECT_CANDIDATE'}elseif($_.CommandLine -match 'artifact-tool.*host-daemon\.mjs'){'CODEX_ARTIFACT_DAEMON_NOT_STUDIO'}else{'UNRELATED_OR_UNVERIFIED'}
- [pscustomobject]@{pid=$procId;parentPid=$_.ParentProcessId;startedAt=$_.CreationDate.ToUniversalTime().ToString('o');name=$_.Name;kind=$kind;rssMiB=[math]::Round($live.WorkingSet64/1MB,2);privateMiB=[math]::Round($live.PrivateMemorySize64/1MB,2);workingDirectory=$null}
+ $kind=if($procId -eq $auditParentPid){'OWNED_AUDIT_PROCESS'}elseif($_.CommandLine -match '(e2e01-runtime|studio-start|kokoro-studio|render-worker)\.(cjs|py)'){'PROJECT_CANDIDATE'}elseif($_.CommandLine -match 'artifact-tool.*host-daemon\.mjs'){'CODEX_ARTIFACT_DAEMON_NOT_STUDIO'}else{'UNRELATED_OR_UNVERIFIED'}
+ $role=if($_.CommandLine -match 'kokoro-studio\.py'){'KOKORO_WORKER'}elseif($_.CommandLine -match 'render-worker\.cjs'){'RENDER_WORKER'}elseif($_.CommandLine -match '(live03|public-discovery|crawler-consumer)\.(cjs|js)'){'COLLECTOR_WORKER'}else{$null}
+ [pscustomobject]@{pid=$procId;parentPid=$_.ParentProcessId;startedAt=$_.CreationDate.ToUniversalTime().ToString('o');name=$_.Name;kind=$kind;role=$role;rssMiB=[math]::Round($live.WorkingSet64/1MB,2);privateMiB=[math]::Round($live.PrivateMemorySize64/1MB,2);workingDirectory=$null}
 })
 $browsers=@($all | Where-Object ProcessName -in @('chrome','msedge','msedgewebview2'))
 [pscustomobject]@{

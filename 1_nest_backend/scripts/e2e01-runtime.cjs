@@ -12,7 +12,7 @@ require('reflect-metadata');const {NestFactory}=require('@nestjs/core'),{AppModu
 (async()=>{const app=await NestFactory.create(AppModule,{logger:['error','warn']});app.use(require('express').json({limit:'2mb'}));app.use((req,res,next)=>{
  if(req.path==='/studio')return res.sendFile(p.resolve(backend,'../2_Remotion_Video/studio/index.html'));
  if(['/studio/app.js','/studio/app.css'].includes(req.path))return res.sendFile(p.resolve(backend,'../2_Remotion_Video/studio-dist',p.basename(req.path)));
- if(req.path==='/api/studio/runtime')return res.json({data:{mode:'E2E01_SANDBOX',reason:'Local editable draft, explicit DRAFT TTS/render. Publishing and source access disabled.',capabilities:{localSave:true,tts:true,render:true,publish:false},scheduler:'OFF'}});
+ if(req.path==='/api/studio/runtime')return res.json({data:{mode:'E2E01_SANDBOX',reason:'Local editable draft, explicit DRAFT TTS/render. Publishing and source access disabled.',capabilities:{localSave:true,tts:true,render:true,publish:false},scheduler:'OFF',runtimePid:process.pid,resourcePolicy:require('../dist/studio/tts-resource-policy').TTS_RESOURCE_POLICY}});
  if(/\/oauth\//.test(req.path))return res.status(403).json({message:'OAuth disabled'});
  const local=req.method==='PUT'&&new RegExp('^/api/studio/sessions/'+cfg.sessionId+'(?:/editor)?$').test(req.path);
  const prepare=req.method==='POST'&&req.path==='/api/studio/sessions/'+cfg.sessionId+'/editor/prepare';

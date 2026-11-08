@@ -1,4 +1,6 @@
 import { sessionReadiness } from "./session-readiness";
+import {assertNoLocalProbe} from './local-probe-lease';
+import {ttsFailureCategory} from './tts-resource-policy';
 import {localOcr,imageNarration} from './media-ocr';
 import {conversationMediaFile} from '../data-engine/conversation-media';
 import {speechProjection,validatePronunciations,SPEECH_DICTIONARY_VERSION} from './speech-dictionary';
@@ -110,6 +112,7 @@ export class StudioService {
   }
   private async renderJob(id:string,input:RenderRequest,tick:ProgressSink,jobId:string) {
     return this.exclusive(async()=>{
+      assertNoLocalProbe();
       const s=await this.load(id);
       if(s.revision!==input.revision)throw new ConflictException('Project changed; reload Render before exporting');
       const built=prepareEditor(s,await this.visualAssets(s)),props=renderBackground(built.preview.request.inputProps,input.backgroundMode);
@@ -633,6 +636,7 @@ export class StudioService {
     return s;
   }
   private async exclusive<T>(fn: () => Promise<T>) {
+    assertNoLocalProbe();
     if (this.busy)
       throw new ConflictException(
         'Another source operation is running. Try again after it finishes.',
@@ -644,7 +648,7 @@ export class StudioService {
       this.busy = false;
     }
   }
-  async withControlledCollection<T>(fn:()=>Promise<T>){return this.exclusive(async()=>{this.voice.close();return fn();});}
+  async withControlledCollection<T>(fn:()=>Promise<T>){return this.exclusive(async()=>{assertNoLocalProbe();this.voice.close();return fn();});}
   async create() {
     const id = randomUUID();
     const project: VideoProject = {
@@ -1315,6 +1319,7 @@ export class StudioService {
       }
     } catch (e) {
       job.error = e instanceof Error ? e.message : 'TTS failed';
+      job.failureCategory=ttsFailureCategory(e);
       job.status = 'ERROR';
       const diagnostic=this.voice.diagnostics?.();
       if(diagnostic&&diagnostic.inputHash===job.ttsInputHash){const samples=diagnostic.samples.filter(r=>r.atMs>=started);job.resourceDiagnostics={...diagnostic,workerPid:samples[samples.length-1]?.pid??null,samples:samples.slice(-16)};}

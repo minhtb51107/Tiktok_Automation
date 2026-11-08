@@ -1,6 +1,11 @@
 """Owned-process Windows measurements; no Torch/psutil, no process enumeration."""
-import ctypes, os, time
+import ctypes, os, time, re
 from ctypes import wintypes
+
+def allocation_failure(error):
+    return (isinstance(error,MemoryError) or type(error).__name__=='OutOfMemoryError'
+        or isinstance(error,OSError) and (getattr(error,'winerror',None) in (8,14,1455) or getattr(error,'errno',None)==12)
+        or isinstance(error,RuntimeError) and bool(re.search(r'(DefaultCPUAllocator:\s*(?:not enough memory|can.t allocate)|^CUDA out of memory)',str(error),re.I)))
 
 class MemoryStatus(ctypes.Structure):
     _fields_=[('length',wintypes.DWORD),('load',wintypes.DWORD)]+[(name,ctypes.c_ulonglong) for name in ('physicalTotal','physicalAvailable','commitLimit','commitAvailable','virtualTotal','virtualAvailable','extendedAvailable')]
@@ -20,7 +25,7 @@ def memory_sample():
     if not kernel.GlobalMemoryStatusEx(ctypes.byref(system)) or not psapi.GetProcessMemoryInfo(kernel.GetCurrentProcess(),ctypes.byref(process),process.cb):
         raise OSError('Native memory measurement unavailable')
     mib=1024**2
-    return {'atMs':round(time.time()*1000),'pid':os.getpid(),'rssMiB':round(process.workingSet/mib,2),'privateMiB':round(process.privateBytes/mib,2),'peakRssMiB':round(process.peakWorkingSet/mib,2),'peakCommitMiB':round(process.peakPagefile/mib,2),'availableMiB':round(system.physicalAvailable/mib,2),'systemCommitUsedMiB':round((system.commitLimit-system.commitAvailable)/mib,2)}
+    return {'atMs':round(time.time()*1000),'pid':os.getpid(),'rssMiB':round(process.workingSet/mib,2),'privateMiB':round(process.privateBytes/mib,2),'peakRssMiB':round(process.peakWorkingSet/mib,2),'peakCommitMiB':round(process.peakPagefile/mib,2),'availableMiB':round(system.physicalAvailable/mib,2),'memoryLoadPercent':system.load,'pageFaultCount':process.pageFaults,'systemCommitLimitMiB':round(system.commitLimit/mib,2),'systemCommitAvailableMiB':round(system.commitAvailable/mib,2),'systemCommitUsedMiB':round((system.commitLimit-system.commitAvailable)/mib,2)}
 
 if __name__=='__main__':
     import json

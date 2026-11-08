@@ -1,6 +1,6 @@
 """Local-only Kokoro bridge. Preflight never loads a model; worker forbids network."""
 import sys, os, json, ast, pathlib, importlib.util, importlib.metadata, threading, time, contextlib, re
-from kokoro_memory import memory_sample
+from kokoro_memory import memory_sample, allocation_failure
 os.environ['HF_HUB_OFFLINE']='1'
 os.environ['TRANSFORMERS_OFFLINE']='1'
 import socket
@@ -35,7 +35,7 @@ def preflight(cfg,verify_imports=True):
             import soundfile, numpy, kokoro_vietnamese, torch, vig2p
             gpu=torch.cuda.is_available()
         except Exception as e: blockers.append('Runtime import check failed: '+type(e).__name__)
-    if not verify_imports: blockers.append('BLOCKED_RESOURCE: import check skipped; insufficient preflight headroom')
+    warnings=[] if verify_imports else ['IMPORTS_UNVERIFIED: static inspection only; no Torch/model loaded']
     version=None
     if modules['kokoro_vietnamese']:
         try: version=importlib.metadata.version('kokoro-vietnamese')
@@ -47,7 +47,7 @@ def preflight(cfg,verify_imports=True):
             if file.is_file():
                 stat=file.stat();parts.append(file.name+':'+str(stat.st_size)+':'+str(stat.st_mtime_ns))
         fingerprint='|'.join(parts)
-    return {'python':sys.version.split()[0],'packageVersion':version,'imports':modules,'importsVerified':verify_imports and not blockers,'declaredVoices':declared,'voices':available,'model':model.name if model.is_file() else None,'modelVersion':fingerprint,'device':cfg.get('device','cpu'),'gpuAvailable':gpu,'blockers':blockers}
+    return {'python':sys.version.split()[0],'packageVersion':version,'imports':modules,'importsVerified':verify_imports and not blockers,'warnings':warnings,'declaredVoices':declared,'voices':available,'model':model.name if model.is_file() else None,'modelVersion':fingerprint,'device':cfg.get('device','cpu'),'gpuAvailable':gpu,'blockers':blockers}
 
 if '--preflight' in sys.argv or '--inspect' in sys.argv:
     try: print(json.dumps(preflight(config(),'--inspect' not in sys.argv),ensure_ascii=False))
@@ -89,24 +89,25 @@ def observe_memory():
                 measurements.append(sample)
                 if len(measurements)>512: del measurements[0]
                 emit({'resource':sample})
-                if sample['availableMiB']<256:
-                    emit({'ok':False,'error':'BLOCKED_RESOURCE: available RAM below 256 MiB; owned Kokoro worker stopped'})
+                if sample['availableMiB']<256 or sample['systemCommitAvailableMiB']<512:
+                    emit({'ok':False,'category':'RESOURCE_GUARD_STOP','error':'RESOURCE_GUARD_STOP: physical RAM or commit reserve below emergency floor'})
                     os._exit(70)
         except Exception:
-            emit({'ok':False,'error':'BLOCKED_RESOURCE: native memory monitor failed'})
+            emit({'ok':False,'category':'RESOURCE_GUARD_STOP','error':'RESOURCE_GUARD_STOP: native memory monitor failed'})
             os._exit(71)
 threading.Thread(target=observe_memory,daemon=True).start()
 def stage(name):
     emit({'stage':name,'resource':memory_sample()})
 for line in sys.stdin:
     try:
-        req=json.loads(line);cfg=config();key=(cfg['model'],cfg['config'],cfg.get('device','cpu'));active=True;measurements=[];started=time.monotonic();before=None;after=None
+        req=json.loads(line);cfg=config();key=(cfg['model'],cfg['config'],cfg.get('device','cpu'));active=True;measurements=[];started=time.monotonic();before=None;after=None;runtime_before=None;runtime_after=None
         with contextlib.redirect_stdout(sys.stderr):
             if current!=key:
-                stage('Loading model')
-                before=memory_sample()
+                stage('Importing runtime');runtime_before=memory_sample()
+                import torch, soundfile
                 tts=None
                 from kokoro_vietnamese import KokoroVietnamese
+                runtime_after=memory_sample();stage('Loading model');before=memory_sample()
                 tts=KokoroVietnamese(model_path=cfg['model'],config_path=cfg['config'],voicepack_path=str(pathlib.Path(cfg['voiceDir'])/(req['voice']+'.pt')),voice=req['voice'],device=cfg.get('device','cpu'))
                 current=key
                 current_voice=req['voice']
@@ -122,8 +123,10 @@ for line in sys.stdin:
                 current_voice=req['voice']
             import soundfile as sf
             stage('Synthesizing')
+            inference_before=memory_sample()
             if re.search(r'\d',req['text']): raise RuntimeError('UNNORMALIZED_NUMERIC_INPUT')
             audio,phonemes=tts.synthesize(req['text'],speed=1.0)
+            inference_after=memory_sample()
             if len(audio)==0: raise RuntimeError('EMPTY_AUDIO')
             sf.write(req['output'],audio,24000)
         from kokoro_vietnamese.core import split_text
@@ -132,7 +135,9 @@ for line in sys.stdin:
         if final: measurements.append(final)
         active=False
         metrics={'inputCharacters':len(req['text']),'sentenceChunks':len(chunks),'maxSentenceCharacters':max(map(len,chunks),default=0),'elapsedMs':round((time.monotonic()-started)*1000),'peakRssMiB':max((m['peakRssMiB'] for m in measurements),default=None),'peakPrivateMiB':max((m['privateMiB'] for m in measurements),default=None),'minimumAvailableMiB':min((m['availableMiB'] for m in measurements),default=None),'modelBefore':before,'modelAfter':after}
+        metrics.update({'runtimeBefore':runtime_before,'runtimeAfter':runtime_after,'inferenceBefore':inference_before,'inferenceAfter':inference_after})
         emit({'ok':True,'metrics':metrics})
     except Exception as e:
         active=False
-        emit({'ok':False,'error':'Kokoro inference failed: '+type(e).__name__})
+        allocation=allocation_failure(e)
+        emit({'ok':False,'category':'ALLOCATION_FAILURE' if allocation else 'UNKNOWN','error':('ALLOCATION_FAILURE' if allocation else 'UNKNOWN')+': Kokoro '+type(e).__name__,'details':{'errorType':type(e).__name__,'winerror':getattr(e,'winerror',None),'errno':getattr(e,'errno',None),'allocatorFailure':allocation}})

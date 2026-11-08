@@ -5,7 +5,8 @@ import * as path from 'path';
 import type { VoiceRuntime } from './voice.types';
 import { atempoFilter } from './voice-settings';
 import {freemem} from 'os';
-import {TTS_RESOURCE_POLICY,ttsResourceBlock,SynthesisMetrics} from './tts-resource-policy';
+import {TTS_RESOURCE_POLICY,ttsResourceBlock,ttsResourceWarnings,SynthesisMetrics,BoundedProbeExecution,validateBoundedProbe,TtsExecutionError} from './tts-resource-policy';
+import {assertNoLocalProbe} from './local-probe-lease';
 export const textHash = (text: string) =>
   createHash('sha256').update(text).digest('hex');
 export function ttsCacheKeys(text:string,voice:string,speed:number,runtime:VoiceRuntime,context?:{itemId:string;normalizationVersion:string}) {
@@ -15,9 +16,12 @@ export function ttsCacheKeys(text:string,voice:string,speed:number,runtime:Voice
 export class KokoroRuntime {
   private resourceSamples:Record<string,number>[]=[];
   private resourceInputHash:string|null=null;
-  diagnostics(){return {inputHash:this.resourceInputHash,workerPid:this.worker?.pid??null,samples:structuredClone(this.resourceSamples)};}
+  diagnostics(){return {inputHash:this.resourceInputHash,workerPid:this.worker?.pid??null,ownedWorkerPid:this.lastOwned?.pid??null,samples:structuredClone(this.resourceSamples)};}
   onStage?: (step:string)=>void;
   private worker?: ChildProcessWithoutNullStreams;
+  private lastOwned?:ChildProcessWithoutNullStreams;
+  private commands=new Set<ChildProcessWithoutNullStreams>();
+  private boundedDeadline?:number;
   private workerKey = '';
   private idle?: ReturnType<typeof setTimeout>;
   private pending = false;
@@ -56,12 +60,14 @@ export class KokoroRuntime {
     captureStderr = false,
   ): Promise<string> {
     return new Promise((resolve, reject) => {
+      if(this.boundedDeadline&&Date.now()>=this.boundedDeadline){reject(new TtsExecutionError('TIMEOUT','Bounded probe total deadline exceeded'));return;}
       const p = spawn(command, args, { windowsHide: true, env: this.env() });
+      this.commands.add(p);
       let out = '';
       const timer = setTimeout(() => {
         p.kill();
-        reject(Error('Runtime command timeout'));
-      }, timeout);
+        reject(new TtsExecutionError('TIMEOUT','Runtime command deadline exceeded'));
+      }, this.boundedDeadline?Math.min(timeout,Math.max(1,this.boundedDeadline-Date.now())):timeout);
       p.stdout.on('data', (c) => {
         out += c.toString();
         if (out.length > 200000) {
@@ -79,6 +85,7 @@ export class KokoroRuntime {
         reject(Error('Runtime executable unavailable'));
       });
       p.on('close', (code) => {
+        this.commands.delete(p);
         clearTimeout(timer);
         code === 0 ? resolve(out) : reject(Error('Runtime command failed'));
       });
@@ -101,7 +108,7 @@ export class KokoroRuntime {
       data = JSON.parse(
         await this.run(this.python(), [
           path.resolve('scripts/kokoro-studio.py'),
-          freemem()/1024**2<TTS_RESOURCE_POLICY.preflightMiB?'--inspect':'--preflight',
+          '--inspect', // File/module metadata only; real imports occur in the single worker.
         ]),
       );
     } catch {
@@ -134,6 +141,8 @@ export class KokoroRuntime {
       ffmpeg,
       ffprobe,
       blockers,
+      verification:data.importsVerified?'IMPORTS_VERIFIED':'STATIC_ONLY',
+      warnings:[...(data.warnings||[]),...ttsResourceWarnings(freemem())],
       checkedAt: new Date().toISOString(),
     };
     this.checked = { key, at: Date.now(), result };
@@ -143,21 +152,29 @@ export class KokoroRuntime {
     if (this.idle) clearTimeout(this.idle);
     this.worker?.kill();
     this.worker = undefined;
+    for(const command of this.commands)command.kill();
+  }
+  async closeAndWait(){
+    const owned=[...new Set([this.worker??this.lastOwned,...this.commands].filter((p):p is ChildProcessWithoutNullStreams=>!!p))];
+    const waits=owned.filter(p=>p.exitCode===null&&p.signalCode===null).map(p=>new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(new TtsExecutionError('TIMEOUT','Owned worker exit was not confirmed')),5000);p.once('close',()=>{clearTimeout(timer);resolve()});}));this.close();await Promise.all(waits);
   }
   private async synthesize(
     text: string,
     voice: string,
     output: string,
     version: string,
+    execution?:BoundedProbeExecution,
   ) {
     if (this.pending) throw Error('Sequential TTS worker busy');
     this.pending = true;
     if (this.idle) clearTimeout(this.idle);
     try {
+      assertNoLocalProbe(execution?.leaseToken);
+      if(execution){validateBoundedProbe(text,execution);if(this.worker)throw Error('BOUNDED_PROBE_REQUIRES_COLD_IDLE_RUNTIME');}
       const key = JSON.stringify(this.cfg()) + version;
       this.resourceSamples=[];this.resourceInputHash=textHash(text);
       const block=ttsResourceBlock(freemem(),!!this.worker&&this.workerKey===key);
-      if(block)throw Error(block);
+      if(block)throw new TtsExecutionError('RESOURCE_GUARD_STOP',block);
       if (!this.worker || this.workerKey !== key) {
         this.close();
         this.worker = spawn(
@@ -166,6 +183,7 @@ export class KokoroRuntime {
           { windowsHide: true, env: this.env() },
         );
         this.workerKey = key;
+        this.lastOwned=this.worker;
         this.worker.stderr.resume();
         this.worker.on('error', () => {});
         this.worker.stdin.on('error', () => {});
@@ -179,10 +197,7 @@ export class KokoroRuntime {
         let buffer = '';
         let settled=false;
         let resourceTimer:ReturnType<typeof setInterval>|undefined;
-        const timer = setTimeout(() => {
-          this.close();
-          reject(Error('Kokoro inference timeout'));
-        }, 120000);
+        const timer = setTimeout(() => finish(new TtsExecutionError('TIMEOUT','Kokoro inference deadline exceeded')),execution?TTS_RESOURCE_POLICY.probeTimeoutMs:120000);
         const finish = (err?: Error,metrics?:SynthesisMetrics) => {
           if(settled)return;settled=true;
           clearTimeout(timer);
@@ -192,8 +207,8 @@ export class KokoroRuntime {
           worker.off('error', failed);
           if(err){this.close();reject(err);}else resolve(metrics);
         };
-        resourceTimer=setInterval(()=>{if(freemem()/1024**2<TTS_RESOURCE_POLICY.stopMiB)finish(Error('BLOCKED_RESOURCE: available RAM below 256 MiB; owned Kokoro worker stopped'));},250);
-        const closed = () => finish(Error('Kokoro worker closed'));
+        resourceTimer=setInterval(()=>{if(freemem()/1024**2<TTS_RESOURCE_POLICY.stopMiB)finish(new TtsExecutionError('RESOURCE_GUARD_STOP','RESOURCE_GUARD_STOP: available RAM below 256 MiB; owned worker stopped'));},250);
+        const closed = (code:number|null,signal:string|null) => {const allocation=code!==null&&[0xc0000017,0xc000012d].includes(code>>>0);finish(new TtsExecutionError(allocation?'ALLOCATION_FAILURE':'UNKNOWN',`Kokoro worker exited (code=${code}, signal=${signal}); no Windows OOM evidence`,{exitCode:code,signal}));};
         const failed = () => finish(Error('Kokoro worker launch failed'));
         const read = (chunk: Buffer) => {
           buffer += chunk.toString();
@@ -208,10 +223,11 @@ export class KokoroRuntime {
             if (line.startsWith('@STUDIO@')) {
               try {
                 const r = JSON.parse(line.slice(8));
-                if(r.resource){this.resourceSamples.push(r.resource);if(this.resourceSamples.length>512)this.resourceSamples.shift();}
+                if(r.resource){this.resourceSamples.push(r.resource);if(this.resourceSamples.length>512)this.resourceSamples.shift();if(r.resource.systemCommitAvailableMiB!==undefined&&r.resource.systemCommitAvailableMiB<TTS_RESOURCE_POLICY.commitStopMiB){finish(new TtsExecutionError('RESOURCE_GUARD_STOP','RESOURCE_GUARD_STOP: system commit reserve below 512 MiB'));continue;}}
                 if(r.stage){this.onStage?.(r.stage);continue;}
                 if(r.ok===undefined)continue;
-                finish(r.ok ? undefined : Error(r.error),r.metrics);
+                const category=['RESOURCE_GUARD_STOP','ALLOCATION_FAILURE','UNKNOWN'].includes(r.category)?r.category:'UNKNOWN';
+                finish(r.ok ? undefined : new TtsExecutionError(category,r.error,r.details),r.metrics);
               } catch {
                 finish(Error('Kokoro worker protocol error'));
               }
@@ -236,8 +252,11 @@ export class KokoroRuntime {
     runtime: VoiceRuntime,
     force = false,
     context?:{itemId:string;normalizationVersion:string},
+    execution?:BoundedProbeExecution,
   ) {
     const filter = atempoFilter(speed);
+    this.boundedDeadline=execution?Date.now()+120000:undefined;
+    if(execution){validateBoundedProbe(text,execution);if(!force)throw Error('BOUNDED_PROBE_MUST_MEASURE_UNCACHED_COLD_START');}
     const cacheOnly=runtime.status==='BLOCKED_RUNTIME'&&runtime.blockers.length>0&&runtime.blockers.every(b=>b.includes('BLOCKED_RESOURCE'));
     if (
       runtime.status !== 'READY' && !cacheOnly ||
@@ -269,7 +288,7 @@ export class KokoroRuntime {
       } catch {
         if(cacheOnly)throw Error('BLOCKED_RESOURCE: matching cached audio unavailable; inference was not started');
         const raw = path.join(temp, baseKey + '-' + Date.now() + '.wav');
-        synthesisMetrics=await this.synthesize(text, voice, raw, runtime.modelVersion);
+        synthesisMetrics=await this.synthesize(text, voice, raw, runtime.modelVersion,execution);
         synthesisPerformed = true;
         await fs.rename(raw, base);
       }

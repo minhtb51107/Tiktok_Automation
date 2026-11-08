@@ -50,3 +50,4 @@ dist/
 # Local Python runtime bytecode; never part of source checkpoints.
 __pycache__/
 *.pyc
+1_nest_backend/.local-bounded-probe.lock

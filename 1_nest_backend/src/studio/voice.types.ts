@@ -37,6 +37,7 @@ export interface VoiceAsset {
   baseCacheHit?: boolean;
 }
 export interface VoiceJob {
+  failureCategory?:import('./tts-resource-policy').TtsFailureCategory;
   inputCharacters?:number;
   ttsInputHash?:string;
   resourceDiagnostics?:{inputHash:string|null;workerPid:number|null;samples:Record<string,number>[]};
@@ -66,6 +67,8 @@ export interface VoiceBatch {
   results: VoiceBatchResult[];
 }
 export interface VoiceRuntime {
+  verification?:'STATIC_ONLY'|'IMPORTS_VERIFIED';
+  warnings?:string[];
   status: 'READY' | 'BLOCKED_RUNTIME';
   python: string;
   packageVersion: string | null;

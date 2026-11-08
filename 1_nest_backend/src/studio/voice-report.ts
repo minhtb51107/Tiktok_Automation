@@ -39,7 +39,7 @@ export function voiceReport(s: StudioSession): StageReport {
       stale: assets.filter((a) => a.status === 'STALE').length,
       errors: jobs.filter((j) => j.status === 'ERROR').length,
     },
-    warnings: s.voiceRuntime?.blockers || [],
+    warnings: [...(s.voiceRuntime?.blockers||[]),...(s.voiceRuntime?.warnings||[])],
     errors: jobs.flatMap((j) => (j.error ? [j.error] : [])),
     artifacts: assets.map((a) => ({ id: a.id, kind: 'session-scoped-audio' })),
     revision: s.revision,

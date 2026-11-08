@@ -424,7 +424,8 @@ export function VoiceWorkspace({
               in source
             </p>
             <p data-testid="available-voices">Giọng khả dụng: {runtime.voices.map(v=>v.label).join(' · ')||'Chưa có'}. Số giọng không phụ thuộc số audio mẫu đã tạo.</p>
-            {runtime.blockers.map((b) => (
+            <p>Verification: {runtime.verification??'LEGACY_UNSPECIFIED'} — configuration readiness is not proof of model load or LIVE speech.</p>
+            {[...runtime.blockers,...(runtime.warnings||[])].map((b) => (
               <p className="warning" key={b}>
                 {b}
               </p>
