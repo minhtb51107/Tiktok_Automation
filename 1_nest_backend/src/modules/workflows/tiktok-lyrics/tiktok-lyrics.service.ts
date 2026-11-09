@@ -6,10 +6,10 @@ import { Client } from 'genius-lyrics';
 import axios from 'axios';
 import FormData = require('form-data');
 
-import { RemotionRunnerService } from '../../remotion-runner/remotion-runner.service';
-import { WhisperService } from '../../whisper/whisper.service';
-import { GeminiService } from '../../core/ai/gemini.service';
-
+// Service Imports:
+import { RemotionRunnerService } from '../../core/remotion-runner/remotion-runner.service';
+import { WhisperService } from '../../core/ai/whisper/whisper.service';
+import { AiService } from '../../core/ai/ai.service'; // 👈 Đã cập nhật sang AiService
 
 @Injectable()
 export class TiktokLyricsService {
@@ -20,7 +20,7 @@ export class TiktokLyricsService {
   constructor(
     private readonly remotionRunner: RemotionRunnerService,
     private readonly whisperService: WhisperService,
-    private readonly geminiService: GeminiService,
+    private readonly aiService: AiService, // 👈 Inject AiService
   ) {}
 
   private cleanMusicText(text: string): string {
@@ -103,7 +103,9 @@ export class TiktokLyricsService {
       });
 
       const whisperJson = await this.whisperService.runWhisper(wavOutputPath, fileName); 
-      const aiData = await this.geminiService.generateLyricScript(whisperJson, originalLyrics);
+
+      // 🚀 Đã sửa: Gọi hàm qua aiService (Sử dụng hệ thống AI Fallback linh hoạt)
+      const aiData = await this.aiService.generateLyricScript(whisperJson, originalLyrics);
       
       let finalTitle = this.cleanMusicText(shazamTitle || aiData.songTitle);
       let finalArtist = this.cleanMusicText(shazamArtist || aiData.artist);

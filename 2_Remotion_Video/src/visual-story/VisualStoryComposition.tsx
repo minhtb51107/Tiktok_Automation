@@ -1,5 +1,5 @@
 import React from 'react';
-import { AbsoluteFill, Series, Audio, staticFile } from 'remotion';
+import { AbsoluteFill, Series } from 'remotion';
 import { GridBackground } from './GridBackground';
 import { BigCaption } from './BigCaption';
 import { StoryCard } from './StoryCard';

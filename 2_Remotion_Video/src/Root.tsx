@@ -4,6 +4,14 @@ import { ThreadsComposition } from './threads/ThreadsComposition';
 import { SeriousComposition } from './serious/SeriousComposition'; // BẮT BUỘC IMPORT
 import { VisualStoryComposition } from './visual-story/VisualStoryComposition';
 import { DUMMY_STORY_DATA } from './visual-story/dummyData';
+import {
+  FunnyTimelinePreview,
+  SeriousTimelinePreview,
+} from './video-pipeline/TimelinePreviewComposition';
+import {
+  EMPTY_FUNNY_PREVIEW,
+  EMPTY_SERIOUS_PREVIEW,
+} from './video-pipeline/preview-defaults';
 
 export const RemotionRoot: React.FC = () => {
   return (
@@ -39,24 +47,24 @@ export const RemotionRoot: React.FC = () => {
       />
 
       {/* 🔥 ĐĂNG KÝ XƯỞNG SERIOUS VÀO ĐÂY */}
-      <Composition
-        id="SeriousAdviceVideo"
-        component={SeriousComposition}
-        fps={60} width={1080} height={1920}
-        calculateMetadata={({ props }) => {
-          if (!props.chunks) return { durationInFrames: 600 };
-          let totalFrames = props.chunks.reduce((total: number, chunk: any) => total + chunk.durationInFrames, 0);
-          totalFrames += 180 + 300; // Cộng Intro (3s) và Outro (5s)
-          return { durationInFrames: totalFrames };
-        }}
-        defaultProps={{
-          bgm: "bgm/sneaky.mp3",
-          postInfo: { author: "Góc Chữa Lành", avatar: "avatars/default_avatar.jpg", text: "Test nội dung..." },
-          chunks: [
-            { text: "Bạn sẽ cảm thấy vô cùng chênh vênh...", caption: "CHÊNH VÊNH", cardToShow: "post", gifImg: "", audioSrc: "", durationInFrames: 180 }
-          ]
-        }}
-      />
+<Composition
+         id="SeriousAdviceVideo"
+         component={SeriousComposition}
+         fps={60} width={1080} height={1920}
+         calculateMetadata={({ props }) => {
+           if (!props.chunks) return { durationInFrames: 600 };
+           let totalFrames = props.chunks.reduce((total: number, chunk: any) => total + chunk.durationInFrames, 0);
+           return { durationInFrames: totalFrames };
+         }}
+         defaultProps={{
+           backgroundVideo: "backgrounds/minecraft_parkour.mp4", // Loop mặc định
+           bgm: "bgm/lofi.mp3", // Đổi sang lofi cho đúng chất sếp cần
+           postInfo: { author: "Gốc Chính", avatar: "avatars/default_avatar.jpg", text: "Nội dung test..." },
+           chunks: [
+             { text: "Bấm nút thử nghiệm luồng...", cardToShow: "post", audioSrc: "", durationInFrames: 180, commentInfo: { author: "Gốc Chính", avatar: "avatars/default_avatar.jpg", text: "Nội dung test..." } }
+           ]
+         }}
+       />
 
       <Composition
         id="VisualStoryNewsReel"
@@ -66,6 +74,36 @@ export const RemotionRoot: React.FC = () => {
         width={1080}
         height={1920}
         defaultProps={{ data: DUMMY_STORY_DATA }}
+      />
+
+      <Composition
+        id="FunnyTimelinePreview"
+        component={FunnyTimelinePreview}
+        fps={60}
+        width={1080}
+        height={1920}
+        defaultProps={EMPTY_FUNNY_PREVIEW}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: props.timeline.totalFrames,
+          fps: props.timeline.fps,
+          width: props.timeline.width,
+          height: props.timeline.height,
+        })}
+      />
+
+      <Composition
+        id="SeriousTimelinePreview"
+        component={SeriousTimelinePreview}
+        fps={60}
+        width={1080}
+        height={1920}
+        defaultProps={EMPTY_SERIOUS_PREVIEW}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: props.timeline.totalFrames,
+          fps: props.timeline.fps,
+          width: props.timeline.width,
+          height: props.timeline.height,
+        })}
       />
     </>
   );

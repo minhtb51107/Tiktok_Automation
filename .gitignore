@@ -2,6 +2,18 @@
 # 1. THƯ MỤC HỆ THỐNG & BẢO MẬT (QUAN TRỌNG NHẤT)
 # ==========================================
 node_modules/
+# Local media and generated preview tones stay on disk, never in new source commits.
+*.wav
+*.mp4
+.env.*
+!.env.example
+*.pth
+*.pt
+*.onnx
+# User-owned local source video: retain on disk, never publish in source checkpoints.
+2_Remotion_Video/public/backgrounds/snaptt.me-10723984.mp4
+2_Remotion_Video/studio-dist/
+1_nest_backend/.studio-data/
 dist/
 .env
 1_nest_backend/tiktok_profile/
@@ -37,3 +49,8 @@ dist/
 1_nest_backend/tiktok_profile_drama/
 2_Remotion_Video/public/backgrounds/bg_temp_*
 2_Remotion_Video/public/backgrounds/source_minecraft*
+
+# Local Python runtime bytecode; never part of source checkpoints.
+__pycache__/
+*.pyc
+1_nest_backend/.local-bounded-probe.lock

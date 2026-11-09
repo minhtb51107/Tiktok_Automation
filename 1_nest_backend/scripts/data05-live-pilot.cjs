@@ -1,0 +1,98 @@
+// Do not run without a separately user-approved public target. No scheduler/resume/retry.
+const fs = require('node:fs'),
+  p = require('node:path'),
+  os = require('node:os'),
+  { randomUUID } = require('node:crypto');
+const target = process.argv[2],
+  confirmation = process.argv[3];
+if (!target) {
+  console.log(
+    'BLOCKED_TARGET: supply one user-selected canonical Threads permalink after approval. LIVE NOT RUN.',
+  );
+  process.exit(2);
+}
+if (
+  confirmation !== '--confirm-approved-one-run' ||
+  process.env.STUDIO_DATA04_LIVE_ENABLED !== '1'
+) {
+  console.log(
+    'BLOCKED_APPROVAL: separate user approval and process-local flag required. LIVE NOT RUN.',
+  );
+  process.exit(2);
+}
+const backend = p.resolve(__dirname, '..');
+if (!/Tiktok_Automation_data05[\\/]1_nest_backend$/.test(backend))
+  throw Error('Isolated DATA05 worktree required');
+const { canonicalPost } = require('../dist/data-engine/conversation-evidence');
+const identity = canonicalPost(target);
+if (!identity) {
+  console.log(
+    'BLOCKED_TARGET: canonical public HTTPS Threads permalink required. LIVE NOT RUN.',
+  );
+  process.exit(2);
+}
+if (os.freemem() < 512 * 1024 ** 2) {
+  console.log('BLOCKED_RESOURCE: less than 512 MiB available. LIVE NOT RUN.');
+  process.exit(2);
+}
+for (const k of Object.keys(process.env))
+  if (
+    !/^(PATH|SYSTEMROOT|WINDIR|TEMP|TMP|USERPROFILE|APPDATA|LOCALAPPDATA|PROGRAMFILES(?:\(X86\))?|COMSPEC|PATHEXT|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|OS|SYSTEMDRIVE)$/i.test(
+      k,
+    )
+  )
+    delete process.env[k];
+const { DataEngine } = require('../dist/data-engine/engine'),
+  { DataStore } = require('../dist/data-engine/store'),
+  { ConversationEngine } = require('../dist/data-engine/conversation-engine'),
+  { enrichConversation } = require('../dist/data-engine/conversation-public');
+const root = p.join(backend, '.studio-data/live-pilots/data05', randomUUID());
+const consumer = new ConversationEngine(
+  new DataEngine(new DataStore(p.join(root, 'data-engine'))),
+  {
+    execution: 'LIVE',
+    discover: async () => {
+      throw Error('CONVERSATION_DISCOVERY_DISABLED_FOR_ONE_TARGET_PILOT');
+    },
+    enrich: enrichConversation,
+  },
+);
+(async () => {
+  const started = Date.now(),
+    before = os.freemem();
+  const run = await consumer.start({
+    requestId: randomUUID(),
+    urls: [identity.url],
+    limit: 1,
+  });
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(
+    p.join(root, 'pilot-report.json'),
+    JSON.stringify(
+      {
+        run,
+        elapsedMs: Date.now() - started,
+        availableBefore: before,
+        availableAfter: os.freemem(),
+        autoRetry: false,
+        schedulerEnabled: false,
+        productionAllowed: false,
+      },
+      null,
+      2,
+    ),
+  );
+  console.log(
+    JSON.stringify({
+      status: run.status,
+      verified: run.results[0]?.evaluation.sample.verified ?? null,
+      collectionStatus: run.captures[0]?.collection.status ?? 'UNKNOWN',
+      report: p.join(root, 'pilot-report.json'),
+    }),
+  );
+})().catch(() => {
+  console.error(
+    'LIVE_PILOT_FAILED: inspect isolated checkpoints; no automatic retry.',
+  );
+  process.exitCode = 1;
+});

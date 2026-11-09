@@ -1,18 +1,23 @@
 import { Module } from '@nestjs/common';
 import { AiModule } from '../../core/ai/ai.module';
-import { RemotionRunnerModule } from '../../remotion-runner/remotion-runner.module';
+// Module:
+import { RemotionRunnerModule } from '../../core/remotion-runner/remotion-runner.module';
 import { ThreadsSeriousService } from './threads-serious.service';
-import { ScraperService } from '../../core/scraper/scraper.service';
-import { TtsService } from '../../core/tts/tts.service';
-import { WhisperModule } from '../../whisper/whisper.module';
+import { ThreadsSeriousController } from './threads-serious.controller';
+import { ScraperModule } from '../../core/scraper/scraper.module';
+import { TtsModule } from '../../core/tts/tts.module';
+import { PrismaModule } from '../../../prisma/prisma.module';
 
 @Module({
   imports: [
-    AiModule, // Đã có sẵn AiModule để cung cấp AiService
-    RemotionRunnerModule, 
-    WhisperModule
+    PrismaModule,
+    AiModule,
+    RemotionRunnerModule,
+    ScraperModule,
+    TtsModule,
   ],
-  providers: [ThreadsSeriousService, ScraperService, TtsService],
+  controllers: [ThreadsSeriousController],
+  providers: [ThreadsSeriousService],
   exports: [ThreadsSeriousService]
 })
 export class ThreadsSeriousModule {}

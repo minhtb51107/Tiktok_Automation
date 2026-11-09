@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import puppeteer from 'puppeteer';
+import {checkDiscovery,existingPublicBrowser,publicResource,visiblePermalinks,type PublicDiscovery} from './public-discovery';
 
 @Injectable()
 export class ScraperService {
   private readonly logger = new Logger(ScraperService.name);
 
-  async scrapeThreadsUrl(url: string, fetchComments: boolean = true) {
+  async scrapeThreadsUrl(url: string, fetchComments: boolean = true, controlled = false) {
     const cleanUrl = url.split('?')[0];
     const targetUrl = cleanUrl.replace('threads.com', 'threads.net');
     this.logger.log(`🔍 Bắt đầu cào URL chuẩn: ${targetUrl}`);
@@ -15,6 +16,18 @@ export class ScraperService {
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-notifications', '--lang=vi-VN,vi']
     });
     const page = await browser.newPage();
+    if (controlled) {
+      await page.setRequestInterception(true);
+      page.on('request', request => {
+        try {
+          const target = new URL(request.url());
+          const allowed = ['threads.net', 'threads.com', 'fbcdn.net', 'cdninstagram.com', 'instagram.com'];
+          const safe = target.protocol === 'https:' && !target.port &&
+            allowed.some(domain => target.hostname === domain || target.hostname.endsWith('.' + domain));
+          void (safe ? request.continue() : request.abort());
+        } catch { void request.abort(); }
+      });
+    }
     
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'vi-VN,vi;q=0.9' });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');
@@ -142,22 +155,41 @@ export class ScraperService {
     }
   }
 
-  async scrapeForYouFeed(scrolls: number = 3): Promise<any[]> {
-    this.logger.log('🕷️ Đang thả không Puppeteer lướt trang "For You"...');
+  async scrapeForYouFeed(scrolls: number = 3, controlled?:PublicDiscovery): Promise<any[]> {
+    if(controlled){checkDiscovery(controlled);if(!Number.isInteger(scrolls)||scrolls<0||scrolls>1)throw Error('CRAWLER_INVALID_SCROLL_BUDGET');if(!existingPublicBrowser())throw Error('CRAWLER_BROWSER_MISSING');}
+    this.logger.log(controlled?'Controlled public SERIOUS discovery; scheduler disabled':'🕷️ Đang thả không Puppeteer lướt trang "For You"...');
     
     const browser = await puppeteer.launch({
+      ...(controlled?{executablePath:existingPublicBrowser()}:{}),
       headless: true, 
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-notifications', '--lang=vi-VN,vi']
+      args: controlled?['--disable-background-networking']:['--no-sandbox', '--disable-setuid-sandbox', '--disable-notifications', '--lang=vi-VN,vi']
     });
+    const results: any[] = [];
+    try {
     const page = await browser.newPage();
     
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'vi-VN,vi;q=0.9' });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');
+    if(!controlled)await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');
     await page.setViewport({ width: 1280, height: 800 });
 
-    const results: any[] = [];
-
-    try {
+      if(controlled){
+        let navigations=0,requests=0;
+        await page.setRequestInterception(true);page.on('request',r=>{requests++;if(r.isNavigationRequest()&&r.frame()===page.mainFrame())navigations++;void(publicResource(r.url())&&navigations<=4&&requests<=200&&!['media','font','image'].includes(r.resourceType())?r.continue():r.abort());});
+        const response=await page.goto(controlled.url,{waitUntil:'domcontentloaded',timeout:controlled.timeoutMs});
+        if(response&&response.status()>=400)throw Error('CRAWLER_HTTP_'+response.status());
+        const gate=async()=>/\/(?:login|accounts|challenge|checkpoint)(?:\/|\?|$)/i.test(page.url())||await page.evaluate(()=>!!document.querySelector('input[type="password"],iframe[src*="captcha"],[data-testid*="captcha"]'));
+        if(await gate())throw Error('CRAWLER_ACCESS_BLOCKED');
+        await page.waitForSelector('div[data-pressable-container="true"],article',{timeout:Math.min(8000,controlled.timeoutMs)}).catch(()=>{});
+        for(let i=0;i<=scrolls;i++){
+          if(await gate())throw Error('CRAWLER_ACCESS_BLOCKED');
+          const links=await page.evaluate(visiblePermalinks);
+          for(const x of links)if(!results.some(y=>y.url===x.url)&&results.length<controlled.limit)results.push(x);
+          if(results.length>=controlled.limit||i===scrolls)break;
+          await page.evaluate(()=>window.scrollBy(0,window.innerHeight));await new Promise(r=>setTimeout(r,1000));
+        }
+        if(!results.length)throw Error('CRAWLER_NO_PUBLIC_TARGETS');
+        return results;
+      }
       this.logger.log('🌐 Đang truy cập https://www.threads.net/');
       await page.goto('https://www.threads.net/', { waitUntil: 'networkidle2', timeout: 60000 });
 
@@ -204,6 +236,7 @@ export class ScraperService {
       this.logger.log(`✅ Lưới đầy! Thu hoạch được ${results.length} bài viết nguyên liệu.`);
 
     } catch (error: any) {
+      if(controlled)throw Error(/^CRAWLER_[A-Z0-9_]+$/.test(error.message||'')?error.message:'CRAWLER_NAVIGATION_FAILED');
       this.logger.error(`❌ Puppeteer lỗi: ${error.message}`);
     } finally {
       await browser.close();

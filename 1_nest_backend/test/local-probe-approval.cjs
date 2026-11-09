@@ -1,0 +1,5 @@
+// A deliberately missing approval in a fresh throwaway plan: RUN must stop before any worker.
+const fs=require('fs'),p=require('path'),cp=require('child_process'),assert=require('assert/strict'),{randomUUID}=require('crypto');
+const base=p.resolve(__dirname,'../../../Tiktok_Automation_e2e01'),root=p.join(base,'run-local-bounded-probe-test-'+randomUUID());fs.mkdirSync(root);fs.writeFileSync(p.join(root,'plan.json'),'{}');
+try{const result=cp.spawnSync(process.execPath,['scripts/local-bounded-probe.cjs',root,'run'],{encoding:'utf8',windowsHide:true});assert.equal(result.status,1);assert.match(result.stderr,/EXPLICIT_USER_APPROVAL_REQUIRED/);assert.equal(fs.existsSync(p.join(root,'attempt.json')),false);assert.equal(fs.existsSync(p.join(root,'backend')),false);console.log('PASS OFFLINE: missing approval refuses RUN before attempt, backend folder or model worker.');}
+finally{if(p.dirname(root)!==base||!p.basename(root).startsWith('run-local-bounded-probe-test-'))throw Error('Unsafe test path');fs.unlinkSync(p.join(root,'plan.json'));fs.rmdirSync(root);}

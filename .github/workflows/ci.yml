@@ -9,15 +9,19 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: '1'
+      HF_HUB_OFFLINE: '1'
+      TRANSFORMERS_OFFLINE: '1'
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '18.x'
+          node-version: '22.x'
           cache: 'npm'
           # Chỉ điểm cho GitHub biết file lock nằm ở 2 thư mục con
           cache-dependency-path: |
@@ -38,7 +42,7 @@ jobs:
 
       - name: Run Backend Tests
         working-directory: ./1_nest_backend
-        run: npm run test
+        run: npm run test -- --runInBand
 
       - name: Install Remotion Dependencies
         working-directory: ./2_Remotion_Video
@@ -46,4 +50,8 @@ jobs:
 
       - name: Build Remotion Project
         working-directory: ./2_Remotion_Video
-        run: npm run build
+        run: |
+          node scripts/generate-preview-audio.cjs
+          npm run studio:build
+          npx tsc --noEmit
+          npm run build

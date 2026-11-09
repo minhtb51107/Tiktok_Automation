@@ -1,0 +1,20 @@
+const fs=require('node:fs'),p=require('node:path');
+const backend=p.resolve(__dirname,'..'),run=p.resolve(process.argv[2]||'');
+const parent=p.resolve(backend,'../../Tiktok_Automation_restore01_live02');
+if(p.dirname(run)!==parent||!fs.existsSync(p.join(run,'result.json')))throw Error('ISOLATED_LIVE02_CAPTURE_REQUIRED');
+const result=JSON.parse(fs.readFileSync(p.join(run,'result.json'))),cwd=p.join(run,'backend');
+if(result.store!==p.join(cwd,'.studio-data')||fs.existsSync(p.join(cwd,'.env')))throw Error('ISOLATION_INVALID');
+for(const k of Object.keys(process.env))if(!/^(PATH|SYSTEMROOT|WINDIR|TEMP|TMP|USERPROFILE|APPDATA|LOCALAPPDATA|PROGRAMFILES(?:\(X86\))?|COMSPEC|PATHEXT|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|OS|SYSTEMDRIVE)$/i.test(k))delete process.env[k];
+process.chdir(cwd);process.env.STUDIO_DATA_ROOT=result.store;process.env.STUDIO_DATA04_MEDIA_ROOT=p.join(result.store,'conversation-media');
+const deny=()=>{throw Error('LIVE02_OUTBOUND_DISABLED_AFTER_CAPTURE')};for(const x of ['node:http','node:https']){require(x).get=deny;require(x).request=deny}global.fetch=deny;
+require('reflect-metadata');const {NestFactory}=require('@nestjs/core'),{AppModule}=require('../dist/app.module'),{TransformInterceptor}=require('../dist/common/interceptors/transform.interceptor'),{HttpExceptionFilter}=require('../dist/common/filters/http-exception.filter');
+(async()=>{const app=await NestFactory.create(AppModule,{logger:['error','warn']});app.use(require('express').json({limit:'2mb'}));
+app.use((req,res,next)=>{
+ if(req.path==='/studio')return res.sendFile(p.resolve(backend,'../2_Remotion_Video/studio/index.html'));
+ if(['/studio/app.js','/studio/app.css'].includes(req.path))return res.sendFile(p.resolve(backend,'../2_Remotion_Video/studio-dist',p.basename(req.path)));
+ if(req.path==='/api/studio/runtime')return res.json({data:{mode:'LIVE02_SANDBOX',reason:'Saved live cards; parent evidence unverified. Local text/selection/editor edits only.',capabilities:{localSave:true,review:false,tts:false,render:false,publish:false},scheduler:'OFF'}});
+ const local=req.method==='PUT'&&new RegExp('^/api/studio/sessions/'+result.sessionId+'(?:/editor)?$').test(req.path);
+ const prepare=req.method==='POST'&&req.path==='/api/studio/sessions/'+result.sessionId+'/editor/prepare';
+ if(!['GET','HEAD'].includes(req.method)&&!local&&!prepare)return res.status(403).json({message:'LIVE02: only local selection/text/editor saves are enabled. TTS/render/collection/publishing require separate approval.'});
+ next();});app.useGlobalInterceptors(new TransformInterceptor());app.useGlobalFilters(new HttpExceptionFilter());await app.listen(3107,'127.0.0.1');console.log('LIVE02 READY http://127.0.0.1:3107/studio?session='+result.sessionId+'&area=Video%20Studio&step=Source pid='+process.pid);process.on('SIGINT',async()=>{await app.close();process.exit(0)});
+})().catch(e=>{console.error(e.message);process.exitCode=1});

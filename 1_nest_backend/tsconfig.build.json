@@ -1,4 +1,8 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts", "prisma"]
+  "compilerOptions": {
+    "outDir": "./dist",
+    "tsBuildInfoFile": "./dist/tsconfig.build.tsbuildinfo" /* 👈 Thêm dòng này */
+  },
+  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
 }

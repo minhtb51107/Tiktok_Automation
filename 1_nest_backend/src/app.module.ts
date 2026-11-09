@@ -1,25 +1,13 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { WatcherModule } from './modules/watcher/watcher.module';
-import { RemotionRunnerModule } from './modules/remotion-runner/remotion-runner.module';
-import { WhisperModule } from './modules/whisper/whisper.module';
-import { GeminiModule } from './modules/core/ai/gemini.module';
-import { ScheduleModule } from '@nestjs/schedule'; 
-import { PrismaModule } from './prisma/prisma.module';
-
-import { DiscordModule } from './modules/core/notification/discord.module';
+import { StudioModule } from './studio/studio.module';
 
 @Module({
-  imports: [
-    ScheduleModule.forRoot(),
-    WatcherModule, 
-    RemotionRunnerModule, 
-    WhisperModule, 
-    GeminiModule,
-    PrismaModule,
-    DiscordModule // <--- Khởi động trạm trung gian
-  ],
+  // Recovery baseline: operational modules remain intentionally dormant.
+  // Importing Watcher, Discord, Auto Hunter, Uploader, or workflow modules here
+  // would start external side effects during bootstrap and offline tests.
+  imports: [StudioModule],
   controllers: [AppController],
   providers: [AppService],
 })
