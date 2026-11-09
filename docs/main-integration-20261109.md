@@ -73,6 +73,16 @@ the main build did not replace their running backend or store.
 
 ## Integrated commit inventory (original identities/history retained)
 
+CI follow-up: GitHub run 42636486352 failed in one pre-existing test suite,
+`conversation-media.spec.ts`: missing describe/test/expect imports with the test
+TypeScript configuration. The other 42 suites / 283 tests passed. The repair
+imports from `@jest/globals`, with no diagnostics suppression or skipped test.
+The repaired spec passed a standalone TypeScript program check. Trying ts-jest's
+combined type-checking process with a 384 MiB heap hit the V8 heap limit on this
+laptop (not evidence of Windows OOM); no heap increase was forced. Runtime tests
+use isolated transpilation locally, while CI retains the full type-checking
+configuration. Remote CI must be checked again after the repair push.
+
 - 21db111 chore: preserve recovery baseline WIP
 - 837bbf4 chore: establish offline recovery baseline
 - 441224d test: finalize offline recovery baseline
