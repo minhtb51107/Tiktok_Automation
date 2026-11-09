@@ -41,7 +41,7 @@ preflight; any actual push rejection remains authoritative and is not bypassed.
   was activated. Existing CI only builds/tests; it does not publish/deploy.
 - Whole-merge `diff --cached --check` exposed inherited trailing whitespace in
   12 legacy files (143 lines) and one trailing blank line in an E2E script. Only
-  those whitespace issues were removed; `git diff -w de60514` for these paths
+  those whitespace issues were removed; `git diff -w --ignore-blank-lines de60514` for these paths
   is empty. No legacy workflow was activated or refactored.
 
 ## Validation: PASS
