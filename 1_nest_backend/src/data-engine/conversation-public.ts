@@ -167,7 +167,9 @@ async function visit<T>(
 export async function discoverConversations(
   keyword: string,
   audit?: (event:PublicAccessAudit)=>void,
+  limit = 6,
 ): Promise<PopularityCandidate[]> {
+  if(!Number.isInteger(limit)||limit<1||limit>6)throw Error('CONVERSATION_INVALID_LIMIT');
   const url = discoveryUrl('SEARCH', keyword);
   return visit(url, 1, async (page) => {
     const observed = await page.evaluate(observePublicDocument),
@@ -181,7 +183,7 @@ export async function discoverConversations(
         unique = [...new Set(identities.map((x) => x.url))];
       // Ambiguous container may include context cards: keep URLs but never attribute their counters.
       for (const identity of identities) {
-        if (seen.has(identity.id) || out.length >= 6) continue;
+        if (seen.has(identity.id) || out.length >= limit) continue;
         seen.add(identity.id);
         const fields = labelledCounts(row.controls),
           value = (k: string) =>
