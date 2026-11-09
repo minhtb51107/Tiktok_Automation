@@ -1,4 +1,5 @@
 import {StudioOperations,StudioOperationsController} from './studio-operations';
+import {ContentQualityController,ContentQualityService} from '../data-engine/content-quality.controller';
 import {ThreadsController,ThreadsDiscoveryService} from '../threads-api/controller';
 import {EditorialController,EditorialStudioService} from '../data-engine/editorial.controller';
 import {ConversationController,ConversationStudioService} from '../data-engine/conversation.controller';
@@ -12,7 +13,7 @@ import {PublishingService} from './publishing.service';
 import {PublishingController} from './publishing.controller';
 
 @Module({
-  controllers: [StudioOperationsController,StudioController,PublishingController,DataController,ThreadsController,CrawlerController,ConversationController,EditorialController],
-  providers: [StudioOperations,StudioService, ScraperService,PublishingService,DataStudioService,ThreadsDiscoveryService,CrawlerStudioService,ConversationStudioService,EditorialStudioService],
+  controllers: [ContentQualityController,StudioOperationsController,StudioController,PublishingController,DataController,ThreadsController,CrawlerController,ConversationController,EditorialController],
+  providers: [ContentQualityService,StudioOperations,StudioService, ScraperService,PublishingService,DataStudioService,ThreadsDiscoveryService,CrawlerStudioService,ConversationStudioService,EditorialStudioService],
 })
 export class StudioModule {}

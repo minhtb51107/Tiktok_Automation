@@ -1,7 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { request } from 'https';
 import { lookup } from 'dns/promises';
-import { existsSync } from 'fs';
 import {freemem} from 'os';
 import puppeteer from 'puppeteer';
 import {labelledCounts,contextLabelledCounts} from './metadata-fields';
@@ -266,10 +265,10 @@ export async function extractPublicThreads(
           args: ['--disable-background-networking'],
         });
         let stopReason='COMPLETED',minimumAvailableMiB=Math.round(freemem()/1024**2),scrollCount=0;
-        if(live03){
-          out.boundedObservation={requests:out.redirects.length,scrolls:0,stopReason,minimumAvailableMiB,snapshots:[]};
+        if(controlled||live03){
+          if(live03)out.boundedObservation={requests:out.redirects.length,scrolls:0,stopReason,minimumAvailableMiB,snapshots:[]};
           resourceGuard=setInterval(()=>{minimumAvailableMiB=Math.min(minimumAvailableMiB,Math.round(freemem()/1024**2));if(minimumAvailableMiB<384){stopReason='RESOURCE_BELOW_384MIB';if(out.boundedObservation){out.boundedObservation.stopReason=stopReason;out.boundedObservation.minimumAvailableMiB=minimumAvailableMiB;}diagnostic('resource',stopReason,'Available RAM below 384 MiB; stopped.');void browser?.close().catch(()=>{});}},250);
-          if(minimumAvailableMiB<384)out.boundedObservation.stopReason='RESOURCE_BELOW_384MIB';
+          if(minimumAvailableMiB<384&&out.boundedObservation)out.boundedObservation.stopReason='RESOURCE_BELOW_384MIB';
           if(minimumAvailableMiB<384)throw Error('RESOURCE_BELOW_384MIB');
         }
         if(controlled)deadline=setTimeout(()=>{stopReason='TIME_BUDGET';void browser?.close().catch(()=>{});},live03?Math.max(1,60000-(Date.now()-started)):20000);

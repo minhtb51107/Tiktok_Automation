@@ -1,4 +1,5 @@
 import puppeteer, { type Page } from 'puppeteer';
+import { freemem } from 'os';
 import {
   existingPublicBrowser,
   publicResource,
@@ -17,6 +18,7 @@ import type {
   PublicPost,
   ThreadCollection,
 } from './conversation-contracts';
+export interface PublicAccessAudit {url:string;requests:number;navigations:number;scrolls:number;elapsedMs:number;minimumAvailableMiB:number;outcome:string}
 import { cacheConversationImages } from './conversation-media';
 /** Function deliberately self-contained: executed in public DOM, no credential/session access. */
 export function observePublicDocument() {
@@ -77,14 +79,19 @@ async function visit<T>(
   url: string,
   scrolls: number,
   read: (page: Page) => Promise<T>,
+  audit?: (event:PublicAccessAudit)=>void,
 ): Promise<T> {
+  const started=Date.now();let minimumAvailableMiB=freemem()/1024**2,requests=0,navigations=0,actualScrolls=0,outcome='COMPLETED';
   const executablePath = existingPublicBrowser();
   if (!executablePath) throw Error('CONVERSATION_BROWSER_MISSING');
+  if(freemem()<384*1024**2)throw Error('CONVERSATION_RESOURCE_BELOW_384MIB');
   const browser = await puppeteer.launch({
     executablePath,
     headless: true,
     args: ['--disable-background-networking'],
   });
+  let resourceStopped=false;
+  const resourceGuard=setInterval(()=>{minimumAvailableMiB=Math.min(minimumAvailableMiB,freemem()/1024**2);if(minimumAvailableMiB<384){resourceStopped=true;void browser.close().catch(()=>{});}},250);
   const deadline = setTimeout(
     () => void browser.close().catch(() => {}),
     30000,
@@ -93,8 +100,6 @@ async function visit<T>(
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
     await page.setRequestInterception(true);
-    let requests = 0,
-      navigations = 0;
     page.on('request', (r) => {
       requests++;
       if (r.isNavigationRequest() && r.frame() === page.mainFrame())
@@ -132,24 +137,30 @@ async function visit<T>(
       )
       .catch(() => {});
     for (let i = 0; i < scrolls; i++) {
+      actualScrolls++;
       await page.evaluate(() => window.scrollBy(0, window.innerHeight));
       await new Promise((r) => setTimeout(r, 500));
       if (await gate()) throw Error('CONVERSATION_ACCESS_BLOCKED');
     }
     return await read(page);
   } catch (e: any) {
+    outcome=resourceStopped?'CONVERSATION_RESOURCE_BELOW_384MIB':/^CONVERSATION_[A-Z0-9_]+$/.test(e.message||'')?e.message:'CONVERSATION_NAVIGATION_FAILED';
+    if(resourceStopped)throw Error('CONVERSATION_RESOURCE_BELOW_384MIB');
     throw Error(
       /^CONVERSATION_[A-Z0-9_]+$/.test(e.message || '')
         ? e.message
         : 'CONVERSATION_NAVIGATION_FAILED',
     );
   } finally {
+    clearInterval(resourceGuard);
     clearTimeout(deadline);
     await browser.close().catch(() => {});
+    audit?.({url,requests,navigations,scrolls:actualScrolls,elapsedMs:Date.now()-started,minimumAvailableMiB:Math.round(minimumAvailableMiB),outcome});
   }
 }
 export async function discoverConversations(
   keyword: string,
+  audit?: (event:PublicAccessAudit)=>void,
 ): Promise<PopularityCandidate[]> {
   const url = discoveryUrl('SEARCH', keyword);
   return visit(url, 1, async (page) => {
@@ -201,11 +212,13 @@ export async function discoverConversations(
     }
     if (!out.length) throw Error('CONVERSATION_NO_PUBLIC_CANDIDATES');
     return out;
-  });
+  },audit);
 }
 export async function enrichConversation(
   url: string,
+  audit?: (event:PublicAccessAudit)=>void,
 ): Promise<ThreadCollection> {
+  if(freemem()<384*1024**2)throw Error('CONVERSATION_RESOURCE_BELOW_384MIB');
   const target = canonicalPost(url);
   if (!target) throw Error('CONVERSATION_INVALID_URL');
   const attempt = await extractPublicThreads(target.url, 'TARGET_ONLY', true);
@@ -288,11 +301,12 @@ export async function enrichConversation(
       cardObservations,
     };
     const collection = collectEvidence(root, doc, 20);
+    collection.sourceCapture=attempt;
     for(const candidate of collection.unverified){
       const matching=observed.rows.filter(r=>r.urls.length===1&&canonicalPost(r.urls[0])?.url===canonicalPost(candidate.url)?.url);
       const identity=canonicalPost(candidate.url);
       if(identity&&matching.length===1&&matching[0].text.trim())candidate.observation={level:'OBSERVED_ON_TARGET_PAGE',targetUrl:target.url,observedAt:now,author:{handle:identity.handle,name:null},originalText:matching[0].text};
     }
     return collection;
-  });
+  },audit);
 }

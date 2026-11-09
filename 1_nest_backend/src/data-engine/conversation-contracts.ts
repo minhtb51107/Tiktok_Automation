@@ -14,6 +14,8 @@ export interface MetricScore {
   reasons: string[];
 }
 export interface PublicPost {
+  /** Existing reviewed Studio image transcription, never an implicit user approval. */
+  imageNarration?: import('../video-pipeline/contracts').StoryboardScene['imageNarration'];
   id: string;
   url: string;
   author: { handle: string; name: string | null };
@@ -78,6 +80,8 @@ export interface UnverifiedCandidate {
   };
 }
 export interface ThreadCollection {
+  /** Immutable exact-target capture, including separately labelled observed context. */
+  sourceCapture?: import('../studio/public-types').SourceAttempt;
   version: typeof CONVERSATION_VERSION;
   root: PublicPost;
   replies: VerifiedReply[];
