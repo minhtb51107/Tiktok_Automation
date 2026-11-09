@@ -194,14 +194,16 @@ export class ThreadsProvider {
     limit: number,
     after: string | null,
     hooks?: ApiHooks,
+    mode: 'KEYWORD' | 'TAG' = 'KEYWORD',
   ) {
     return this.request(
       'keyword_search',
       {
         q,
         search_type: type,
+        search_mode: mode,
         limit: String(limit),
-        fields: 'id,text,username,permalink,timestamp,media_type,media_url',
+        fields: 'id,text,username,permalink,timestamp,media_type,media_url,is_reply,has_replies',
         ...(after ? { after } : {}),
       },
       token,

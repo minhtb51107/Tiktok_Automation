@@ -9,13 +9,14 @@ import type { ContentStyle } from '../video-pipeline/contracts';
 import { crawlerInput } from './crawler-adapter';
 import { GoldShadowEngine } from './gold-shadow';
 import { DISCOVERY_TOPICS } from './gold-v2';
+import { discoveryFailure, type DiscoveryOutcome } from './discovery-diagnostics';
 export interface QualityRequest {requestId:string;style:ContentStyle;topic:string;keywords:string[];maxPosts:number;maxRunMs:number}
 export function qualityRequest(b:any):QualityRequest {
   if(!b||!/^[-\w]{1,100}$/.test(b.requestId)||!['SERIOUS','FUNNY'].includes(b.style)||typeof b.topic!=='string'||b.topic.length>120||!Array.isArray(b.keywords)||b.keywords.length<1||b.keywords.length>8||b.keywords.some((q:any)=>typeof q!=='string'||!q.trim()||q.length>120)||!Number.isInteger(b.maxPosts)||b.maxPosts<1||b.maxPosts>50||!Number.isInteger(b.maxRunMs)||b.maxRunMs<1000||b.maxRunMs>600000)throw Error('QUALITY_INVALID_REQUEST');
   return {requestId:b.requestId,style:b.style,topic:b.topic,keywords:[...new Set<string>(b.keywords.map((x:string)=>x.trim()))],maxPosts:b.maxPosts,maxRunMs:b.maxRunMs};
 }
 export interface QualityProvider {execution:'LIVE'|'SYNTHETIC';discover(keyword:string):Promise<PopularityCandidate[]>;enrich(url:string):Promise<ThreadCollection>}
-export interface QualityRun {schemaVersion:typeof DATA_SCHEMA;version:'content-discovery/1';configHash:string;captureHashes:Record<string,string>;id:string;request:QualityRequest;execution:'LIVE'|'SYNTHETIC';status:'RUNNING'|'COMPLETED'|'PARTIAL'|'BLOCKED';stage:string;startedAt:string;completedAt:string|null;elapsedMs:number;keywordCursor:number;targetCursor:number;candidates:PopularityCandidate[];urls:string[]|null;collections:ThreadCollection[];imports:string[];errors:string[];result:ReturnType<typeof rankConversations>|null;history:Array<{at:string;stage:string}>}
+export interface QualityRun {schemaVersion:typeof DATA_SCHEMA;version:'content-discovery/1';diagnosis?:{stage:string;outcome:DiscoveryOutcome};configHash:string;captureHashes:Record<string,string>;id:string;request:QualityRequest;execution:'LIVE'|'SYNTHETIC';status:'RUNNING'|'COMPLETED'|'PARTIAL'|'BLOCKED';stage:string;startedAt:string;completedAt:string|null;elapsedMs:number;keywordCursor:number;targetCursor:number;candidates:PopularityCandidate[];urls:string[]|null;collections:ThreadCollection[];imports:string[];errors:string[];result:ReturnType<typeof rankConversations>|null;history:Array<{at:string;stage:string}>}
 /** Small sequential coordinator over existing DATA04 discovery/enrichment and DATA01 storage. */
 export class ContentDiscovery {
   private busy=false;
@@ -41,6 +42,6 @@ export class ContentDiscovery {
       r.targetCursor++;await this.save(r);
     }
     r.status='COMPLETED';r.stage='WAITING_HUMAN_REVIEW';
-  }catch(e){const code=e instanceof Error?e.message:'QUALITY_FAILED';r.errors.push(/^[A-Z0-9_]+$/.test(code)?code:'QUALITY_FAILED');r.status=/ACCESS|HTTP_(401|403|429)|RESOURCE|BROWSER_MISSING/.test(code)?'BLOCKED':'PARTIAL';r.stage='STOPPED_NO_AUTOMATIC_RETRY';}
+  }catch(e){r.diagnosis={stage:r.stage,outcome:discoveryFailure(e)};const code=e instanceof Error?e.message:'QUALITY_FAILED';r.errors.push(/^[A-Z0-9_]+$/.test(code)?code:'QUALITY_FAILED');r.status=/ACCESS|HTTP_(401|403|429)|RESOURCE|BROWSER_MISSING/.test(code)?'BLOCKED':'PARTIAL';r.stage='STOPPED_NO_AUTOMATIC_RETRY';}
   finally{try{try{const terms=[...r.request.keywords,...Object.entries(DISCOVERY_TOPICS).filter(([key,value])=>r.request.topic.includes(key)||r.request.keywords.includes(value.keyword)).flatMap(([,value])=>[...value.terms])];r.result=rankConversations(r.collections,r.request.style,new Date(this.now()).toISOString(),terms)}catch{r.result=null;r.status='PARTIAL';r.errors.push('QUALITY_SCORING_FAILED')}r.completedAt=new Date(this.now()).toISOString();await this.save(r)}finally{this.busy=false}}return r}
 }

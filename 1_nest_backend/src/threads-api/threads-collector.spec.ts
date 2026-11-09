@@ -113,6 +113,16 @@ afterEach(async () => {
   }
 });
 describe('Threads collector / DATA-01 integration — MOCK ONLY, SYNTHETIC TEST DATA', () => {
+  it('persists empty-search diagnosis without inferring public permission or retrying',async()=>{
+    const f=await fixture(()=>Response.json({data:[]}));
+    const r=await f.collector.start(f.input());
+    expect(r.status).toBe('COMPLETED');
+    expect(r.returned).toBe(0);
+    expect(r.searchDiagnostics?.[0].assessment).toMatchObject({outcome:'ACCESS_EMPTY',count:0,paging:'NOT_PRESENT',publicAccess:'UNKNOWN'});
+    expect(r.warnings.some(x=>x.startsWith('ACCESS_EMPTY:'))).toBe(true);
+    expect(f.calls.filter(x=>x.endsWith('/keyword_search'))).toHaveLength(1);
+    expect((await f.collector.get(r.id)).searchDiagnostics).toEqual(r.searchDiagnostics);
+  });
   it('retains native ID and canonical shortcode without quarantining valid API records; no auto-queue', async () => {
     const f = await fixture(),
       r = await f.collector.start(f.input());

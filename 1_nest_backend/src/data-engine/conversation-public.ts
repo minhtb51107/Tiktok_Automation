@@ -1,5 +1,6 @@
 import puppeteer, { type Page } from 'puppeteer';
 import { freemem } from 'os';
+import { inspectPublicDiscovery,extractionStop } from './discovery-diagnostics';
 import {
   existingPublicBrowser,
   publicResource,
@@ -72,7 +73,8 @@ export function observePublicDocument() {
       jsonLd.push(JSON.parse(value));
     } catch {}
   }
-  return { rows, jsonLd };
+  const explicitNoResults=[...document.querySelectorAll('[role="status"],h1,h2')].some(x=>/^(no results(?: found)?|không có kết quả(?: tìm kiếm)?)\.?$/iu.test((x.textContent||'').trim()));
+  return { rows, jsonLd, diagnostics:{cards:cards.length,permalinkAnchors:cards.reduce((n,c)=>n+c.querySelectorAll('a[href*="/post/"]').length,0),explicitNoResults} };
 }
 /** A bounded disposable browser, no user profile, no stealth, installed executable only. */
 async function visit<T>(
@@ -88,7 +90,7 @@ async function visit<T>(
   const browser = await puppeteer.launch({
     executablePath,
     headless: true,
-    args: ['--disable-background-networking'],
+    args: ['--disable-background-networking','--disable-extensions','--renderer-process-limit=1'],
   });
   let resourceStopped=false;
   const resourceGuard=setInterval(()=>{minimumAvailableMiB=Math.min(minimumAvailableMiB,freemem()/1024**2);if(minimumAvailableMiB<384){resourceStopped=true;void browser.close().catch(()=>{});}},250);
@@ -97,7 +99,11 @@ async function visit<T>(
     30000,
   );
   try {
-    const page = await browser.newPage();
+    // Reuse Chromium's initial blank tab rather than leaving it beside a new tab.
+    const pages=await browser.pages();
+    const page=pages[0]??await browser.newPage();
+    for(const extra of pages.slice(1))await extra.close();
+    await page.setBypassServiceWorker(true);
     await page.setViewport({ width: 1280, height: 800 });
     await page.setRequestInterception(true);
     page.on('request', (r) => {
@@ -210,7 +216,10 @@ export async function discoverConversations(
         out.push({ url: identity.url, observedOrder: out.length, post });
       }
     }
-    if (!out.length) throw Error('CONVERSATION_NO_PUBLIC_CANDIDATES');
+    if (!out.length) {
+      const outcome=inspectPublicDiscovery({...observed.diagnostics,candidates:0});
+      throw Error(outcome==='NO_RESULTS'?'CONVERSATION_NO_RESULTS':outcome==='PARSER_FAILURE'?'CONVERSATION_PARSER_FAILURE':'CONVERSATION_NO_PUBLIC_CANDIDATES');
+    }
     return out;
   },audit);
 }
@@ -222,6 +231,8 @@ export async function enrichConversation(
   const target = canonicalPost(url);
   if (!target) throw Error('CONVERSATION_INVALID_URL');
   const attempt = await extractPublicThreads(target.url, 'TARGET_ONLY', true);
+  const stopped=extractionStop(attempt.diagnostics);
+  if(stopped)throw Error(stopped);
   const source = crawlerInput(attempt, 'DATA04');
   if (
     attempt.matchMethod !== 'DOM_PERMALINK' ||

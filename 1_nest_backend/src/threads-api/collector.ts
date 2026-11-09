@@ -7,7 +7,9 @@ import { ThreadsStore } from './local-store';
 import { ThreadsApiError, type ApiHooks } from './provider';
 import { pilotInput, type PilotInput } from './config';
 import { apiInput, pageCursor } from './adapter';
+import { inspectSearchPage } from '../data-engine/discovery-diagnostics';
 export interface CollectorRun {
+  searchDiagnostics?:Array<{pageId:string;queryIndex:number;assessment:ReturnType<typeof inspectSearchPage>}>;
   schemaVersion: 'threads-collector/1';
   execution: 'LIVE' | 'MOCK';
   id: string;
@@ -364,6 +366,10 @@ export class ThreadsCollector {
           throw Error('INVALID_RESPONSE: API result limit was not honored');
         const clean = this.auth.preparePage(response, token),
           next = pageCursor(clean);
+        const assessment=inspectSearchPage(clean);
+        r.searchDiagnostics??=[];
+        if(!r.searchDiagnostics.some(d=>d.pageId===pageId))r.searchDiagnostics.push({pageId,queryIndex:qi,assessment});
+        if(!clean.data.length&&!r.warnings.includes('ACCESS_EMPTY: empty API response; public scope and cause remain UNKNOWN'))r.warnings.push('ACCESS_EMPTY: empty API response; public scope and cause remain UNKNOWN');
         if (next && (next === r.cursor || r.seenCursors.includes(next)))
           throw Error('INVALID_RESPONSE: pagination cursor loop');
         const p: SavedPage = {
