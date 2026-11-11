@@ -1,15 +1,20 @@
 import {canonicalTarget,targetType} from '../data-engine/studio-integration';
 import type {ThreadCollection,VerifiedReply} from '../data-engine/conversation-contracts';
+import {canonicalPost} from '../data-engine/conversation-identity';
 /** Catalog classification is never derived from a VideoProject or SessionScene. */
 export function catalogType(bronze:any,evaluation:any){return targetType(bronze?.itemType,undefined,evaluation?.review?.confirmedType);}
 /** Browser-safe relationship check. Author and DOM order are deliberately irrelevant. */
 export function verifiedLibraryReplies(c:ThreadCollection):VerifiedReply[]{
- if(!c?.root||canonicalTarget(c.root.url)!==c.root.id)return [];
+ const root=canonicalPost(c?.root?.url);
+ if(!root||root.id!==c.root.id||root.handle!==c.root.author.handle)return [];
+ const rootUrl=root.url;
  const rows=new Map(c.replies.map(r=>[r.id,r]));
+ if(rows.size!==c.replies.length)return [];
  function chain(r:VerifiedReply,seen:Set<string>):boolean{
   if(!r||seen.has(r.id)||r.extractionStatus!=='VERIFIED'||r.rootId!==c.root.id||r.id===c.root.id||canonicalTarget(r.url)!==r.id)return false;
-  const e=r.evidence;if(!e||!['JSON_LD_PARENT_ITEM','JSON_LD_COMMENT'].includes(e.kind)||canonicalTarget(e.subjectUrl)!==r.id||canonicalTarget(e.parentUrl)!==r.parentId||!e.documentHash||!e.pointer||!canonicalTarget(e.documentUrl))return false;
-  seen.add(r.id);return r.parentId===c.root.id||chain(rows.get(r.parentId)!,seen);
+  const own=canonicalPost(r.url),e=r.evidence,parent=canonicalPost(e?.parentUrl);
+  if(!own||own.handle!==r.author.handle||!e||!['JSON_LD_PARENT_ITEM','JSON_LD_COMMENT','DOM_EXPLICIT_REPLY_TARGET'].includes(e.kind)||canonicalPost(e.subjectUrl)?.url!==own.url||parent?.id!==r.parentId||!e.documentHash||!e.pointer||canonicalPost(e.documentUrl)?.url!==rootUrl)return false;
+  seen.add(r.id);return r.parentId===c.root.id?parent.url===rootUrl:canonicalPost(rows.get(r.parentId)?.url)?.url===parent.url&&chain(rows.get(r.parentId)!,seen);
  }
  return c.replies.filter(r=>chain(r,new Set()));
 }

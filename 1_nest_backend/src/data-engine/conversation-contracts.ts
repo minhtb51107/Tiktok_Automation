@@ -55,7 +55,7 @@ export interface PublicPost {
   };
 }
 export interface RelationshipEvidence {
-  kind: 'JSON_LD_PARENT_ITEM' | 'JSON_LD_COMMENT';
+  kind: 'JSON_LD_PARENT_ITEM' | 'JSON_LD_COMMENT' | 'DOM_EXPLICIT_REPLY_TARGET';
   documentUrl: string;
   documentHash: string;
   pointer: string;
@@ -77,6 +77,7 @@ export interface UnverifiedCandidate {
     observedAt: string;
     author: { handle: string; name: string | null };
     originalText: string;
+    contextEvidence?:import('../studio/context-classification').ContextRegionEvidence[];
   };
 }
 export interface ThreadCollection {

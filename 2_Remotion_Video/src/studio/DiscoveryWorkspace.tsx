@@ -3,6 +3,7 @@ import {ConversationPanel} from './ConversationPanel';
 import { ControlledDiscovery } from "./ControlledDiscovery";
 import { useEffect, useState, useRef } from "react";
 import {analyzeSourceCardsV2,cleanSourceProjection} from '../../../1_nest_backend/src/studio/source-quality';
+import {classifyContext} from '../../../1_nest_backend/src/studio/context-classification';
 import type {
   StudioItem,
   StudioSession,
@@ -1619,9 +1620,9 @@ export function DiscoveryWorkspace({
                 key={a.originalUrl + index}
               >
                 <strong>{c.author}</strong>
-                <p>{c.text}</p>
+                <details><summary>{cleanSourceProjection(c).text.slice(0,160)||'Nội dung thiếu — mở metadata'}{cleanSourceProjection(c).text.length>160?'…':''}</summary><p>{cleanSourceProjection(c).text}</p><p>{classifyContext(c,a.canonicalUrl||a.originalUrl).reasons.join(' · ')}</p><details><summary>Original (immutable)</summary><p>{c.text}</p></details></details>
                 <small>
-                  {String(c.url || "No permalink")} · OBSERVED_ON_TARGET_PAGE · Parent UNKNOWN
+                  {String(c.url || "No permalink")} · {classifyContext(c,a.canonicalUrl||a.originalUrl).classification} · Parent UNKNOWN
                 </small>
                 <button
                   type="button"
@@ -1739,6 +1740,7 @@ export function DiscoveryWorkspace({
 
                 {i.observationEvidence && <p data-testid="source-observation-evidence">
                   {i.observationEvidence.level} · parent {i.observationEvidence.parentId ?? 'UNKNOWN'}
+                  {i.inclusion==='EXPLICIT_CONTEXT'&&i.rawExtraction&&<> · {classifyContext(i.rawExtraction,i.observationEvidence.targetUrl).classification} · cần duyệt cho DRAFT</>}
                   {' · '}<a href={i.observationEvidence.targetUrl} target="_blank" rel="noreferrer">Trang đã quan sát</a>
                 </p>}
 

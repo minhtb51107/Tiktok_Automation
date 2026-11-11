@@ -4,10 +4,11 @@ import type { BrowserResourceReport } from './browser-resource-policy';
 import { inspectPublicDiscovery,extractionStop } from './discovery-diagnostics';
 import {
   existingPublicBrowser,
-  publicResource,
   discoveryUrl,
 } from '../modules/core/scraper/public-discovery';
 import { extractPublicThreads } from '../studio/public-threads';
+import {observePublicContext} from '../studio/public-context-dom';
+import {newRequestTelemetry,decidePublicRequest,type RequestTelemetry} from '../studio/public-request-telemetry';
 import { crawlerInput } from './crawler-adapter';
 import { labelledCounts } from '../studio/metadata-fields';
 import {
@@ -20,7 +21,7 @@ import type {
   PublicPost,
   ThreadCollection,
 } from './conversation-contracts';
-export interface PublicAccessAudit {url:string;requests:number|null;navigations:number|null;scrolls:number|null;elapsedMs:number;minimumAvailableMiB:number|null;outcome:string;resources?:BrowserResourceReport;stage?:'EXACT_ROOT';requestCoverage?:string}
+export interface PublicAccessAudit {url:string;requests:number|null;navigations:number|null;scrolls:number|null;elapsedMs:number;minimumAvailableMiB:number|null;outcome:string;resources?:BrowserResourceReport;stage?:'EXACT_ROOT';requestCoverage?:string;requestTelemetry?:RequestTelemetry}
 import { cacheConversationImages } from './conversation-media';
 /** Function deliberately self-contained: executed in public DOM, no credential/session access. */
 export function observePublicDocument() {
@@ -85,6 +86,7 @@ async function visit<T>(
   audit?: (event:PublicAccessAudit)=>void,
 ): Promise<T> {
   const started=Date.now();let requests=0,navigations=0,actualScrolls=0,outcome='COMPLETED';
+  const telemetry=newRequestTelemetry();
   const executablePath = existingPublicBrowser();
   if (!executablePath) throw Error('CONVERSATION_BROWSER_MISSING');
   const guard=new BrowserResourceGuard(30000);
@@ -108,14 +110,8 @@ async function visit<T>(
       requests++;
       if (r.isNavigationRequest() && r.frame() === page.mainFrame())
         navigations++;
-      void (
-        publicResource(r.url()) &&
-        requests <= 150 &&
-        navigations <= 4 &&
-        !['image', 'media', 'font'].includes(r.resourceType())
-          ? r.continue()
-          : r.abort()
-      ).catch(() => {});
+      const admitted=decidePublicRequest(telemetry,r.url(),r.resourceType(),navigations,{events:150,navigation:4,blockHeavy:true});
+      void (admitted?r.continue():r.abort()).catch(() => {telemetry.handlingFailures++});
     });
     const response = await page.goto(url, {
       waitUntil: 'domcontentloaded',
@@ -156,7 +152,7 @@ async function visit<T>(
         : 'CONVERSATION_NAVIGATION_FAILED',
     );
   } finally {
-    try{await guard.close()}finally{audit?.({url,requests,navigations,scrolls:actualScrolls,elapsedMs:Date.now()-started,minimumAvailableMiB:guard.report.minimumAvailableMiB,outcome:guard.report.cleanupVerified?outcome:guard.report.stopCode??outcome,resources:guard.report})}
+    try{await guard.close()}finally{audit?.({url,requests,navigations,scrolls:actualScrolls,elapsedMs:Date.now()-started,minimumAvailableMiB:guard.report.minimumAvailableMiB,outcome:guard.report.cleanupVerified?outcome:guard.report.stopCode??outcome,resources:guard.report,requestTelemetry:telemetry})}
   }
 }
 export async function discoverConversations(
@@ -228,7 +224,7 @@ export async function enrichConversation(
   if (!target) throw Error('CONVERSATION_INVALID_URL');
   const attempt = await extractPublicThreads(target.url, 'TARGET_ONLY', true);
   const stopped=extractionStop(attempt.diagnostics);
-  audit?.({url:target.url,stage:'EXACT_ROOT',requests:attempt.boundedObservation?.requests??null,navigations:attempt.browserNavigations??null,scrolls:attempt.boundedObservation?.scrolls??null,elapsedMs:attempt.elapsedMs,minimumAvailableMiB:attempt.browserResources?.minimumAvailableMiB??null,outcome:stopped??attempt.status,resources:attempt.browserResources,requestCoverage:'Exact extractor request count unavailable outside boundedObservation; null is not zero.'});
+  audit?.({url:target.url,stage:'EXACT_ROOT',requests:attempt.requestTelemetry?.interceptionEvents??attempt.boundedObservation?.requests??null,navigations:attempt.browserNavigations??null,scrolls:attempt.boundedObservation?.scrolls??null,elapsedMs:attempt.elapsedMs,minimumAvailableMiB:attempt.browserResources?.minimumAvailableMiB??null,outcome:stopped??attempt.status,resources:attempt.browserResources,requestTelemetry:attempt.requestTelemetry,requestCoverage:'Interception decisions only when telemetry exists; null is not zero.'});
   if(stopped)throw Error(stopped);
   const source = crawlerInput(attempt, 'DATA04');
   if (
@@ -300,6 +296,7 @@ export async function enrichConversation(
           },
         };
       });
+    const context=await page.evaluate(observePublicContext);
     const doc: PublicDocument = {
       url: target.url,
       observedAt: now,
@@ -307,13 +304,15 @@ export async function enrichConversation(
       visibleUrls: observed.rows.flatMap((x) => x.urls),
       jsonLd: observed.jsonLd,
       cardObservations,
+      domReplies:context.replies,
     };
     const collection = collectEvidence(root, doc, 20);
     collection.sourceCapture=attempt;
+    const regions=context.regions;
     for(const candidate of collection.unverified){
       const matching=observed.rows.filter(r=>r.urls.length===1&&canonicalPost(r.urls[0])?.url===canonicalPost(candidate.url)?.url);
       const identity=canonicalPost(candidate.url);
-      if(identity&&matching.length===1&&matching[0].text.trim())candidate.observation={level:'OBSERVED_ON_TARGET_PAGE',targetUrl:target.url,observedAt:now,author:{handle:identity.handle,name:null},originalText:matching[0].text};
+      if(identity&&matching.length===1&&matching[0].text.trim())candidate.observation={level:'OBSERVED_ON_TARGET_PAGE',targetUrl:target.url,observedAt:now,author:{handle:identity.handle,name:null},originalText:matching[0].text,contextEvidence:regions.filter(e=>e.subjectUrl===identity.url)};
     }
     return collection;
   },audit);

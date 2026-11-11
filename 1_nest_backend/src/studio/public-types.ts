@@ -1,4 +1,5 @@
 export interface PublicRecord {
+  contextEvidence?:import('./context-classification').ContextRegionEvidence[];
   topic?:string|null;
   bodyText?:string;
   topicEvidence?:{href:string;label:string};
@@ -19,6 +20,8 @@ export interface PublicRecord {
   [key: string]: unknown;
 }
 export interface SourceAttempt {
+  requestTelemetry?:import('./public-request-telemetry').RequestTelemetry;
+  domReplyEvidence?:import('./context-classification').DomReplyEvidence[];
   browserResources?:import('../data-engine/browser-resource-policy').BrowserResourceReport;
   scope?: 'TARGET_ONLY' | 'WITH_CONTEXT';
   matchedTargetId?: string | null;

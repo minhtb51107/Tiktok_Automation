@@ -4,6 +4,7 @@ import type {
   ContentAuthor,
 } from '../video-pipeline/contracts';
 export interface StudioItem {
+  contextAssessment?:import('./context-classification').ContextAssessment;
   mediaOcr?:Record<string,import('./media-ocr').MediaOcr>;
   mediaNarrationBaseText?:string;
   mediaNarrationAppliedHash?:string;

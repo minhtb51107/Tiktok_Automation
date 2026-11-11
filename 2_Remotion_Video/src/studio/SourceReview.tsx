@@ -114,6 +114,7 @@ export function UrlRows({
       </label>
       <p>
         Paste a Threads Share link or permalink. Each row is a separate source.
+        {' '}Một permalink: chọn WITH_CONTEXT để lấy bài cùng các thẻ quan sát; bình luận chưa xác minh chỉ vào Script DRAFT khi bạn chọn.
       </p>
       {rows.map((url, n) => {
         const attempt = session.attempts?.find(

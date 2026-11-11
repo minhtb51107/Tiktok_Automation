@@ -2,16 +2,21 @@ import type {PublicRecord} from './public-types';
 
 /** Advisory projection only: never writes original text or user edits. */
 export function cleanSourceProjection(raw: PublicRecord) {
-  const removed: string[]=[];
-  const timestamp=raw.fields?.createdAt?.raw;
-  const lines=(raw.bodyText??raw.text).split('\n');
+  const removed:string[]=[],timestamp=raw.fields?.createdAt?.raw;
+  const lines=(raw.bodyText??raw.text).split('\n');let header=true,removedTime=false;
+  const domTime=!!raw.createdAt&&Number.isFinite(Date.parse(raw.createdAt))&&/DOM time/i.test(raw.provenance?.createdAt||'');
+  const dates=domTime?[new Date(raw.createdAt!).toISOString().slice(0,10),new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ho_Chi_Minh',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(raw.createdAt!))]:[];
+  const authoredLines=new Set(raw.text.split('\n').map(x=>x.trim()));
   const text=lines.filter((line,index)=>{
-    const savedDomTime=index===0&&!!raw.createdAt&&/DOM time/i.test(raw.provenance?.createdAt||'')&&/^\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm)$/.test(line.trim());
-    const time=(typeof timestamp==='string'&&line.trim()===timestamp.trim())||savedDomTime;
-    const control=index===lines.length-1&&['Tiết lộ nội dung','Reveal content'].includes(line.trim());
-    if(time||control){removed.push(line);return false;}return true;
+    const value=line.trim(),m=value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    const dateKey=m?m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0'):null;
+    const knownTime=header&&((typeof timestamp==='string'&&value===timestamp.trim()&&(raw.bodyText===undefined||!authoredLines.has(value)))||(domTime&&(/^\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm)$/.test(value)||(!!dateKey&&dates.includes(dateKey)&&!authoredLines.has(value)))));
+    const chrome=header&&removedTime&&!authoredLines.has(value)&&['·','•','Tác giả','Author','Đã ghim','Pinned',raw.handle,raw.author].filter(Boolean).includes(value);
+    const control=index===lines.length-1&&['Tiết lộ nội dung','Reveal content'].includes(value)&&!authoredLines.has(value);
+    if(knownTime||chrome||control){removed.push(line);if(knownTime)removedTime=true;return false;}
+    if(value)header=false;return true;
   }).join('\n');
-  return {text,removed,method:'SAVED_LABEL_PROJECTION_V1',warnings:removed.length?['Projection excludes observed timestamp/control labels; original preserved.']:[]};
+  return {text,removed,method:'SAVED_LABEL_PROJECTION_V2',warnings:removed.length?['Projection excludes evidenced header chrome; original and saved edits preserved.']:[]};
 }
 export function analyzeSourceCards(cards: PublicRecord[],rootText:string) {
   const norm=(s:string)=>s.normalize('NFC').toLocaleLowerCase('vi').replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim();

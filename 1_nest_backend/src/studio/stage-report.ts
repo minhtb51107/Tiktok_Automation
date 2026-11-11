@@ -1,5 +1,6 @@
 import type { StudioSession } from './studio.contracts';
 import {analyzeSourceCardsV2,cleanSourceProjection} from './source-quality';
+import {classifyContext} from './context-classification';
 export type StageName =
   | 'SOURCE'
   | 'SCRIPT'
@@ -173,7 +174,7 @@ export function sourceReport(s: StudioSession): StageReport {
     for(const [index,raw] of [...(a.records[0]?[a.records[0]]:[]),...(a.contextCandidates||[])].entries()){
       const url=typeof raw.url==='string'?raw.url:index===0?a.canonicalUrl:null;
       const item=s.items.find(i=>i.sourceUrl===url);
-      sourceCards.push({role:index===0?'ROOT':'CONTEXT',author:raw.author,permalink:url,originalText:raw.text,displayText:item?.displayText??null,spokenText:item?.spokenText??null,selected:item?.selected??false,materialized:!!item,relationship:item?.observationEvidence?.level||(index===0?'UNKNOWN':'OBSERVED_ON_TARGET_PAGE'),evidence:item?.observationEvidence||{targetUrl:a.canonicalUrl,observedAt:a.retrievedAt,parentId:null},media:raw.media.map(m=>({...m,url:safeUrl(m.url)})),quality:index===0?cleanSourceProjection(raw):quality[index-1],warnings:['Observed context is not parent verification; rights UNKNOWN.']});
+      sourceCards.push({role:index===0?'ROOT':'CONTEXT',author:raw.author,permalink:url,originalText:raw.text,displayText:item?.displayText??null,spokenText:item?.spokenText??null,selected:item?.selected??false,materialized:!!item,relationship:item?.observationEvidence?.level==='PARENT_VERIFIED'?'PARENT_VERIFIED':index===0?'UNKNOWN':classifyContext(raw,a.canonicalUrl||a.originalUrl).classification,evidence:{observation:item?.observationEvidence||{targetUrl:a.canonicalUrl,observedAt:a.retrievedAt,parentId:null},context:index===0?null:classifyContext(raw,a.canonicalUrl||a.originalUrl)},media:raw.media.map(m=>({...m,url:safeUrl(m.url)})),quality:index===0?cleanSourceProjection(raw):quality[index-1],warnings:['Observed context is not parent verification; rights UNKNOWN.']});
     }
   }
   return {

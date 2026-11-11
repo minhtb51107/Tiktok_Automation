@@ -63,7 +63,7 @@ export function selectedReplies(c: ThreadCollection, ids: string[]) {
         canonicalPost(child.evidence.subjectUrl)?.url !== own.url ||
         canonicalPost(child.evidence.documentUrl)?.url !== root.url ||
         !child.evidence.documentHash ||
-        !['JSON_LD_COMMENT', 'JSON_LD_PARENT_ITEM'].includes(
+        !['JSON_LD_COMMENT', 'JSON_LD_PARENT_ITEM', 'DOM_EXPLICIT_REPLY_TARGET'].includes(
           child.evidence.kind,
         ) ||
         parent?.id !== child.parentId

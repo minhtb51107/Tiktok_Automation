@@ -4,6 +4,8 @@ import { lookup } from 'dns/promises';
 import {BrowserResourceGuard} from '../data-engine/browser-resource-guard';
 import type {BrowserResourceReport} from '../data-engine/browser-resource-policy';
 import puppeteer from 'puppeteer';
+import {observePublicContext} from './public-context-dom';
+import {newRequestTelemetry,decidePublicRequest} from './public-request-telemetry';
 import {labelledCounts,contextLabelledCounts} from './metadata-fields';
 import { matchExactTarget } from './target-identity';
 import {existingPublicBrowser} from '../modules/core/scraper/public-discovery';
@@ -46,6 +48,7 @@ const decode = (s: string) =>
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
 export interface PublicRecord {
+  contextEvidence?:import('./context-classification').ContextRegionEvidence[];
   topic?:string|null;
   bodyText?:string;
   topicEvidence?:{href:string;label:string};
@@ -66,6 +69,8 @@ export interface PublicRecord {
   [key: string]: unknown;
 }
 export interface SourceAttempt {
+  requestTelemetry?:import('./public-request-telemetry').RequestTelemetry;
+  domReplyEvidence?:import('./context-classification').DomReplyEvidence[];
   browserResources?:BrowserResourceReport;
   boundedObservation?: {requests:number;scrolls:number;stopReason:string;minimumAvailableMiB:number;snapshots:unknown[]};
   scope?: 'TARGET_ONLY' | 'WITH_CONTEXT';
@@ -273,26 +278,17 @@ export async function extractPublicThreads(
         for(const extra of pages.slice(1))await extra.close();
         await page.setBypassServiceWorker(true);
         await page.setRequestInterception(true);
+        out.requestTelemetry=newRequestTelemetry();
         let navCount = 0, requestCount=0;
         page.on('request', (r) => {
           requestCount++;
           try {
-            const u = new URL(r.url());
-            const allowed =
-              u.protocol === 'https:' &&
-              !u.port &&
-              [
-                'threads.com',
-                'threads.net',
-                'fbcdn.net',
-                'cdninstagram.com',
-                'instagram.com',
-              ].some((d) => u.hostname === d || u.hostname.endsWith('.' + d));
             if (r.isNavigationRequest() && r.frame() === page.mainFrame())
               navCount++;
             out.browserNavigations = navCount;
             if(live03&&requestCount>147)stopReason='REQUEST_BUDGET';
-            void (allowed && navCount <= (live03?2:controlled?4:6) && (!controlled||(requestCount<=(live03?147:150)&&!['image','media','font'].includes(r.resourceType()))) ? r.continue() : r.abort());
+            const admitted=decidePublicRequest(out.requestTelemetry!,r.url(),r.resourceType(),navCount,{events:controlled?(live03?147:150):Infinity,navigation:live03?2:controlled?4:6,blockHeavy:controlled});
+            void (admitted?r.continue():r.abort()).catch(()=>{out.requestTelemetry!.handlingFailures++});
           } catch {
             void r.abort();
           }
@@ -390,6 +386,8 @@ export async function extractPublicThreads(
         if(step<4){await page.evaluate(()=>window.scrollBy(0,window.innerHeight));scrollCount++;await new Promise(r=>setTimeout(r,650));}
         }
         const rows: Array<{metricIdentityCount?:number;permalink:string|null;content:string;bodyText:string;topicEvidence:{label:string;href:string}|null;controls:Array<{label:string;text:string}>;createdAt:string|null;timestampLabel:string|null;avatar:string|null;media:PublicRecord['media'];visibleMetrics:string[]}>=live03?[...collected.values()]:(snapshots[0] as any)?.rows||[];
+        const publicContext=await page.evaluate(observePublicContext);
+        out.domReplyEvidence=publicContext.replies;
         if(live03)out.boundedObservation={requests:requestCount+out.redirects.length,scrolls:scrollCount,stopReason,minimumAvailableMiB,snapshots};
         diagnostic(
           'dom',
@@ -473,6 +471,7 @@ export async function extractPublicThreads(
             const handle = related.permalink.split('/')[1].slice(1);
             const metrics=contextLabelledCounts(related.controls,related.metricIdentityCount);
             out.contextCandidates!.push({
+              contextEvidence:publicContext.regions.filter(e=>e.subjectUrl==='https://www.threads.com'+related.permalink),
               bodyText:related.bodyText,
               text: related.content,
               author: handle,

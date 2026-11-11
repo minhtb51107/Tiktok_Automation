@@ -1,5 +1,6 @@
 import type {StudioJob} from '../../../1_nest_backend/src/studio/progress';
 import type {StudioItem} from '../../../1_nest_backend/src/studio/studio.contracts';
+import {cleanSourceProjection} from '../../../1_nest_backend/src/studio/source-quality';
 
 // Job status is persisted workflow state, not a heartbeat from a running worker.
 export function technicalJobView(job: Pick<StudioJob,'status'|'completed'|'total'>) {
@@ -18,12 +19,13 @@ export function technicalJobView(job: Pick<StudioJob,'status'|'completed'|'total
   };
 }
 
-export function restoreSourceText(item: Pick<StudioItem,'originalText'|'contentMapping'>) {
+export function restoreSourceText(item: Pick<StudioItem,'originalText'|'contentMapping'>&{rawExtraction?:StudioItem['rawExtraction']}) {
   const mapping=item.contentMapping;
   // A review-required header is not evidence: never guess by removing a first line.
   const verified=mapping?.status==='VERIFIED';
+  const clean=(text:string)=>item.rawExtraction?cleanSourceProjection({...item.rawExtraction,bodyText:text}).text:text;
   return {
-    displayText: verified ? mapping.bodyText : item.originalText,
-    spokenText: verified && !mapping.includeTopicInTts ? mapping.bodyText : item.originalText,
+    displayText: clean(verified ? mapping.bodyText : item.originalText),
+    spokenText: clean(verified && !mapping.includeTopicInTts ? mapping.bodyText : item.originalText),
   };
 }

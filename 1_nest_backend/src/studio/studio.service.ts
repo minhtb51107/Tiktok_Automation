@@ -1,4 +1,6 @@
 import { sessionReadiness } from "./session-readiness";
+import {cleanSourceProjection} from './source-quality';
+import {classifyContext} from './context-classification';
 import {assertNoLocalProbe} from './local-probe-lease';
 import {ttsFailureCategory,LocalTtsExecution} from './tts-resource-policy';
 import {localOcr,imageNarration} from './media-ocr';
@@ -766,6 +768,7 @@ export class StudioService {
                   item.sourceUrl =
                     typeof raw.url === 'string' ? raw.url : canonical;
                   item.rawExtraction = structuredClone(raw);
+                  if(index>0)item.contextAssessment=classifyContext(raw,canonical);
                   item.metadata = structuredClone(raw);
                   item.author = {
                     displayName: raw.author,
@@ -843,6 +846,7 @@ export class StudioService {
           post.commentIds.push(item.id);
           item.inclusion = 'EXPLICIT_CONTEXT';
           item.rawExtraction = structuredClone(raw);
+          item.contextAssessment=classifyContext(raw,target.sourceUrl);
           item.metadata = structuredClone(raw);
           item.mediaReferences = raw.media.map((m) => m.url);
         }
@@ -1704,8 +1708,8 @@ export class StudioService {
         sourceUrl: url,
         author,
         originalText: raw.text,
-        spokenText: raw.bodyText ?? raw.text,
-        displayText: raw.bodyText ?? raw.text,
+        spokenText: cleanSourceProjection(raw).text,
+        displayText: cleanSourceProjection(raw).text,
         ...(raw.topic && raw.topicEvidence
           ? {
               contentMapping: {

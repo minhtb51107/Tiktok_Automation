@@ -5,35 +5,10 @@ import {
   type RelationshipEvidence,
   type ThreadCollection,
 } from './conversation-contracts';
-export function canonicalPost(value: unknown) {
-  if (typeof value !== 'string') return null;
-  try {
-    const u = new URL(value),
-      m = u.pathname.match(/^\/@([\w.-]+)\/post\/([\w-]+)\/?$/);
-    if (
-      u.protocol !== 'https:' ||
-      ![
-        'www.threads.com',
-        'threads.com',
-        'www.threads.net',
-        'threads.net',
-      ].includes(u.hostname) ||
-      u.port ||
-      u.username ||
-      u.password ||
-      !m
-    )
-      return null;
-    return {
-      id: m[2],
-      handle: m[1],
-      url: `https://www.threads.com/@${m[1]}/post/${m[2]}`,
-    };
-  } catch {
-    return null;
-  }
-}
+import {canonicalPost} from './conversation-identity';
+export {canonicalPost} from './conversation-identity';
 export interface PublicDocument {
+  domReplies?:import('../studio/context-classification').DomReplyEvidence[];
   url: string;
   observedAt: string;
   synthetic: boolean;
@@ -114,6 +89,14 @@ export function collectEvidence(
     if (x.comment) walk(x.comment, pointer + '/comment', id?.url);
   }
   doc.jsonLd.slice(0, 20).forEach((x, i) => walk(x, '/' + i));
+  for(const r of (doc.domReplies??[]).slice(0,40)){
+    const own=canonicalPost(r.subjectUrl),parent=canonicalPost(r.parentUrl);
+    if(!own||!parent||canonicalPost(r.documentUrl)?.url!==identity.url||r.headerScoped!==true||canonicalPost(r.subjectTimePermalink)?.url!==own.url||!r.pointer||!/^(replying to|đang trả lời)(?:\s+@[\w.-]+)?$/iu.test(r.label.trim()))continue;
+    // Existing conflicting structured records remain conservative; do not pick the convenient one.
+    const previous=nodes.get(own.url)||[];
+    if(previous.some(o=>o.kind!=='DOM_EXPLICIT_REPLY_TARGET'))continue;
+    nodes.set(own.url,[...previous,{node:{'@type':'Comment',url:own.url,text:r.bodyText,author:{url:r.authorUrl}},pointer:r.pointer,parent:parent.url,kind:'DOM_EXPLICIT_REPLY_TARGET'}]);
+  }
   // Conflicting handles for one stable post ID are not separate verified identities.
   const identityCounts = new Map<string, number>();
   for (const url of nodes.keys()) {
@@ -122,7 +105,7 @@ export function collectEvidence(
   }
   const accepted = new Map<string, ThreadCollection['replies'][number]>(),
     pending = new Map(nodes);
-  const documentHash = hash(doc.jsonLd);
+  const documentHash = hash({jsonLd:doc.jsonLd,domReplies:doc.domReplies??[]});
   for (let pass = 0; pass < 21 && pending.size; pass++) {
     let progressed = false;
     for (const [url, observations] of pending) {
@@ -173,7 +156,7 @@ export function collectEvidence(
           documentUrl: identity!.url,
           observedAt: doc.observedAt,
           synthetic: doc.synthetic,
-          method: 'PUBLIC_JSON_LD_AND_DOM_PERMALINK',
+          method: observation.kind==='DOM_EXPLICIT_REPLY_TARGET'?'PUBLIC_HEADER_REPLY_LINK_AND_DOM_PERMALINK':'PUBLIC_JSON_LD_AND_DOM_PERMALINK',
         },
         parentId: parent!.id,
         rootId: root.id,
