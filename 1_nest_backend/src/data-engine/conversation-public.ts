@@ -1,5 +1,6 @@
 import puppeteer, { type Page } from 'puppeteer';
-import { freemem } from 'os';
+import { BrowserResourceGuard } from './browser-resource-guard';
+import type { BrowserResourceReport } from './browser-resource-policy';
 import { inspectPublicDiscovery,extractionStop } from './discovery-diagnostics';
 import {
   existingPublicBrowser,
@@ -19,7 +20,7 @@ import type {
   PublicPost,
   ThreadCollection,
 } from './conversation-contracts';
-export interface PublicAccessAudit {url:string;requests:number;navigations:number;scrolls:number;elapsedMs:number;minimumAvailableMiB:number;outcome:string}
+export interface PublicAccessAudit {url:string;requests:number|null;navigations:number|null;scrolls:number|null;elapsedMs:number;minimumAvailableMiB:number|null;outcome:string;resources?:BrowserResourceReport;stage?:'EXACT_ROOT';requestCoverage?:string}
 import { cacheConversationImages } from './conversation-media';
 /** Function deliberately self-contained: executed in public DOM, no credential/session access. */
 export function observePublicDocument() {
@@ -83,22 +84,19 @@ async function visit<T>(
   read: (page: Page) => Promise<T>,
   audit?: (event:PublicAccessAudit)=>void,
 ): Promise<T> {
-  const started=Date.now();let minimumAvailableMiB=freemem()/1024**2,requests=0,navigations=0,actualScrolls=0,outcome='COMPLETED';
+  const started=Date.now();let requests=0,navigations=0,actualScrolls=0,outcome='COMPLETED';
   const executablePath = existingPublicBrowser();
   if (!executablePath) throw Error('CONVERSATION_BROWSER_MISSING');
-  if(freemem()<384*1024**2)throw Error('CONVERSATION_RESOURCE_BELOW_384MIB');
-  const browser = await puppeteer.launch({
+  const guard=new BrowserResourceGuard(30000);
+  try{
+  await guard.start();
+  const browser = await guard.launch(signal=>puppeteer.launch({
     executablePath,
+    signal,
+    timeout:25000,
     headless: true,
     args: ['--disable-background-networking','--disable-extensions','--renderer-process-limit=1'],
-  });
-  let resourceStopped=false;
-  const resourceGuard=setInterval(()=>{minimumAvailableMiB=Math.min(minimumAvailableMiB,freemem()/1024**2);if(minimumAvailableMiB<384){resourceStopped=true;void browser.close().catch(()=>{});}},250);
-  const deadline = setTimeout(
-    () => void browser.close().catch(() => {}),
-    30000,
-  );
-  try {
+  }));
     // Reuse Chromium's initial blank tab rather than leaving it beside a new tab.
     const pages=await browser.pages();
     const page=pages[0]??await browser.newPage();
@@ -148,20 +146,17 @@ async function visit<T>(
       await new Promise((r) => setTimeout(r, 500));
       if (await gate()) throw Error('CONVERSATION_ACCESS_BLOCKED');
     }
-    return await read(page);
+    const result=await read(page);guard.check();return result;
   } catch (e: any) {
-    outcome=resourceStopped?'CONVERSATION_RESOURCE_BELOW_384MIB':/^CONVERSATION_[A-Z0-9_]+$/.test(e.message||'')?e.message:'CONVERSATION_NAVIGATION_FAILED';
-    if(resourceStopped)throw Error('CONVERSATION_RESOURCE_BELOW_384MIB');
+    outcome=guard.report.stopCode??(/^CONVERSATION_[A-Z0-9_]+$/.test(e.message||'')?e.message:'CONVERSATION_NAVIGATION_FAILED');
+    if(guard.report.stopCode)throw Error(guard.report.stopCode);
     throw Error(
       /^CONVERSATION_[A-Z0-9_]+$/.test(e.message || '')
         ? e.message
         : 'CONVERSATION_NAVIGATION_FAILED',
     );
   } finally {
-    clearInterval(resourceGuard);
-    clearTimeout(deadline);
-    await browser.close().catch(() => {});
-    audit?.({url,requests,navigations,scrolls:actualScrolls,elapsedMs:Date.now()-started,minimumAvailableMiB:Math.round(minimumAvailableMiB),outcome});
+    try{await guard.close()}finally{audit?.({url,requests,navigations,scrolls:actualScrolls,elapsedMs:Date.now()-started,minimumAvailableMiB:guard.report.minimumAvailableMiB,outcome:guard.report.cleanupVerified?outcome:guard.report.stopCode??outcome,resources:guard.report})}
   }
 }
 export async function discoverConversations(
@@ -229,11 +224,11 @@ export async function enrichConversation(
   url: string,
   audit?: (event:PublicAccessAudit)=>void,
 ): Promise<ThreadCollection> {
-  if(freemem()<384*1024**2)throw Error('CONVERSATION_RESOURCE_BELOW_384MIB');
   const target = canonicalPost(url);
   if (!target) throw Error('CONVERSATION_INVALID_URL');
   const attempt = await extractPublicThreads(target.url, 'TARGET_ONLY', true);
   const stopped=extractionStop(attempt.diagnostics);
+  audit?.({url:target.url,stage:'EXACT_ROOT',requests:attempt.boundedObservation?.requests??null,navigations:attempt.browserNavigations??null,scrolls:attempt.boundedObservation?.scrolls??null,elapsedMs:attempt.elapsedMs,minimumAvailableMiB:attempt.browserResources?.minimumAvailableMiB??null,outcome:stopped??attempt.status,resources:attempt.browserResources,requestCoverage:'Exact extractor request count unavailable outside boundedObservation; null is not zero.'});
   if(stopped)throw Error(stopped);
   const source = crawlerInput(attempt, 'DATA04');
   if (

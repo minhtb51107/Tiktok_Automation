@@ -1,7 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
 import { request } from 'https';
 import { lookup } from 'dns/promises';
-import {freemem} from 'os';
+import {BrowserResourceGuard} from '../data-engine/browser-resource-guard';
+import type {BrowserResourceReport} from '../data-engine/browser-resource-policy';
 import puppeteer from 'puppeteer';
 import {labelledCounts,contextLabelledCounts} from './metadata-fields';
 import { matchExactTarget } from './target-identity';
@@ -65,6 +66,7 @@ export interface PublicRecord {
   [key: string]: unknown;
 }
 export interface SourceAttempt {
+  browserResources?:BrowserResourceReport;
   boundedObservation?: {requests:number;scrolls:number;stopReason:string;minimumAvailableMiB:number;snapshots:unknown[]};
   scope?: 'TARGET_ONLY' | 'WITH_CONTEXT';
   matchedTargetId?: string | null;
@@ -255,24 +257,21 @@ export async function extractPublicThreads(
     } else {
       let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
       let stage = 'browser';
-      let deadline: ReturnType<typeof setTimeout>|undefined;
-      let resourceGuard: ReturnType<typeof setInterval>|undefined;
+      const guard=new BrowserResourceGuard(controlled?(live03?Math.max(1,60000-(Date.now()-started)):20000):30000);
       try {
-        browser = await puppeteer.launch({
+        await guard.start();
+        browser = await guard.launch(signal=>puppeteer.launch({
           executablePath: executable,
+          signal,
           ...(live03?{timeout:Math.max(1,60000-(Date.now()-started))}:{}),
           headless: true,
-          args: ['--disable-background-networking'],
-        });
-        let stopReason='COMPLETED',minimumAvailableMiB=Math.round(freemem()/1024**2),scrollCount=0;
-        if(controlled||live03){
-          if(live03)out.boundedObservation={requests:out.redirects.length,scrolls:0,stopReason,minimumAvailableMiB,snapshots:[]};
-          resourceGuard=setInterval(()=>{minimumAvailableMiB=Math.min(minimumAvailableMiB,Math.round(freemem()/1024**2));if(minimumAvailableMiB<384){stopReason='RESOURCE_BELOW_384MIB';if(out.boundedObservation){out.boundedObservation.stopReason=stopReason;out.boundedObservation.minimumAvailableMiB=minimumAvailableMiB;}diagnostic('resource',stopReason,'Available RAM below 384 MiB; stopped.');void browser?.close().catch(()=>{});}},250);
-          if(minimumAvailableMiB<384&&out.boundedObservation)out.boundedObservation.stopReason='RESOURCE_BELOW_384MIB';
-          if(minimumAvailableMiB<384)throw Error('RESOURCE_BELOW_384MIB');
-        }
-        if(controlled)deadline=setTimeout(()=>{stopReason='TIME_BUDGET';void browser?.close().catch(()=>{});},live03?Math.max(1,60000-(Date.now()-started)):20000);
-        const page = await browser.newPage();
+          args: ['--disable-background-networking','--disable-extensions','--renderer-process-limit=1'],
+        }));
+        let stopReason='COMPLETED',minimumAvailableMiB=guard.report.minimumAvailableMiB!,scrollCount=0;
+        if(live03)out.boundedObservation={requests:out.redirects.length,scrolls:0,stopReason,minimumAvailableMiB,snapshots:[]};
+        const pages=await browser.pages();const page=pages[0]??await browser.newPage();
+        for(const extra of pages.slice(1))await extra.close();
+        await page.setBypassServiceWorker(true);
         await page.setRequestInterception(true);
         let navCount = 0, requestCount=0;
         page.on('request', (r) => {
@@ -317,8 +316,7 @@ export async function extractPublicThreads(
         const snapshots:unknown[]=[];
         const collected=new Map<string,any>();
         for(let step=0;step<=(live03?4:0);step++){
-        const availableMiB=Math.round(freemem()/1024**2);minimumAvailableMiB=Math.min(minimumAvailableMiB,availableMiB);
-        if(live03&&availableMiB<384){stopReason='RESOURCE_BELOW_384MIB';break;}
+        guard.check();minimumAvailableMiB=guard.report.minimumAvailableMiB!;
         if(live03&&stopReason!=='COMPLETED')break;
         if(/\/(?:login|accounts|challenge|checkpoint)(?:\/|\?|$)/i.test(page.url())||await page.evaluate(()=>!!document.querySelector('input[type="password"],iframe[src*="captcha"],[data-testid*="captcha"]'))){stopReason='ACCESS_BLOCKED';break;}
         const snapshot = await page.evaluate(() => {
@@ -508,15 +506,18 @@ export async function extractPublicThreads(
           `Exact matching: ${out.matchMethod}. ${out.contextCandidates!.length} context candidates kept separately. Reply hierarchy and engagement labels remain unverified.`,
         );
       } catch (e) {
+        if(guard.report.stopCode)diagnostic('resource',guard.report.stopCode,'Browser supervisor stopped this owned operation; see browserResources.');
         diagnostic(
           stage,
           stage.toUpperCase() + '_ERROR',
           e instanceof Error ? e.message : 'Browser failed',
         );
       } finally {
-        if(resourceGuard)clearInterval(resourceGuard);
-        if(deadline)clearTimeout(deadline);
-        await browser?.close();
+        try{await guard.close()}catch{diagnostic('resource','CONVERSATION_BROWSER_CLEANUP_UNVERIFIED','Owned browser cleanup could not be verified; no subsequent browser may start.');}
+        out.browserResources=guard.report;
+        if(guard.report.stopCode&&!out.diagnostics.some(d=>d.code===guard.report.stopCode))diagnostic('resource',guard.report.stopCode,'Owned browser stopped; see supervisor evidence.');
+        if(out.boundedObservation){out.boundedObservation.minimumAvailableMiB=guard.report.minimumAvailableMiB??out.boundedObservation.minimumAvailableMiB;if(guard.report.stopCode)out.boundedObservation.stopReason=guard.report.stopCode;}
+        for(const warning of guard.report.warnings)diagnostic('resource',warning,'Low RAM is advisory; not a benchmarked browser minimum.');
       }
     }
     if (!out.matchedTargetId) {

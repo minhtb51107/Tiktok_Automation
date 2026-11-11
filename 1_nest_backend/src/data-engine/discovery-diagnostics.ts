@@ -35,6 +35,8 @@ export function inspectPublicDiscovery(input:{cards:number; permalinkAnchors:num
 
 /** Preserve a swallowed extractor stop even if partial root metadata survived. */
 export function extractionStop(diagnostics:Array<{code:string;message:string}>) {
+  const supervised=diagnostics.find(d=>/^CONVERSATION_(RESOURCE_|TIME_BUDGET|BROWSER_CLEANUP_UNVERIFIED|BROWSER_BUSY_OR_CLEANUP_UNVERIFIED)/.test(d.code));
+  if(supervised)return supervised.code;
   if(diagnostics.some(d=>d.code==='RESOURCE_BELOW_384MIB'))return 'CONVERSATION_RESOURCE_BELOW_384MIB';
   if(diagnostics.some(d=>d.message==='Navigation HTTP 429'))return 'CONVERSATION_HTTP_429';
   if(diagnostics.some(d=>d.message==='Public access requires login; no login attempted'||d.message==='Public access protection encountered; stopped without bypass'))return 'CONVERSATION_ACCESS_BLOCKED';

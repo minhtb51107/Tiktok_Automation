@@ -19,6 +19,7 @@ export interface PublicRecord {
   [key: string]: unknown;
 }
 export interface SourceAttempt {
+  browserResources?:import('../data-engine/browser-resource-policy').BrowserResourceReport;
   scope?: 'TARGET_ONLY' | 'WITH_CONTEXT';
   matchedTargetId?: string | null;
   matchMethod?: 'DOM_PERMALINK' | 'PUBLIC_CANONICAL_METADATA' | 'UNVERIFIED';
