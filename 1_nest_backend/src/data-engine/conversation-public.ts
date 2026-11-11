@@ -22,6 +22,11 @@ import type {
   ThreadCollection,
 } from './conversation-contracts';
 export interface PublicAccessAudit {url:string;requests:number|null;navigations:number|null;scrolls:number|null;elapsedMs:number;minimumAvailableMiB:number|null;outcome:string;resources?:BrowserResourceReport;stage?:'EXACT_ROOT';requestCoverage?:string;requestTelemetry?:RequestTelemetry}
+export interface PublicDomEvidenceSnapshot {
+  finalUrl:string;
+  observed:ReturnType<typeof observePublicDocument>;
+  context:ReturnType<typeof observePublicContext>;
+}
 import { cacheConversationImages } from './conversation-media';
 /** Function deliberately self-contained: executed in public DOM, no credential/session access. */
 export function observePublicDocument() {
@@ -219,6 +224,7 @@ export async function discoverConversations(
 export async function enrichConversation(
   url: string,
   audit?: (event:PublicAccessAudit)=>void,
+  evidence?: (page:Page,snapshot:PublicDomEvidenceSnapshot)=>Promise<void>,
 ): Promise<ThreadCollection> {
   const target = canonicalPost(url);
   if (!target) throw Error('CONVERSATION_INVALID_URL');
@@ -297,6 +303,7 @@ export async function enrichConversation(
         };
       });
     const context=await page.evaluate(observePublicContext);
+    await evidence?.(page,{finalUrl:page.url(),observed,context});
     const doc: PublicDocument = {
       url: target.url,
       observedAt: now,
