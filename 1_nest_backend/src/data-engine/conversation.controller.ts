@@ -19,13 +19,15 @@ import {
   enrichConversation,
 } from './conversation-public';
 import { conversationMediaFile } from './conversation-media';
+import { observedContextViews } from './conversation-context';
+import { estimatedDuration } from './editorial-feasibility';
 @Injectable()
 export class ConversationStudioService {
   readonly engine: ConversationEngine;
   constructor(readonly data: DataStudioService) {
     this.engine = new ConversationEngine(data.engine, {
       execution: 'LIVE',
-      discover: discoverConversations,
+      discover: (keyword) => discoverConversations(keyword, undefined, 10),
       enrich: enrichConversation,
     });
   }
@@ -52,6 +54,32 @@ export class ConversationStudioService {
     return this.data.studio.withControlledCollection(() =>
       this.engine.feedback(id, body),
     );
+  }
+  async draft(id: string, body: any) {
+    const record = await this.engine.collection(id),
+      review = await this.engine.review(id);
+    if (body?.confirmDraft !== true || body?.revision !== review.revision)
+      throw Error('CONVERSATION_DRAFT_REVISION_REQUIRED');
+    return this.data.studio.createConversationDraft(record.collection, review);
+  }
+  async report(id: string) {
+    const run = await this.engine.get(id),
+      collections = [];
+    for (const result of run.results) {
+      const record = await this.engine.collection(result.collectionId);
+      collections.push({
+        result,
+        record,
+        review: await this.engine.review(result.collectionId),
+        observedContexts: observedContextViews(record.collection),
+      });
+    }
+    return {
+      schemaVersion: 'conversation-discovery-report/1',
+      scope: 'FULL_RUN',
+      run,
+      collections,
+    };
   }
 }
 @Controller('api/studio/data/conversations')
@@ -83,8 +111,8 @@ export class ConversationController {
       syntheticEnabled: this.service.engine.provider.execution === 'SYNTHETIC',
       liveEnabled: process.env.STUDIO_DATA04_LIVE_ENABLED === '1',
       schedulerEnabled: false,
-      maxCandidates: 6,
-      maxRoots: 2,
+      maxCandidates: 10,
+      maxRoots: 3,
       maxVerifiedReplies: 20,
       browserWorkers: 1,
       collectionCompleteness: 'PARTIAL_OR_UNKNOWN',
@@ -102,6 +130,9 @@ export class ConversationController {
   @Get('runs/:id') run(@Param('id') id: string) {
     return this.call(() => this.service.engine.get(id));
   }
+  @Get('runs/:id/report') report(@Param('id') id: string) {
+    return this.call(() => this.service.report(id));
+  }
   @Post('runs/:id/resume') resume(
     @Param('id') id: string,
     @Headers('origin') o?: string,
@@ -110,10 +141,32 @@ export class ConversationController {
     return this.call(() => this.service.resume(id));
   }
   @Get('collections/:id') collection(@Param('id') id: string) {
-    return this.call(async () => ({
-      record: await this.service.engine.collection(id),
-      review: await this.service.engine.review(id),
-    }));
+    return this.call(async () => {
+      const record = await this.service.engine.collection(id);
+      const review = await this.service.engine.review(id),
+        observedContexts = observedContextViews(record.collection),
+        narration = [
+          record.collection.root.originalText,
+          ...observedContexts
+            .filter((x) => review.selectedObservedUrls?.includes(x.url))
+            .map((x) => x.displayText),
+          ...record.collection.replies
+            .filter((x) => review.selectedReplyIds.includes(x.id))
+            .map((x) => x.originalText),
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+      return {
+        record,
+        review,
+        observedContexts,
+        draftEstimate: {
+          ...estimatedDuration(narration, 1.3),
+          source: 'ESTIMATED_TEXT_ONLY',
+          targetSeconds: [60, 90],
+        },
+      };
+    });
   }
   @Post('collections/:id/feedback') feedback(
     @Param('id') id: string,
@@ -125,6 +178,14 @@ export class ConversationController {
   }
   @Get('collections/:id/bundle') bundle(@Param('id') id: string) {
     return this.call(() => this.service.engine.bundle(id));
+  }
+  @Post('collections/:id/source-draft') draft(
+    @Param('id') id: string,
+    @Body() b: any,
+    @Headers('origin') o?: string,
+  ) {
+    this.origin(o);
+    return this.call(() => this.service.draft(id, b));
   }
   @Get('media/:sha')
   async media(@Param('sha') sha: string, @Res() response: Response) {

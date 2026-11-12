@@ -1,18 +1,30 @@
-import { sessionReadiness } from "./session-readiness";
-import {cleanSourceProjection} from './source-quality';
-import {classifyContext} from './context-classification';
-import {assertNoLocalProbe} from './local-probe-lease';
-import {ttsFailureCategory,LocalTtsExecution} from './tts-resource-policy';
-import {localOcr,imageNarration} from './media-ocr';
-import {conversationMediaFile} from '../data-engine/conversation-media';
-import {speechProjection,validatePronunciations,SPEECH_DICTIONARY_VERSION} from './speech-dictionary';
-import {editorialScriptHash} from '../data-engine/editorial-script-state';
-import {uploadSignature,probeUpload,validCategory} from './uploaded-media';
+import { sessionReadiness } from './session-readiness';
+import { cleanSourceProjection } from './source-quality';
+import { classifyContext } from './context-classification';
+import { assertNoLocalProbe } from './local-probe-lease';
+import { ttsFailureCategory, LocalTtsExecution } from './tts-resource-policy';
+import { localOcr, imageNarration } from './media-ocr';
+import { conversationMediaFile } from '../data-engine/conversation-media';
+import {
+  speechProjection,
+  validatePronunciations,
+  SPEECH_DICTIONARY_VERSION,
+} from './speech-dictionary';
+import { editorialScriptHash } from '../data-engine/editorial-script-state';
+import { uploadSignature, probeUpload, validCategory } from './uploaded-media';
 import { replaceFile } from './atomic-file';
-import { normalizeSpokenNumbers, NUMBER_READING_VERSION } from './spoken-numbers';
+import {
+  normalizeSpokenNumbers,
+  NUMBER_READING_VERSION,
+} from './spoken-numbers';
 import { cacheSourceImage } from './source-images';
 import { RenderStore } from './render-store';
-import { renderValidation, validateRenderRequest, snapshotHash,renderBackground } from './render-policy';
+import {
+  renderValidation,
+  validateRenderRequest,
+  snapshotHash,
+  renderBackground,
+} from './render-policy';
 import type { RenderRequest, RenderManifest } from './render.types';
 import {
   BadRequestException,
@@ -57,79 +69,294 @@ import {
   extractPublicThreads,
   threadsUrl as validateThreadsUrl,
 } from './public-threads';
+import type {
+  ThreadCollection,
+  ConversationReview,
+  VerifiedReply,
+} from '../data-engine/conversation-contracts';
+import { observedContextViews } from '../data-engine/conversation-context';
+import { canonicalPost } from '../data-engine/conversation-identity';
 
 export function threadsUrl(value: unknown): string {
   return validateThreadsUrl(value);
 }
 @Injectable()
 export class StudioService {
-  async mediaOcr(id:string,itemId:string,sha:string,body:any){return this.exclusive(async()=>{
-    const s=await this.load(id);if(s.revision!==body?.revision)throw new ConflictException('STALE_REVISION');
-    const item=s.items.find(i=>i.id===itemId),asset=item?.localSourceMedia?.find(a=>a.sha256===sha&&a.status==='DOWNLOADED');if(!item||!asset)throw new BadRequestException('OCR requires a cached image belonging to this item');
-    item.mediaOcr??={};const old=item.mediaOcr[sha];
-    if(body.action==='OCR'){if(!old)item.mediaOcr[sha]=await localOcr(await conversationMediaFile(sha),sha,asset.sourceUrl);}
-    else if(body.action==='SAVE'){
-      if(!old||old.revision!==body.ocrRevision)throw new ConflictException('OCR_STALE_REVISION');
-      if(typeof body.text!=='string'||body.text.length>20000||typeof body.summary!=='string'||body.summary.length>10000||!['READ_FULL','SUMMARIZE','SKIP'].includes(body.mode)||body.confirmReview!==true||!['USER','AGENT_VISUAL'].includes(body.reviewer))throw new BadRequestException('Review OCR text and mode explicitly');
-      item.mediaOcr[sha]={...old,correctedText:body.text,summaryText:body.summary,mode:body.mode,review:'REVIEWED',reviewer:body.reviewer,revision:old.revision+1};
-    }else if(body.action==='APPLY'){
-      if(!old||old.revision!==body.ocrRevision)throw new ConflictException('OCR_STALE_REVISION');
-      if(item.mediaNarrationAppliedHash&&item.mediaNarrationAppliedHash!==textHash(item.spokenText))throw new ConflictException('Narration manually changed; preserve edits before rebuilding image narration');
-      if(item.manualLocks.includes('NARRATION_TEXT')&&body.confirmReplaceLocked!==true)throw new ConflictException('Narration locked; explicit replacement required');
-      const parts=imageNarration(item.mediaOcr,item.localSourceMedia!.map(a=>a.sha256).filter((h):h is string=>!!h));item.mediaNarrationBaseText??=item.spokenText;item.spokenText=[item.mediaNarrationBaseText,...parts].filter(Boolean).join('\n\n');item.mediaNarrationAppliedHash=textHash(item.spokenText);
-      item.mediaNarrationApplied=item.localSourceMedia!.map(a=>a.sha256?item.mediaOcr![a.sha256]:undefined).filter(o=>o?.review==='REVIEWED'&&o.mode!=='SKIP').map(o=>({imageHash:o!.imageHash,sourceUrl:o!.sourceUrl,mode:o!.mode as 'READ_FULL'|'SUMMARIZE',reviewer:o!.reviewer,ocrRevision:o!.revision,text:o!.mode==='SUMMARIZE'?o!.summaryText:o!.correctedText}));
-    }else throw new BadRequestException('Unknown OCR action');item.revision++;return this.persist(s);
-  });}
+  async mediaOcr(id: string, itemId: string, sha: string, body: any) {
+    return this.exclusive(async () => {
+      const s = await this.load(id);
+      if (s.revision !== body?.revision)
+        throw new ConflictException('STALE_REVISION');
+      const item = s.items.find((i) => i.id === itemId),
+        asset = item?.localSourceMedia?.find(
+          (a) => a.sha256 === sha && a.status === 'DOWNLOADED',
+        );
+      if (!item || !asset)
+        throw new BadRequestException(
+          'OCR requires a cached image belonging to this item',
+        );
+      item.mediaOcr ??= {};
+      const old = item.mediaOcr[sha];
+      if (body.action === 'OCR') {
+        if (!old)
+          item.mediaOcr[sha] = await localOcr(
+            await conversationMediaFile(sha),
+            sha,
+            asset.sourceUrl,
+          );
+      } else if (body.action === 'SAVE') {
+        if (!old || old.revision !== body.ocrRevision)
+          throw new ConflictException('OCR_STALE_REVISION');
+        if (
+          typeof body.text !== 'string' ||
+          body.text.length > 20000 ||
+          typeof body.summary !== 'string' ||
+          body.summary.length > 10000 ||
+          !['READ_FULL', 'SUMMARIZE', 'SKIP'].includes(body.mode) ||
+          body.confirmReview !== true ||
+          !['USER', 'AGENT_VISUAL'].includes(body.reviewer)
+        )
+          throw new BadRequestException('Review OCR text and mode explicitly');
+        item.mediaOcr[sha] = {
+          ...old,
+          correctedText: body.text,
+          summaryText: body.summary,
+          mode: body.mode,
+          review: 'REVIEWED',
+          reviewer: body.reviewer,
+          revision: old.revision + 1,
+        };
+      } else if (body.action === 'APPLY') {
+        if (!old || old.revision !== body.ocrRevision)
+          throw new ConflictException('OCR_STALE_REVISION');
+        if (
+          item.mediaNarrationAppliedHash &&
+          item.mediaNarrationAppliedHash !== textHash(item.spokenText)
+        )
+          throw new ConflictException(
+            'Narration manually changed; preserve edits before rebuilding image narration',
+          );
+        if (
+          item.manualLocks.includes('NARRATION_TEXT') &&
+          body.confirmReplaceLocked !== true
+        )
+          throw new ConflictException(
+            'Narration locked; explicit replacement required',
+          );
+        const parts = imageNarration(
+          item.mediaOcr,
+          item
+            .localSourceMedia!.map((a) => a.sha256)
+            .filter((h): h is string => !!h),
+        );
+        item.mediaNarrationBaseText ??= item.spokenText;
+        item.spokenText = [item.mediaNarrationBaseText, ...parts]
+          .filter(Boolean)
+          .join('\n\n');
+        item.mediaNarrationAppliedHash = textHash(item.spokenText);
+        item.mediaNarrationApplied = item
+          .localSourceMedia!.map((a) =>
+            a.sha256 ? item.mediaOcr![a.sha256] : undefined,
+          )
+          .filter((o) => o?.review === 'REVIEWED' && o.mode !== 'SKIP')
+          .map((o) => ({
+            imageHash: o!.imageHash,
+            sourceUrl: o!.sourceUrl,
+            mode: o!.mode as 'READ_FULL' | 'SUMMARIZE',
+            reviewer: o!.reviewer,
+            ocrRevision: o!.revision,
+            text: o!.mode === 'SUMMARIZE' ? o!.summaryText : o!.correctedText,
+          }));
+      } else throw new BadRequestException('Unknown OCR action');
+      item.revision++;
+      return this.persist(s);
+    });
+  }
   readonly renders = new RenderStore();
-  async readiness(id:string){return sessionReadiness(await this.load(id),this.root); }
-  async saveRights(id:string,body:any){return this.exclusive(async()=>{
-    const s=await this.load(id);if(s.revision!==body.revision)throw new ConflictException('Session changed before rights declaration');
-    if(typeof body.assetId!=='string'||body.assetId.length>160||!['UNKNOWN','OWNED','LICENSED','PERMISSION'].includes(body.status)||typeof body.evidence!=='string'||body.evidence.length>2000||body.status!=='UNKNOWN'&&!body.evidence.trim())throw new BadRequestException('Rights need an explicit status and evidence reference');
-    s.mediaRights??={};s.mediaRights[body.assetId]={status:body.status,evidence:body.evidence,at:new Date().toISOString()};return this.persist(s);
-  });}
-  async cacheAvatars(id:string,revision:number) {
-    return this.exclusive(async()=>{
-      const s=await this.load(id);if(s.revision!==revision)throw new ConflictException('Session changed');
-      s.sourceImages??={};
-      for(const i of s.items.filter(i=>i.selected)){
-        const url=i.metadata?.avatar??i.author.avatarUrl;
-        if(!url)continue;
-        const old=s.sourceImages[i.id];
-        if(old?.status==='READY'&&old.sourceUrl===url&&(await fs.stat(path.join(this.root,'source-images',id,old.fileName!)).catch(()=>null))?.size)continue;
-        await this.tick('Caching original avatar: '+i.author.displayName);
-        s.sourceImages[i.id]=await cacheSourceImage(id,i.id,url,path.join(this.root,'source-images'));
+  async readiness(id: string) {
+    return sessionReadiness(await this.load(id), this.root);
+  }
+  async saveRights(id: string, body: any) {
+    return this.exclusive(async () => {
+      const s = await this.load(id);
+      if (s.revision !== body.revision)
+        throw new ConflictException(
+          'Session changed before rights declaration',
+        );
+      if (
+        typeof body.assetId !== 'string' ||
+        body.assetId.length > 160 ||
+        !['UNKNOWN', 'OWNED', 'LICENSED', 'PERMISSION'].includes(body.status) ||
+        typeof body.evidence !== 'string' ||
+        body.evidence.length > 2000 ||
+        (body.status !== 'UNKNOWN' && !body.evidence.trim())
+      )
+        throw new BadRequestException(
+          'Rights need an explicit status and evidence reference',
+        );
+      s.mediaRights ??= {};
+      s.mediaRights[body.assetId] = {
+        status: body.status,
+        evidence: body.evidence,
+        at: new Date().toISOString(),
+      };
+      return this.persist(s);
+    });
+  }
+  async cacheAvatars(id: string, revision: number) {
+    return this.exclusive(async () => {
+      const s = await this.load(id);
+      if (s.revision !== revision)
+        throw new ConflictException('Session changed');
+      s.sourceImages ??= {};
+      for (const i of s.items.filter((i) => i.selected)) {
+        const url = i.metadata?.avatar ?? i.author.avatarUrl;
+        if (!url) continue;
+        const old = s.sourceImages[i.id];
+        if (
+          old?.status === 'READY' &&
+          old.sourceUrl === url &&
+          (
+            await fs
+              .stat(path.join(this.root, 'source-images', id, old.fileName!))
+              .catch(() => null)
+          )?.size
+        )
+          continue;
+        await this.tick('Caching original avatar: ' + i.author.displayName);
+        s.sourceImages[i.id] = await cacheSourceImage(
+          id,
+          i.id,
+          url,
+          path.join(this.root, 'source-images'),
+        );
       }
       return this.persist(s);
     });
   }
-  async sourceImageFile(id:string,sha:string){
-    if(!/^[a-f0-9]{64}$/.test(sha))throw new BadRequestException('Invalid image hash');
-    const s=await this.load(id),a=Object.values(s.sourceImages||{}).find(a=>a.status==='READY'&&a.sha256===sha);
-    if(!a?.fileName||path.basename(a.fileName)!==a.fileName)throw new BadRequestException('Unknown session avatar');
-    return path.join(this.root,'source-images',id,a.fileName);
+  async sourceImageFile(id: string, sha: string) {
+    if (!/^[a-f0-9]{64}$/.test(sha))
+      throw new BadRequestException('Invalid image hash');
+    const s = await this.load(id),
+      a = Object.values(s.sourceImages || {}).find(
+        (a) => a.status === 'READY' && a.sha256 === sha,
+      );
+    if (!a?.fileName || path.basename(a.fileName) !== a.fileName)
+      throw new BadRequestException('Unknown session avatar');
+    return path.join(this.root, 'source-images', id, a.fileName);
   }
-  async renderInfo(id:string) {
-    const s=await this.load(id),preview=await this.preview(id);
-    return {revision:s.revision,title:s.title,request:preview.request,validation:renderValidation(s,preview.request.inputProps),renders:await this.renders.list(id)};
+  async renderInfo(id: string) {
+    const s = await this.load(id),
+      preview = await this.preview(id);
+    return {
+      revision: s.revision,
+      title: s.title,
+      request: preview.request,
+      validation: renderValidation(s, preview.request.inputProps),
+      renders: await this.renders.list(id),
+    };
   }
-  private async renderJob(id:string,input:RenderRequest,tick:ProgressSink,jobId:string) {
-    return this.exclusive(async()=>{
+  private async renderJob(
+    id: string,
+    input: RenderRequest,
+    tick: ProgressSink,
+    jobId: string,
+  ) {
+    return this.exclusive(async () => {
       assertNoLocalProbe();
-      const s=await this.load(id);
-      if(s.revision!==input.revision)throw new ConflictException('Project changed; reload Render before exporting');
-      const built=prepareEditor(s,await this.visualAssets(s)),props=renderBackground(built.preview.request.inputProps,input.backgroundMode);
-      const range=validateRenderRequest(input,props),validation=renderValidation(s,props);
-      if(validation.blockers.length || input.mode==='FINAL'&&validation.finalBlockers.length)
-        throw new BadRequestException([...validation.blockers,...(input.mode==='FINAL'?validation.finalBlockers:[])].join('; '));
+      const s = await this.load(id);
+      if (s.revision !== input.revision)
+        throw new ConflictException(
+          'Project changed; reload Render before exporting',
+        );
+      const built = prepareEditor(s, await this.visualAssets(s)),
+        props = renderBackground(
+          built.preview.request.inputProps,
+          input.backgroundMode,
+        );
+      const range = validateRenderRequest(input, props),
+        validation = renderValidation(s, props);
+      if (
+        validation.blockers.length ||
+        (input.mode === 'FINAL' && validation.finalBlockers.length)
+      )
+        throw new BadRequestException(
+          [
+            ...validation.blockers,
+            ...(input.mode === 'FINAL' ? validation.finalBlockers : []),
+          ].join('; '),
+        );
       // Close an idle retained Kokoro model before starting Chromium/encoding.
       this.voice.close();
-      const candidates=[process.env.STUDIO_BROWSER,'C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].filter(Boolean) as string[];
-      let browserExecutable='';for(const f of candidates)if((await fs.stat(f).catch(()=>null))?.isFile()){browserExecutable=f;break;}
-      if(!browserExecutable)throw new BadRequestException('BLOCKED_RUNTIME: install/configure an existing browser; no automatic download');
-      const disk=await fs.statfs(this.root);if(disk.bavail*disk.bsize<3*1024**3)throw new BadRequestException('Less than 3 GiB free on project drive');
-      const manifest:RenderManifest={schemaVersion:1,backgroundMode:input.backgroundMode||'SAVED',jobId,sessionId:id,projectId:s.project.id,revision:s.revision,timelineHash:snapshotHash(props.timeline),previewHash:snapshotHash(props),mode:input.mode,publishable:false,status:'QUEUED',width:input.preset==='1080P'?1080:720,height:input.preset==='1080P'?1920:1280,fps:props.timeline.fps,totalFrames:props.timeline.totalFrames,frameRange:range,expectedDurationSeconds:(range[1]-range[0]+1)/props.timeline.fps,sceneCount:props.timeline.scenes.length,codec:'h264',audioCodec:'aac',pixelFormat:'yuv420p',concurrency:1,startedAt:new Date().toISOString(),completedAt:null,bytes:null,warnings:[...built.preview.warnings,...validation.warnings,...(input.mode==='DRAFT'?['DRAFT: not approved for publishing',...validation.finalBlockers]:[])],error:null,metrics:{}};
-      const result=await this.renders.run({props,manifest,browserExecutable,appOrigin:`http://127.0.0.1:${process.env.PORT||3000}`},this.jobs,tick);
-      return {revision:s.revision,warnings:result.warnings};
+      const candidates = [
+        process.env.STUDIO_BROWSER,
+        'C:/Program Files/Google/Chrome/Application/chrome.exe',
+        'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+        'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+      ].filter(Boolean) as string[];
+      let browserExecutable = '';
+      for (const f of candidates)
+        if ((await fs.stat(f).catch(() => null))?.isFile()) {
+          browserExecutable = f;
+          break;
+        }
+      if (!browserExecutable)
+        throw new BadRequestException(
+          'BLOCKED_RUNTIME: install/configure an existing browser; no automatic download',
+        );
+      const disk = await fs.statfs(this.root);
+      if (disk.bavail * disk.bsize < 3 * 1024 ** 3)
+        throw new BadRequestException('Less than 3 GiB free on project drive');
+      const manifest: RenderManifest = {
+        schemaVersion: 1,
+        backgroundMode: input.backgroundMode || 'SAVED',
+        jobId,
+        sessionId: id,
+        projectId: s.project.id,
+        revision: s.revision,
+        timelineHash: snapshotHash(props.timeline),
+        previewHash: snapshotHash(props),
+        mode: input.mode,
+        publishable: false,
+        status: 'QUEUED',
+        width: input.preset === '1080P' ? 1080 : 720,
+        height: input.preset === '1080P' ? 1920 : 1280,
+        fps: props.timeline.fps,
+        totalFrames: props.timeline.totalFrames,
+        frameRange: range,
+        expectedDurationSeconds: (range[1] - range[0] + 1) / props.timeline.fps,
+        sceneCount: props.timeline.scenes.length,
+        codec: 'h264',
+        audioCodec: 'aac',
+        pixelFormat: 'yuv420p',
+        concurrency: 1,
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+        bytes: null,
+        warnings: [
+          ...built.preview.warnings,
+          ...validation.warnings,
+          ...(input.mode === 'DRAFT'
+            ? [
+                'DRAFT: not approved for publishing',
+                ...validation.finalBlockers,
+              ]
+            : []),
+        ],
+        error: null,
+        metrics: {},
+      };
+      const result = await this.renders.run(
+        {
+          props,
+          manifest,
+          browserExecutable,
+          appOrigin: `http://127.0.0.1:${process.env.PORT || 3000}`,
+        },
+        this.jobs,
+        tick,
+      );
+      return { revision: s.revision, warnings: result.warnings };
     });
   }
   readonly publicAssets = new PublicAssets();
@@ -146,7 +373,8 @@ export class StudioService {
       add(x.visual?.sfx.assetId);
       x.mediaAssetIds.forEach(add);
     }
-    for(const c of s.editor?.backgroundTracks||[])if(c.assetId.startsWith('pub-'))ids.add(c.assetId);
+    for (const c of s.editor?.backgroundTracks || [])
+      if (c.assetId.startsWith('pub-')) ids.add(c.assetId);
     const rows = [];
     for (const id of ids) rows.push(await this.publicAssets.resolve(id));
     return rows;
@@ -222,19 +450,49 @@ export class StudioService {
         (x) =>
           x.mediaAssetIds.includes(assetId) ||
           x.visual?.meme.assetId === assetId ||
-          x.visual?.backgroundId === assetId || x.visual?.sfx.assetId === assetId,
+          x.visual?.backgroundId === assetId ||
+          x.visual?.sfx.assetId === assetId,
       );
-      if(s.items.some(i=>i.mediaReferences.includes(a.uri)||i.metadata?.media.some(m=>m.url===a.uri))||s.project.posts.some(p=>p.mediaAssetIds.includes(assetId))||s.project.comments.some(c=>c.mediaAssetIds.includes(assetId)))throw new ConflictException('Asset is still referenced by source content');
-      for(const row of await this.list())if(row.id!==id){const other=await this.load(row.id);if(JSON.stringify({items:other.items,project:other.project,editor:other.editor}).includes(a.uri))throw new ConflictException('Asset is referenced by another session; deletion refused');}
       if (
-        refs.length || s.project.backgroundTracks?.some(c=>c.assetId===assetId) || s.project.backgroundMusic?.assetId===assetId || s.project.storyboard.some(x=>x.sfxLayer?.assetId===assetId) ||
-        s.editor?.backgroundId === assetId || s.editor?.backgroundMusic?.assetId === assetId || s.editor?.backgroundTracks?.some(c=>c.assetId===assetId) ||
-        (s.project.storyboard.some(
-            (x) =>
-              x.mediaAssetIds.includes(assetId) ||
-              x.visual?.backgroundId === assetId ||
-              x.visual?.meme.assetId === assetId,
-          ))
+        s.items.some(
+          (i) =>
+            i.mediaReferences.includes(a.uri) ||
+            i.metadata?.media.some((m) => m.url === a.uri),
+        ) ||
+        s.project.posts.some((p) => p.mediaAssetIds.includes(assetId)) ||
+        s.project.comments.some((c) => c.mediaAssetIds.includes(assetId))
+      )
+        throw new ConflictException(
+          'Asset is still referenced by source content',
+        );
+      for (const row of await this.list())
+        if (row.id !== id) {
+          const other = await this.load(row.id);
+          if (
+            JSON.stringify({
+              items: other.items,
+              project: other.project,
+              editor: other.editor,
+            }).includes(a.uri)
+          )
+            throw new ConflictException(
+              'Asset is referenced by another session; deletion refused',
+            );
+        }
+      if (
+        refs.length ||
+        s.project.backgroundTracks?.some((c) => c.assetId === assetId) ||
+        s.project.backgroundMusic?.assetId === assetId ||
+        s.project.storyboard.some((x) => x.sfxLayer?.assetId === assetId) ||
+        s.editor?.backgroundId === assetId ||
+        s.editor?.backgroundMusic?.assetId === assetId ||
+        s.editor?.backgroundTracks?.some((c) => c.assetId === assetId) ||
+        s.project.storyboard.some(
+          (x) =>
+            x.mediaAssetIds.includes(assetId) ||
+            x.visual?.backgroundId === assetId ||
+            x.visual?.meme.assetId === assetId,
+        )
       )
         throw new ConflictException(
           'Asset is still referenced. Remove it from all scenes, save and prepare preview first.',
@@ -285,8 +543,9 @@ export class StudioService {
       id,
       operation,
       { ...input, revision: input.revision ?? snapshot.revision },
-      async (tick,jobId) => {
-        if(operation==='render')return this.renderJob(id,input,tick,jobId);
+      async (tick, jobId) => {
+        if (operation === 'render')
+          return this.renderJob(id, input, tick, jobId);
         this.progress = tick;
         this.voice.onStage = (step) => {
           void tick(step).catch(() => {});
@@ -380,7 +639,7 @@ export class StudioService {
       s.editor = validateEditor(
         s,
         body.settings as EditorSettings,
-        await this.visualAssets({...s,editor:body.settings}),
+        await this.visualAssets({ ...s, editor: body.settings }),
       );
       // Display edits are manual and never touch original/spoken source content.
       if (body.displayEdits) {
@@ -409,7 +668,17 @@ export class StudioService {
       await this.tick('Building deterministic timeline');
       const built = prepareEditor(s, await this.visualAssets(s));
       for (const a of built.project.audioAssets)
-        if ((await fs.stat(a.id.startsWith('pub-')?(await this.publicAssets.file(a.id)).file:a.id.startsWith('media-')?await this.mediaFile(id,a.id):await this.audioFile(id, a.id))).size === 0)
+        if (
+          (
+            await fs.stat(
+              a.id.startsWith('pub-')
+                ? (await this.publicAssets.file(a.id)).file
+                : a.id.startsWith('media-')
+                  ? await this.mediaFile(id, a.id)
+                  : await this.audioFile(id, a.id),
+            )
+          ).size === 0
+        )
           throw new BadRequestException('Audio is missing or empty');
       for (const a of s.studioMedia || [])
         await fs.access(await this.mediaFile(id, a.id));
@@ -444,8 +713,14 @@ export class StudioService {
       const info = uploadSignature(file, category);
       const hash = createHash('sha256').update(file.buffer).digest('hex'),
         assetId = 'media-' + hash;
-      const duplicate=s.studioMedia?.find(a=>a.id===assetId);
-      if(duplicate&&duplicate.category!==category){if(JSON.stringify(s.editor).includes(assetId))throw new ConflictException('Existing file is referenced in another category; remove it from timeline before recategorizing');duplicate.category=category as any;}
+      const duplicate = s.studioMedia?.find((a) => a.id === assetId);
+      if (duplicate && duplicate.category !== category) {
+        if (JSON.stringify(s.editor).includes(assetId))
+          throw new ConflictException(
+            'Existing file is referenced in another category; remove it from timeline before recategorizing',
+          );
+        duplicate.category = category as any;
+      }
       if (!duplicate) {
         const dir = path.join(this.root, 'media', id);
         await fs.mkdir(dir, { recursive: true });
@@ -455,7 +730,7 @@ export class StudioService {
           .catch((e) => {
             if (e.code !== 'EEXIST') throw e;
           });
-        const measured = await probeUpload(path.join(dir,fileName), info.kind);
+        const measured = await probeUpload(path.join(dir, fileName), info.kind);
         s.studioMedia = [
           ...(s.studioMedia || []),
           {
@@ -485,7 +760,7 @@ export class StudioService {
     id: string,
     file: { buffer: Buffer; originalname: string; mimetype?: string },
     revision: number,
-    requestId?:string,
+    requestId?: string,
     category = 'UPLOADS',
   ) {
     if (!file?.buffer)
@@ -498,7 +773,8 @@ export class StudioService {
       'media/upload',
       {
         revision,
-        requestId, category,
+        requestId,
+        category,
         sha256: createHash('sha256').update(file.buffer).digest('hex'),
       },
       async (tick) => {
@@ -509,11 +785,31 @@ export class StudioService {
       },
     );
   }
-  async categoryMedia(id:string,assetId:string,body:any){return this.exclusive(async()=>{const s=await this.load(id);if(s.revision!==body.revision)throw new ConflictException('Project changed');const a=s.studioMedia?.find(a=>a.id===assetId);if(!a||!validCategory(body.category,a.kind))throw new BadRequestException('Invalid uploaded category');if(JSON.stringify(s.editor).includes(assetId))throw new ConflictException('Remove from timeline before changing category');a.category=body.category;return this.persist(s);});}
+  async categoryMedia(id: string, assetId: string, body: any) {
+    return this.exclusive(async () => {
+      const s = await this.load(id);
+      if (s.revision !== body.revision)
+        throw new ConflictException('Project changed');
+      const a = s.studioMedia?.find((a) => a.id === assetId);
+      if (!a || !validCategory(body.category, a.kind))
+        throw new BadRequestException('Invalid uploaded category');
+      if (JSON.stringify(s.editor).includes(assetId))
+        throw new ConflictException(
+          'Remove from timeline before changing category',
+        );
+      a.category = body.category;
+      return this.persist(s);
+    });
+  }
   async mediaFile(id: string, assetId: string) {
     const s = await this.load(id),
       asset = s.studioMedia?.find((a) => a.id === assetId);
-    if (!asset || !/^[a-f0-9]{64}\.(png|gif|jpg|webp|mp3|wav|m4a|ogg|mp4|webm)$/.test(asset.fileName))
+    if (
+      !asset ||
+      !/^[a-f0-9]{64}\.(png|gif|jpg|webp|mp3|wav|m4a|ogg|mp4|webm)$/.test(
+        asset.fileName,
+      )
+    )
       throw new BadRequestException('Unknown local media');
     return path.join(this.root, 'media', id, asset.fileName);
   }
@@ -547,7 +843,11 @@ export class StudioService {
     return rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
   private async persist(s: StudioSession) {
-    if(s.project.editorialApproval&&s.project.editorialApproval.scriptHash!==editorialScriptHash(s))s.project.editorialApproval.status='STALE';
+    if (
+      s.project.editorialApproval &&
+      s.project.editorialApproval.scriptHash !== editorialScriptHash(s)
+    )
+      s.project.editorialApproval.status = 'STALE';
     for (const item of s.items) {
       if (
         item.spokenApproval &&
@@ -560,7 +860,14 @@ export class StudioService {
       if (
         !item ||
         a.textHash !== textHash(item.spokenText) ||
-        !!a.ttsInputHash&&a.ttsInputHash!==textHash(normalizeSpokenNumbers(speechProjection(item.spokenText,item.pronunciationOverrides).text).text) ||
+        (!!a.ttsInputHash &&
+          a.ttsInputHash !==
+            textHash(
+              normalizeSpokenNumbers(
+                speechProjection(item.spokenText, item.pronunciationOverrides)
+                  .text,
+              ).text,
+            )) ||
         a.voice !== item.voiceSettings?.voice ||
         a.speed !== item.voiceSettings?.speed
       )
@@ -600,7 +907,10 @@ export class StudioService {
             role: 'NARRATION' as const,
             uri: a.uri,
             durationMs: a.durationMs,
-            durationSource: a.durationEvidence==='SYNTHETIC_FIXTURE'?'FIXTURE' as const:'MEASURED' as const,
+            durationSource:
+              a.durationEvidence === 'SYNTHETIC_FIXTURE'
+                ? ('FIXTURE' as const)
+                : ('MEASURED' as const),
             availability: 'AVAILABLE' as const,
             approvalStatus:
               a.status === 'APPROVED'
@@ -637,7 +947,7 @@ export class StudioService {
     await replaceFile(f + '.tmp', f);
     return s;
   }
-  private async exclusive<T>(fn: () => Promise<T>,leaseToken?:string) {
+  private async exclusive<T>(fn: () => Promise<T>, leaseToken?: string) {
     assertNoLocalProbe(leaseToken);
     if (this.busy)
       throw new ConflictException(
@@ -650,7 +960,13 @@ export class StudioService {
       this.busy = false;
     }
   }
-  async withControlledCollection<T>(fn:()=>Promise<T>){return this.exclusive(async()=>{assertNoLocalProbe();this.voice.close();return fn();});}
+  async withControlledCollection<T>(fn: () => Promise<T>) {
+    return this.exclusive(async () => {
+      assertNoLocalProbe();
+      this.voice.close();
+      return fn();
+    });
+  }
   async create() {
     const id = randomUUID();
     const project: VideoProject = {
@@ -687,22 +1003,180 @@ export class StudioService {
       }),
     );
   }
+  /** Explicit human-triggered DRAFT bridge. It never changes data-quality, rights or production approval. */
+  async createConversationDraft(
+    collection: ThreadCollection,
+    review: ConversationReview,
+  ) {
+    const created = await this.create();
+    return this.exclusive(async () => {
+      const s = await this.load(created.id),
+        root = collection.root,
+        source = collection.sourceCapture?.records[0];
+      const rootRaw: any = source ?? {
+        url: root.url,
+        text: root.originalText,
+        bodyText: root.originalText,
+        author: root.author.name ?? root.author.handle,
+        handle: root.author.handle,
+        avatar: null,
+        createdAt: root.publishedAt,
+        type: root.itemType ?? 'UNKNOWN',
+        parentReference: null,
+        media: (root.attachments || []).map((a) => ({
+          url: a.sourceUrl,
+          kind: a.kind,
+        })),
+        likeCount: root.engagement.likes,
+        replyCount: root.engagement.replies,
+        repostCount: root.engagement.reposts,
+        shareCount: root.engagement.shares,
+        provenance: {
+          text: root.provenance.method,
+          type: 'catalog type preserved',
+        },
+      };
+      const observed = observedContextViews(collection),
+        records: any[] = [...observed.map((x) => x.raw)];
+      for (const reply of collection.replies)
+        if (!records.some((x) => canonicalPost(x.url)?.id === reply.id))
+          records.push(this.replyRecord(reply));
+      this.append(s, root.url, rootRaw, records);
+      s.derivedFrom = 'conversation:' + review.collectionId;
+      s.title = 'Threads Draft · @' + root.author.handle;
+      s.project.title = s.title;
+      const selectedObserved = new Set(review.selectedObservedUrls || []),
+        selectedReplies = new Set(review.selectedReplyIds);
+      for (const item of s.items) {
+        const raw = item.order === 0 ? rootRaw : records[item.order - 1],
+          own = canonicalPost(raw.url);
+        item.inclusion = item.order === 0 ? 'TARGET' : 'EXPLICIT_CONTEXT';
+        item.sourceUrl = own?.url ?? root.url;
+        item.rawExtraction = structuredClone(raw);
+        item.metadata = structuredClone(raw);
+        item.originalText = raw.text;
+        item.displayText = cleanSourceProjection(raw).text;
+        item.spokenText = cleanSourceProjection(raw).text;
+        item.author = {
+          displayName: raw.author,
+          ...(raw.handle ? { handle: raw.handle } : {}),
+          ...(raw.avatar ? { avatarUrl: raw.avatar } : {}),
+        };
+        item.mediaReferences = (raw.media || []).map((m: any) => m.url);
+        item.selected =
+          item.order === 0 ||
+          (!!own &&
+            (selectedObserved.has(own.url) || selectedReplies.has(own.id)));
+        if (item.order > 0) {
+          const verified = collection.replies.find((r) => r.id === own?.id),
+            comment = s.project.comments.find((c) => c.id === item.id);
+          item.observationEvidence = {
+            level: verified ? 'PARENT_VERIFIED' : 'OBSERVED_ON_TARGET_PAGE',
+            targetUrl: root.url,
+            observedAt: root.provenance.observedAt,
+            parentId: verified?.parentId ?? null,
+          };
+          if (!verified)
+            item.contextAssessment = classifyContext(raw, root.url);
+          if (comment) {
+            comment.relationshipStatus = verified
+              ? 'PARENT_VERIFIED'
+              : 'OBSERVED_ON_TARGET_PAGE';
+            comment.observedTargetUrl = root.url;
+            if (verified && verified.parentId !== root.id)
+              comment.parentCommentId = verified.parentId;
+          }
+        }
+      }
+      s.status = 'READY';
+      s.errors = [];
+      return this.persist(s);
+    });
+  }
+  private replyRecord(reply: VerifiedReply): any {
+    return {
+      url: reply.url,
+      text: reply.originalText,
+      bodyText: reply.originalText,
+      author: reply.author.name ?? reply.author.handle,
+      handle: reply.author.handle,
+      avatar: null,
+      createdAt: reply.publishedAt,
+      type: 'COMMENT',
+      parentReference: reply.evidence.parentUrl,
+      media: [],
+      likeCount: reply.engagement.likes,
+      replyCount: reply.engagement.replies,
+      repostCount: reply.engagement.reposts,
+      shareCount: reply.engagement.shares,
+      provenance: { text: reply.provenance.method, type: reply.evidence.kind },
+    };
+  }
   /** Idempotent DATA-03 materialization. Never overwrites an existing session. */
-  async approveEditorialScript(id:string,body:any){return this.exclusive(async()=>{
-    const s=await this.load(id);if(s.revision!==body?.revision)throw new ConflictException('STALE_REVISION');
-    if(!s.project.editorialPlan||body.confirmUserReview!==true||typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>1000)throw new BadRequestException('EDITORIAL_USER_REVIEW_REQUIRED');
-    const selected=s.items.filter(i=>i.selected);if(!selected.some(i=>i.editorial?.stage==='CONTEXT'&&i.sourceReference.entityId===s.project.editorialPlan!.bundle.collection.root.id)||!selected.some(i=>i.editorial?.stage==='DISCUSSION')||!selected.some(i=>i.editorial?.kind==='COMMENTARY')||selected.some(i=>!i.spokenText.trim()))throw new BadRequestException('EDITORIAL_SCRIPT_INCOMPLETE');
-    const approval={scriptHash:editorialScriptHash(s),reason:body.reason.trim(),approvedAt:new Date().toISOString(),sessionRevision:s.revision};
-    s.project.editorialApproval={...approval,status:'APPROVED'};s.project.editorialApprovalHistory=[...(s.project.editorialApprovalHistory||[]),approval];return this.persist(s);
-  });}
+  async approveEditorialScript(id: string, body: any) {
+    return this.exclusive(async () => {
+      const s = await this.load(id);
+      if (s.revision !== body?.revision)
+        throw new ConflictException('STALE_REVISION');
+      if (
+        !s.project.editorialPlan ||
+        body.confirmUserReview !== true ||
+        typeof body.reason !== 'string' ||
+        !body.reason.trim() ||
+        body.reason.length > 1000
+      )
+        throw new BadRequestException('EDITORIAL_USER_REVIEW_REQUIRED');
+      const selected = s.items.filter((i) => i.selected);
+      if (
+        !selected.some(
+          (i) =>
+            i.editorial?.stage === 'CONTEXT' &&
+            i.sourceReference.entityId ===
+              s.project.editorialPlan!.bundle.collection.root.id,
+        ) ||
+        !selected.some((i) => i.editorial?.stage === 'DISCUSSION') ||
+        !selected.some((i) => i.editorial?.kind === 'COMMENTARY') ||
+        selected.some((i) => !i.spokenText.trim())
+      )
+        throw new BadRequestException('EDITORIAL_SCRIPT_INCOMPLETE');
+      const approval = {
+        scriptHash: editorialScriptHash(s),
+        reason: body.reason.trim(),
+        approvedAt: new Date().toISOString(),
+        sessionRevision: s.revision,
+      };
+      s.project.editorialApproval = { ...approval, status: 'APPROVED' };
+      s.project.editorialApprovalHistory = [
+        ...(s.project.editorialApprovalHistory || []),
+        approval,
+      ];
+      return this.persist(s);
+    });
+  }
   async ensureProductionSession(seed: StudioSession) {
-    return this.exclusive(async()=>{
-      if(!seed.productionOrigin||seed.project.style!=='SERIOUS'||seed.project.id!==seed.id||JSON.stringify(seed.project.productionOrigin)!==JSON.stringify(seed.productionOrigin))throw new BadRequestException('Invalid production seed');
+    return this.exclusive(async () => {
+      if (
+        !seed.productionOrigin ||
+        seed.project.style !== 'SERIOUS' ||
+        seed.project.id !== seed.id ||
+        JSON.stringify(seed.project.productionOrigin) !==
+          JSON.stringify(seed.productionOrigin)
+      )
+        throw new BadRequestException('Invalid production seed');
       try {
-        const existing=await this.load(seed.id);
-        if(existing.productionOrigin?.jobId!==seed.productionOrigin.jobId||existing.productionOrigin.snapshotHash!==seed.productionOrigin.snapshotHash||existing.project.productionOrigin?.jobId!==seed.productionOrigin.jobId)throw new ConflictException('PRODUCTION_SESSION_COLLISION');
+        const existing = await this.load(seed.id);
+        if (
+          existing.productionOrigin?.jobId !== seed.productionOrigin.jobId ||
+          existing.productionOrigin.snapshotHash !==
+            seed.productionOrigin.snapshotHash ||
+          existing.project.productionOrigin?.jobId !==
+            seed.productionOrigin.jobId
+        )
+          throw new ConflictException('PRODUCTION_SESSION_COLLISION');
         return existing;
-      }catch(e:any){if(e.code!=='ENOENT')throw e;}
+      } catch (e: any) {
+        if (e.code !== 'ENOENT') throw e;
+      }
       return this.persist(seed);
     });
   }
@@ -753,22 +1227,36 @@ export class StudioService {
                   s,
                   canonical,
                   attempt.records[0],
-                  s.scope === 'WITH_CONTEXT' ? attempt.contextCandidates || [] : [],
+                  s.scope === 'WITH_CONTEXT'
+                    ? attempt.contextCandidates || []
+                    : [],
                 );
                 s.items.slice(first).forEach((item, index) => {
                   item.inclusion = index === 0 ? 'TARGET' : 'EXPLICIT_CONTEXT';
-                  const raw = index === 0 ? attempt.records[0] : attempt.contextCandidates![index - 1];
+                  const raw =
+                    index === 0
+                      ? attempt.records[0]
+                      : attempt.contextCandidates![index - 1];
                   item.observationEvidence = {
                     level: index === 0 ? 'UNKNOWN' : 'OBSERVED_ON_TARGET_PAGE',
                     targetUrl: canonical,
                     observedAt: attempt.retrievedAt,
                     parentId: null,
                   };
-                  if(index > 0){const comment=s.project.comments.find(c=>c.id===item.id);if(comment){comment.relationshipStatus='OBSERVED_ON_TARGET_PAGE';comment.observedTargetUrl=canonical;}}
+                  if (index > 0) {
+                    const comment = s.project.comments.find(
+                      (c) => c.id === item.id,
+                    );
+                    if (comment) {
+                      comment.relationshipStatus = 'OBSERVED_ON_TARGET_PAGE';
+                      comment.observedTargetUrl = canonical;
+                    }
+                  }
                   item.sourceUrl =
                     typeof raw.url === 'string' ? raw.url : canonical;
                   item.rawExtraction = structuredClone(raw);
-                  if(index>0)item.contextAssessment=classifyContext(raw,canonical);
+                  if (index > 0)
+                    item.contextAssessment = classifyContext(raw, canonical);
                   item.metadata = structuredClone(raw);
                   item.author = {
                     displayName: raw.author,
@@ -831,22 +1319,50 @@ export class StudioService {
           throw new BadRequestException('Context candidate not found');
         if (!s.items.some((i) => i.sourceUrl === raw.url)) {
           const first = s.items.length;
-          const target = s.items.find(i => i.inclusion === 'TARGET' && i.sourceUrl === attempt!.canonicalUrl);
-          const post = target && s.project.posts.find(p => p.id === target.sourceReference.entityId);
-          if (!target || !post) throw new BadRequestException('Exact target must exist before adding observed context');
+          const target = s.items.find(
+            (i) =>
+              i.inclusion === 'TARGET' && i.sourceUrl === attempt!.canonicalUrl,
+          );
+          const post =
+            target &&
+            s.project.posts.find(
+              (p) => p.id === target.sourceReference.entityId,
+            );
+          if (!target || !post)
+            throw new BadRequestException(
+              'Exact target must exist before adding observed context',
+            );
           // append builds the existing Studio item shape; rebind the result as a draft
           // comment without claiming a technically verified parent relationship.
           this.append(s, threadsUrl(raw.url), raw, []);
           const item = s.items[first];
-          item.author = {displayName:raw.author,...(raw.handle?{handle:raw.handle}:{}),...(raw.avatar?{avatarUrl:raw.avatar}:{})};
-          s.project.posts = s.project.posts.filter(p => p.id !== item.id);
+          item.author = {
+            displayName: raw.author,
+            ...(raw.handle ? { handle: raw.handle } : {}),
+            ...(raw.avatar ? { avatarUrl: raw.avatar } : {}),
+          };
+          s.project.posts = s.project.posts.filter((p) => p.id !== item.id);
           item.sourceReference = { entityType: 'COMMENT', entityId: item.id };
-          item.observationEvidence = {level:'OBSERVED_ON_TARGET_PAGE',targetUrl:target.sourceUrl,observedAt:attempt!.retrievedAt,parentId:null};
-          s.project.comments.push({id:item.id,sourceId:item.sourceId!,postId:post.id,author:item.author,text:raw.text,mediaAssetIds:[],relationshipStatus:'OBSERVED_ON_TARGET_PAGE',observedTargetUrl:target.sourceUrl});
+          item.observationEvidence = {
+            level: 'OBSERVED_ON_TARGET_PAGE',
+            targetUrl: target.sourceUrl,
+            observedAt: attempt!.retrievedAt,
+            parentId: null,
+          };
+          s.project.comments.push({
+            id: item.id,
+            sourceId: item.sourceId!,
+            postId: post.id,
+            author: item.author,
+            text: raw.text,
+            mediaAssetIds: [],
+            relationshipStatus: 'OBSERVED_ON_TARGET_PAGE',
+            observedTargetUrl: target.sourceUrl,
+          });
           post.commentIds.push(item.id);
           item.inclusion = 'EXPLICIT_CONTEXT';
           item.rawExtraction = structuredClone(raw);
-          item.contextAssessment=classifyContext(raw,target.sourceUrl);
+          item.contextAssessment = classifyContext(raw, target.sourceUrl);
           item.metadata = structuredClone(raw);
           item.mediaReferences = raw.media.map((m) => m.url);
         }
@@ -975,9 +1491,13 @@ export class StudioService {
                 };
             }
           }
-          const pronunciationOverrides=patch.pronunciationOverrides===undefined?original.pronunciationOverrides:validatePronunciations(patch.pronunciationOverrides);
+          const pronunciationOverrides =
+            patch.pronunciationOverrides === undefined
+              ? original.pronunciationOverrides
+              : validatePronunciations(patch.pronunciationOverrides);
           const changed =
-            JSON.stringify(pronunciationOverrides)!==JSON.stringify(original.pronunciationOverrides)||
+            JSON.stringify(pronunciationOverrides) !==
+              JSON.stringify(original.pronunciationOverrides) ||
             // Text and metadata locks are independent; previous locks survive edits.
             JSON.stringify(metadata) !== JSON.stringify(original.metadata) ||
             original.displayText !== patch.displayText ||
@@ -999,7 +1519,19 @@ export class StudioService {
             selected: patch.selected,
             displayText: patch.displayText,
             spokenText: patch.spokenText,
-            ...(original.editorial?{editorial:{...original.editorial,kind:original.editorial.kind==='QUOTE'&&(patch.spokenText!==original.originalText||patch.displayText!==original.originalText)?'PARAPHRASE' as const:original.editorial.kind}}:{}),
+            ...(original.editorial
+              ? {
+                  editorial: {
+                    ...original.editorial,
+                    kind:
+                      original.editorial.kind === 'QUOTE' &&
+                      (patch.spokenText !== original.originalText ||
+                        patch.displayText !== original.originalText)
+                        ? ('PARAPHRASE' as const)
+                        : original.editorial.kind,
+                  },
+                }
+              : {}),
             revision: original.revision + (changed ? 1 : 0),
             manualLocks: [
               ...new Set([
@@ -1043,7 +1575,7 @@ export class StudioService {
     const markdown = reportMarkdown(report);
     const generation = Date.now() - started;
     report.reportGenerationElapsedMs = generation;
-    if(report.timing)report.timing.reportMs=generation;
+    if (report.timing) report.timing.reportMs = generation;
     return {
       report,
       markdown:
@@ -1089,7 +1621,12 @@ export class StudioService {
       return this.persist(s);
     });
   }
-  async voiceAction(id: string, itemId: string, body: any,execution?:LocalTtsExecution) {
+  async voiceAction(
+    id: string,
+    itemId: string,
+    body: any,
+    execution?: LocalTtsExecution,
+  ) {
     return this.exclusive(async () => {
       const s = await this.load(id);
       if (s.revision !== body?.revision)
@@ -1154,10 +1691,17 @@ export class StudioService {
             body.voice ?? item.voiceSettings?.voice ?? null,
             body.speed ?? item.voiceSettings?.speed ?? VOICE_SPEED.default,
           );
-        await this.generateItem(s, item, body.regenerate === true, undefined, body.draft === true,execution);
+        await this.generateItem(
+          s,
+          item,
+          body.regenerate === true,
+          undefined,
+          body.draft === true,
+          execution,
+        );
       } else throw new BadRequestException('Unknown voice operation');
       return this.persist(s);
-    },execution?.leaseToken);
+    }, execution?.leaseToken);
   }
   private applySettings(
     s: StudioSession,
@@ -1173,8 +1717,9 @@ export class StudioService {
     )
       throw new BadRequestException('Unknown Kokoro voice');
     item.voiceSettings = { voice: voice as string | null, speed };
-    s.voiceDefaults={...item.voiceSettings};
-    if(typeof voice==='string')s.voicePresets={...s.voicePresets,[voice]:{speed}};
+    s.voiceDefaults = { ...item.voiceSettings };
+    if (typeof voice === 'string')
+      s.voicePresets = { ...s.voicePresets, [voice]: { speed } };
   }
   private currentAsset(s: StudioSession, item: StudioSession['items'][number]) {
     const settings = item.voiceSettings;
@@ -1197,7 +1742,7 @@ export class StudioService {
     regenerate: boolean,
     preflighted?: NonNullable<StudioSession['voiceRuntime']>,
     draft = false,
-    execution?:LocalTtsExecution,
+    execution?: LocalTtsExecution,
   ) {
     if (!draft && item.contentMapping?.status === 'REVIEW_REQUIRED')
       throw new ConflictException(
@@ -1207,10 +1752,11 @@ export class StudioService {
       throw new BadRequestException(
         'Spoken text must contain 1–12000 characters',
       );
-    if (!draft && (
-      !item.spokenApproval?.valid ||
-      item.spokenApproval.textHash !== textHash(item.spokenText)
-    ))
+    if (
+      !draft &&
+      (!item.spokenApproval?.valid ||
+        item.spokenApproval.textHash !== textHash(item.spokenText))
+    )
       throw new ConflictException('Approve current spoken text before TTS');
     const started = Date.now(),
       startedAt = new Date().toISOString();
@@ -1226,20 +1772,38 @@ export class StudioService {
     try {
       await this.tick('Preparing audio');
       s.voiceRuntime = preflighted || (await this.voice.preflight());
-      if (s.voiceRuntime.status !== 'READY' && !(s.voiceRuntime.blockers.length>0&&s.voiceRuntime.blockers.every(b=>b.includes('BLOCKED_RESOURCE'))))
+      if (
+        s.voiceRuntime.status !== 'READY' &&
+        !(
+          s.voiceRuntime.blockers.length > 0 &&
+          s.voiceRuntime.blockers.every((b) => b.includes('BLOCKED_RESOURCE'))
+        )
+      )
         throw Error('BLOCKED_RUNTIME: ' + s.voiceRuntime.blockers.join('; '));
       const settings = item.voiceSettings;
       if (!settings?.voice)
         throw Error('Select a locally available Kokoro voice');
-      const speech=speechProjection(item.spokenText,item.pronunciationOverrides);
-      const normalizedInput=normalizeSpokenNumbers(speech.text);
-      job.inputCharacters=normalizedInput.text.length;job.ttsInputHash=textHash(normalizedInput.text);
-      const normalizationVersion=NUMBER_READING_VERSION+' / '+SPEECH_DICTIONARY_VERSION;
-      if(normalizedInput.warnings.length)throw Error(normalizedInput.warnings.join('; '));
-      const oldAsset=this.currentAsset(s,item);
-      const inputStale=oldAsset?.numberReadingVersion!==normalizationVersion || oldAsset?.ttsInputHash!==textHash(normalizedInput.text);
-      const modelStale=oldAsset&&oldAsset.modelVersion!==s.voiceRuntime.modelVersion+' / '+s.voiceRuntime.packageVersion;
-      const existing = regenerate || inputStale || modelStale ? undefined : oldAsset;
+      const speech = speechProjection(
+        item.spokenText,
+        item.pronunciationOverrides,
+      );
+      const normalizedInput = normalizeSpokenNumbers(speech.text);
+      job.inputCharacters = normalizedInput.text.length;
+      job.ttsInputHash = textHash(normalizedInput.text);
+      const normalizationVersion =
+        NUMBER_READING_VERSION + ' / ' + SPEECH_DICTIONARY_VERSION;
+      if (normalizedInput.warnings.length)
+        throw Error(normalizedInput.warnings.join('; '));
+      const oldAsset = this.currentAsset(s, item);
+      const inputStale =
+        oldAsset?.numberReadingVersion !== normalizationVersion ||
+        oldAsset?.ttsInputHash !== textHash(normalizedInput.text);
+      const modelStale =
+        oldAsset &&
+        oldAsset.modelVersion !==
+          s.voiceRuntime.modelVersion + ' / ' + s.voiceRuntime.packageVersion;
+      const existing =
+        regenerate || inputStale || modelStale ? undefined : oldAsset;
       let usable = false;
       if (existing) {
         try {
@@ -1259,7 +1823,7 @@ export class StudioService {
           settings.speed,
           s.voiceRuntime,
           regenerate,
-          {itemId:item.id,normalizationVersion},
+          { itemId: item.id, normalizationVersion },
           execution,
         );
         await this.tick('Saving asset');
@@ -1325,10 +1889,17 @@ export class StudioService {
       }
     } catch (e) {
       job.error = e instanceof Error ? e.message : 'TTS failed';
-      job.failureCategory=ttsFailureCategory(e);
+      job.failureCategory = ttsFailureCategory(e);
       job.status = 'ERROR';
-      const diagnostic=this.voice.diagnostics?.();
-      if(diagnostic&&diagnostic.inputHash===job.ttsInputHash){const samples=diagnostic.samples.filter(r=>r.atMs>=started);job.resourceDiagnostics={...diagnostic,workerPid:samples[samples.length-1]?.pid??null,samples:samples.slice(-16)};}
+      const diagnostic = this.voice.diagnostics?.();
+      if (diagnostic && diagnostic.inputHash === job.ttsInputHash) {
+        const samples = diagnostic.samples.filter((r) => r.atMs >= started);
+        job.resourceDiagnostics = {
+          ...diagnostic,
+          workerPid: samples[samples.length - 1]?.pid ?? null,
+          samples: samples.slice(-16),
+        };
+      }
     }
     job.completedAt = new Date().toISOString();
     job.elapsedMs = Date.now() - started;
@@ -1732,7 +2303,7 @@ export class StudioService {
         order: s.items.length,
         revision: 0,
         manualLocks: [],
-        ...(s.voiceDefaults?{voiceSettings:{...s.voiceDefaults}}:{}),
+        ...(s.voiceDefaults ? { voiceSettings: { ...s.voiceDefaults } } : {}),
       });
       if (index === 0)
         s.project.posts.push({

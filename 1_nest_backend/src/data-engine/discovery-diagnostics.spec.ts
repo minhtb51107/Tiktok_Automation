@@ -6,7 +6,7 @@ import {discoverConversations} from './conversation-public';
 describe('Discovery diagnostics — OFFLINE/SYNTHETIC only',()=>{
   test('pilot candidate cap rejects invalid limits before any browser launch',async()=>{
     await expect(discoverConversations('SYNTHETIC',undefined,0)).rejects.toThrow('CONVERSATION_INVALID_LIMIT');
-    await expect(discoverConversations('SYNTHETIC',undefined,7)).rejects.toThrow('CONVERSATION_INVALID_LIMIT');
+    await expect(discoverConversations('SYNTHETIC',undefined,11)).rejects.toThrow('CONVERSATION_INVALID_LIMIT');
   });
   test.each([
     ['CONVERSATION_RESOURCE_BELOW_384MIB','RESOURCE_GUARD_STOP'],

@@ -1,5 +1,5 @@
-import {useRuntimeSafety} from './RuntimeSafety';
-import {EditorialPanel} from './EditorialPanel';
+import { useRuntimeSafety } from "./RuntimeSafety";
+import { EditorialPanel } from "./EditorialPanel";
 import { useEffect, useRef, useState } from "react";
 import type {
   ConversationRun,
@@ -18,23 +18,59 @@ type View = {
     rightsStatus: "UNKNOWN";
   };
   review: ConversationReview;
+  observedContexts: Array<{
+    id: string;
+    url: string;
+    author: string;
+    originalText: string;
+    displayText: string;
+    relationship: string;
+    reasons: string[];
+    quality: any;
+    selectable: true;
+    recommended: boolean;
+  }>;
+  draftEstimate: {
+    minimumSeconds: number;
+    maximumSeconds: number;
+    source: "ESTIMATED_TEXT_ONLY";
+    targetSeconds: [number, number];
+  };
 };
 const base = "/data/conversations";
 const score = (value: number | null | undefined) =>
   value === null || value === undefined ? "UNKNOWN" : String(value);
 function sameSource(a: string, b: string) {
   try {
-    const left = new URL(a), right = new URL(b);
-    const valid = (u: URL) => u.protocol === 'https:' && !u.port && !u.username && !u.password && ['www.threads.com','threads.com','www.threads.net','threads.net'].includes(u.hostname);
-    return valid(left) && valid(right) && left.pathname.replace(/\/$/,'') === right.pathname.replace(/\/$/,'');
-  } catch { return false; }
+    const left = new URL(a),
+      right = new URL(b);
+    const valid = (u: URL) =>
+      u.protocol === "https:" &&
+      !u.port &&
+      !u.username &&
+      !u.password &&
+      [
+        "www.threads.com",
+        "threads.com",
+        "www.threads.net",
+        "threads.net",
+      ].includes(u.hostname);
+    return (
+      valid(left) &&
+      valid(right) &&
+      left.pathname.replace(/\/$/, "") === right.pathname.replace(/\/$/, "")
+    );
+  } catch {
+    return false;
+  }
 }
 export function ConversationPanel({
   sourceUrl,
 }: {
   sourceUrl?: string | null;
 }) {
-  const {locked,runtime}=useRuntimeSafety();const reviewLocked=locked&&!runtime.capabilities?.review;
+  const { locked, runtime } = useRuntimeSafety();
+  const reviewLocked = locked && !runtime.capabilities?.review;
   const [options, setOptions] = useState<any>(null),
     [runs, setRuns] = useState<ConversationRun[]>([]),
     [runId, setRunId] = useState(""),
@@ -42,7 +78,10 @@ export function ConversationPanel({
     [view, setView] = useState<View | null>(null);
   const [keyword, setKeyword] = useState("công việc"),
     [limit, setLimit] = useState(1),
+    [priority, setPriority] = useState<"HOT" | "RECENT">("HOT"),
+    [minInteractions, setMinInteractions] = useState(0),
     [selected, setSelected] = useState<string[]>([]),
+    [selectedObserved, setSelectedObserved] = useState<string[]>([]),
     [labels, setLabels] = useState<Record<string, ReplyLabel>>({}),
     [decision, setDecision] = useState("NEEDS_REVIEW"),
     [reason, setReason] = useState("");
@@ -51,10 +90,20 @@ export function ConversationPanel({
     [notice, setNotice] = useState(""),
     [dirty, setDirty] = useState(false);
   const lock = useRef(false);
-  const visibleRuns = sourceUrl ? runs.filter(r => r.results.some(x => sameSource(x.url, sourceUrl)) || r.request.urls?.some(url=>sameSource(url,sourceUrl))) : runs;
+  const visibleRuns = sourceUrl
+    ? runs.filter(
+        (r) =>
+          r.results.some((x) => sameSource(x.url, sourceUrl)) ||
+          r.request.urls?.some((url) => sameSource(url, sourceUrl)),
+      )
+    : runs;
   const run = visibleRuns.find((x) => x.id === runId) || visibleRuns[0];
-  const collections = run?.results.filter(r=>!sourceUrl||sameSource(r.url,sourceUrl)) || [];
-  const viewMatches = !sourceUrl || (view && sameSource(view.record.collection.root.url, sourceUrl));
+  const collections =
+    run?.results.filter((r) => !sourceUrl || sameSource(r.url, sourceUrl)) ||
+    [];
+  const viewMatches =
+    !sourceUrl ||
+    (view && sameSource(view.record.collection.root.url, sourceUrl));
   const c = viewMatches ? view?.record.collection : undefined,
     q = viewMatches ? view?.record.evaluation : undefined;
   const resultKey = collections.map((x) => x.collectionId).join(",");
@@ -91,6 +140,7 @@ export function ConversationPanel({
         if (cancelled) return;
         setView(v);
         setSelected(v.review.selectedReplyIds);
+        setSelectedObserved(v.review.selectedObservedUrls || []);
         setLabels(v.review.replyLabels || {});
         setReason(v.review.reason);
         setDecision(v.review.decision);
@@ -136,7 +186,7 @@ export function ConversationPanel({
     await action(async () => {
       const input = sourceUrl
         ? { urls: [sourceUrl], limit: 1 }
-        : { keyword, limit };
+        : { keyword, limit, priority, minInteractions };
       const key = "data04-intent",
         saved = JSON.parse(localStorage.getItem(key) || "null");
       const signature = JSON.stringify(input),
@@ -160,11 +210,45 @@ export function ConversationPanel({
             `${a.status} ${a.kind} ${a.width || "?"}x${a.height || "?"} ${a.bytes ?? "?"} bytes SHA-256 ${a.sha256 || "UNKNOWN"}\nSource: ${a.sourceUrl}\nOCR: ${a.ocrStatus}; rights: ${a.rightsStatus}`,
         )
         .join("\n") || "No exact-root attachment observed.";
-    return `# DATA-04 Conversation Report\n\nExecution: ${run?.execution || "UNKNOWN"}\nRun: ${run?.id || "—"}\nStatus: ${run?.status || "UNKNOWN"}\nElapsed: ${run?.elapsedMs ?? "—"} ms\nRanking: ${run?.ranking?.status || "UNKNOWN"} — ${run?.ranking?.reasons.join("; ") || ""}\n\n## Exact source\n${c?.root.url || ""}\n@${c?.root.author.handle || ""}\n${c?.root.originalText || ""}\nType: ${c?.root.itemType || "UNKNOWN"}\n\n## Exact-root attachments\n${media}\n\nCollection: ${c?.status || "UNKNOWN"}\nReported replies: ${c?.reportedReplyCount ?? "UNKNOWN"}; observed: ${c?.observedReplyCount ?? 0}; verified: ${c?.verifiedReplyCount ?? 0}; unverified: ${c?.unverifiedCandidateCount ?? 0}\nPopularity: ${score(q?.popularity.score)}; Conversation: ${score(q?.conversation.score)}; Video suitability: ${score(q?.videoSuitability.score)}\nRatios apply only to VERIFIED_OBSERVED_SAMPLE. Precision@10: NOT_MEASURED. Rights: UNKNOWN. Production approval: unchanged.\n\n## Verified replies\n${c?.replies.map((r) => `${r.id} @${r.author.handle} → parent ${r.parentId}\n${r.url}\n${r.originalText}\nQuality: ${q?.replyQuality.find((x) => x.replyId === r.id)?.label}\nEvidence: ${r.evidence.kind}\n`).join("\n") || "No verified replies; not evidence of no comments."}\n## Persisted human review\n${JSON.stringify(view?.review, null, 2)}\n\nWarnings: ${c?.warnings.join("; ") || ""}`;
+    const observed =
+      view?.observedContexts
+        .map(
+          (x) =>
+            `${selectedObserved.includes(x.url) ? "[SELECTED]" : "[NOT SELECTED]"} @${x.author}\n${x.url}\n${x.displayText}\nRelationship: ${x.relationship}; quality: ${x.quality.bucket} (${x.quality.score}); reasons: ${x.reasons.join("; ")}`,
+        )
+        .join("\n\n") || "No persisted observed context is available.";
+    return `# DATA-04 Conversation Report\n\nExecution: ${run?.execution || "UNKNOWN"}\nRun: ${run?.id || "—"}\nStatus: ${run?.status || "UNKNOWN"}\nElapsed: ${run?.elapsedMs ?? "—"} ms\nRanking: ${run?.ranking?.status || "UNKNOWN"} — ${run?.ranking?.reasons.join("; ") || ""}\n\n## Exact source\n${c?.root.url || ""}\n@${c?.root.author.handle || ""}\n${c?.root.originalText || ""}\nType: ${c?.root.itemType || "UNKNOWN"}\n\n## Exact-root attachments\n${media}\n\nCollection: ${c?.status || "UNKNOWN"}\nReported replies: ${c?.reportedReplyCount ?? "UNKNOWN"}; observed: ${c?.observedReplyCount ?? 0}; verified: ${c?.verifiedReplyCount ?? 0}; unverified: ${c?.unverifiedCandidateCount ?? 0}\nPopularity: ${score(q?.popularity.score)}; Conversation: ${score(q?.conversation.score)}; Video suitability: ${score(q?.videoSuitability.score)}\nRatios apply only to VERIFIED_OBSERVED_SAMPLE. Precision@10: NOT_MEASURED. Rights: UNKNOWN. Production approval: unchanged.\n\n## Verified replies\n${c?.replies.map((r) => `${r.id} @${r.author.handle} → parent ${r.parentId}\n${r.url}\n${r.originalText}\nQuality: ${q?.replyQuality.find((x) => x.replyId === r.id)?.label}\nEvidence: ${r.evidence.kind}\n`).join("\n") || "No verified replies; not evidence of no comments."}\n\n## Observed context (explicit selection allowed; not parent-verified)\n${observed}\n\n## Persisted human review\n${JSON.stringify(view?.review, null, 2)}\n\nWarnings: ${c?.warnings.join("; ") || ""}`;
   }
-  function exportMarkdown() {
+  function fullReportMarkdown(full: any) {
+    const candidates = (full.run?.candidates || [])
+      .map((x: any) => {
+        const rank = full.run?.ranking?.ranked?.find(
+          (r: any) => r.url === x.url,
+        );
+        return `- ${x.url}\n  - author: ${x.post?.author?.handle || "UNKNOWN"}\n  - published: ${x.post?.publishedAt || "UNKNOWN"}\n  - likes/replies/reposts/shares: ${x.post?.engagement?.likes ?? "UNKNOWN"} / ${x.post?.engagement?.replies ?? "UNKNOWN"} / ${x.post?.engagement?.reposts ?? "UNKNOWN"} / ${x.post?.engagement?.shares ?? "UNKNOWN"}\n  - score/coverage: ${rank?.score ?? "UNKNOWN"} / ${rank?.coverage ?? "UNKNOWN"}\n  - enrichment: ${full.run?.ranking?.selected?.includes(x.url) ? "SELECTED" : "NOT_SELECTED"}`;
+      })
+      .join("\n");
+    const collections = (full.collections || [])
+      .map((entry: any) => {
+        const collection = entry.record.collection;
+        const observed = entry.observedContexts
+          .map(
+            (x: any) =>
+              `- ${entry.review.selectedObservedUrls?.includes(x.url) ? "[SELECTED]" : "[NOT SELECTED]"} @${x.author}: ${x.originalText}\n  - ${x.url}\n  - relationship: ${x.relationship}; quality: ${x.quality.bucket}; reasons: ${x.reasons.join("; ")}`,
+          )
+          .join("\n");
+        return `## Root @${collection.root.author.handle}\n\n${collection.root.url}\n\n${collection.root.originalText}\n\nObserved ${collection.observedReplyCount}; parent-verified ${collection.verifiedReplyCount}; unverified ${collection.unverifiedCandidateCount}.\n\n### Observed context\n\n${observed || "None persisted."}`;
+      })
+      .join("\n\n");
+    return `# DATA-QUALITY-03 Full Discovery Run\n\nRun: ${full.run?.id || "UNKNOWN"}\nExecution: ${full.run?.execution || "UNKNOWN"}\nStatus: ${full.run?.status || "UNKNOWN"}\nPriority: ${full.run?.ranking?.priority || "UNKNOWN"}\nMinimum interactions: ${full.run?.ranking?.minInteractions ?? 0}\n\n## All discovered candidates\n\n${candidates || "No candidates persisted."}\n\n# Enriched roots\n\n${collections || "No roots enriched."}\n\nRights: UNKNOWN. Review decisions are independent from production approval.`;
+  }
+  async function fullReport() {
+    if (!run) throw Error("Select a persisted discovery run");
+    return studioRequest<any>(base + "/runs/" + run.id + "/report");
+  }
+  function exportMarkdown(markdown = reportMarkdown()) {
     const url = URL.createObjectURL(
-      new Blob([reportMarkdown()], { type: "text/markdown;charset=utf-8" }),
+      new Blob([markdown], { type: "text/markdown;charset=utf-8" }),
     );
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -178,7 +262,13 @@ export function ConversationPanel({
         <strong>DATA-04 · Conversation Review</strong> — Popularity ≠ quality ≠
         approval
       </summary>
-      {locked&&!visibleRuns.length&&<p data-testid="conversation-empty">PARTIAL · No verified conversation collection exists in this real-data copy. Reply/Editorial tools require a separately approved DATA-04 LIVE pilot; no synthetic replies are substituted.</p>}
+      {locked && !visibleRuns.length && (
+        <p data-testid="conversation-empty">
+          PARTIAL · No verified conversation collection exists in this real-data
+          copy. Reply/Editorial tools require a separately approved DATA-04 LIVE
+          pilot; no synthetic replies are substituted.
+        </p>
+      )}
       <p>
         Public relationship evidence only. Cron OFF · LIVE{" "}
         {options?.liveEnabled
@@ -208,13 +298,38 @@ export function ConversationPanel({
             >
               <option value={1}>1</option>
               <option value={2}>2</option>
+              <option value={3}>3</option>
             </select>
+          </label>
+          <label>
+            Priority{" "}
+            <select
+              data-testid="conversation-priority"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as "HOT" | "RECENT")}
+            >
+              <option value="HOT">HOT · observed signals</option>
+              <option value="RECENT">RECENT · publication time</option>
+            </select>
+          </label>
+          <label>
+            Minimum known interactions{" "}
+            <input
+              data-testid="conversation-min-interactions"
+              type="number"
+              min={0}
+              max={1000000000}
+              value={minInteractions}
+              onChange={(e) => setMinInteractions(Number(e.target.value))}
+            />
           </label>
         </>
       )}
       <button
         data-testid="conversation-start"
-        disabled={locked || busy || !(options?.liveEnabled || options?.syntheticEnabled)}
+        disabled={
+          locked || busy || !(options?.liveEnabled || options?.syntheticEnabled)
+        }
         onClick={() => void start()}
       >
         {sourceUrl ? "Enrich selected source" : "Discover conversations"}
@@ -233,7 +348,7 @@ export function ConversationPanel({
         Run{" "}
         <select
           data-testid="conversation-runs"
-          value={run?.id || ''}
+          value={run?.id || ""}
           onChange={(e) => {
             if (canSwitch()) setRunId(e.target.value);
           }}
@@ -249,8 +364,12 @@ export function ConversationPanel({
       {run && (
         <>
           <p data-testid="conversation-run-status">
-            {run.execution} · {run.stage} · {run.status === "RUNNING" ? Math.max(0, Date.now()-Date.parse(run.startedAt)) : run.elapsedMs} ms · ranking{" "}
-            {run.ranking?.status}: {run.ranking?.reasons.join("; ")}
+            {run.execution} · {run.stage} ·{" "}
+            {run.status === "RUNNING"
+              ? Math.max(0, Date.now() - Date.parse(run.startedAt))
+              : run.elapsedMs}{" "}
+            ms · ranking {run.ranking?.status}:{" "}
+            {run.ranking?.reasons.join("; ")}
           </p>
           <details>
             <summary>Candidate popularity ranking</summary>
@@ -261,8 +380,14 @@ export function ConversationPanel({
                 </a>{" "}
                 ·{" "}
                 {x.post
-                  ? `likes ${x.post.engagement.likes ?? "UNKNOWN"} / replies ${x.post.engagement.replies ?? "UNKNOWN"}`
+                  ? `likes ${x.post.engagement.likes ?? "UNKNOWN"}${x.post.engagementFields?.likeCount?.approximate ? " (approx.)" : ""} / replies ${x.post.engagement.replies ?? "UNKNOWN"}${x.post.engagementFields?.replyCount?.approximate ? " (approx.)" : ""} / reposts ${x.post.engagement.reposts ?? "UNKNOWN"} / shares ${x.post.engagement.shares ?? "UNKNOWN"}`
                   : "Metadata unavailable"}{" "}
+                · score{" "}
+                {run.ranking?.ranked?.find((r) => r.url === x.url)?.score ??
+                  "UNKNOWN"}{" "}
+                / coverage{" "}
+                {run.ranking?.ranked?.find((r) => r.url === x.url)?.coverage ??
+                  "UNKNOWN"}{" "}
                 ·{" "}
                 {run.ranking?.selected.includes(x.url)
                   ? "SELECTED FOR ENRICHMENT"
@@ -321,7 +446,8 @@ export function ConversationPanel({
           </a>
           <p style={{ whiteSpace: "pre-wrap" }}>{c.root.originalText}</p>
           <p>
-            Type {c.root.itemType || "UNKNOWN"} · provenance {c.root.provenance.method}
+            Type {c.root.itemType || "UNKNOWN"} · provenance{" "}
+            {c.root.provenance.method}
           </p>
           {!!c.root.attachments?.length && (
             <section data-testid="conversation-root-media">
@@ -332,15 +458,27 @@ export function ConversationPanel({
                     <img
                       src={attachment.localUri}
                       alt="Threads root attachment; OCR not run"
-                      style={{ maxWidth: "100%", maxHeight: 420, objectFit: "contain" }}
+                      style={{
+                        maxWidth: "100%",
+                        maxHeight: 420,
+                        objectFit: "contain",
+                      }}
                     />
                   ) : (
                     <p>Image preview {attachment.status}</p>
                   )}
                   <figcaption>
-                    {attachment.status} · {attachment.mimeType || "MIME UNKNOWN"} · {attachment.width ?? "?"}×{attachment.height ?? "?"} · {attachment.bytes ?? "?"} bytes · OCR NOT_RUN · rights UNKNOWN
+                    {attachment.status} ·{" "}
+                    {attachment.mimeType || "MIME UNKNOWN"} ·{" "}
+                    {attachment.width ?? "?"}×{attachment.height ?? "?"} ·{" "}
+                    {attachment.bytes ?? "?"} bytes · OCR NOT_RUN · rights
+                    UNKNOWN
                   </figcaption>
-                  <a href={attachment.sourceUrl} target="_blank" rel="noreferrer">
+                  <a
+                    href={attachment.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
                     Public source image
                   </a>
                 </figure>
@@ -439,19 +577,61 @@ export function ConversationPanel({
                     {JSON.stringify({ quality, evidence: r.evidence }, null, 2)}
                   </pre>
                 </details>
-              <EditorialPanel collectionId={collectionId} selectionRevision={view!.review.revision}/>
-        </article>
+                <EditorialPanel
+                  collectionId={collectionId}
+                  selectionRevision={view!.review.revision}
+                />
+              </article>
             );
           })}
-          <details>
-            <summary>Unverified context — excluded from selection</summary>
-            {c.unverified.map((x, i) => (
-              <p key={i}>
-                {x.url || "Unknown URL"} · {x.reason}
-                {x.observation ? <><br/>OBSERVED_ON_TARGET_PAGE · @{x.observation.author.handle}<br/>{x.observation.originalText}</> : <><br/>UNKNOWN · Nội dung card chưa được lưu trong lần thu thập này.</>}
-              </p>
+          <details open>
+            <summary>
+              Observed context · selectable for DRAFT, never parent-verified
+              automatically
+            </summary>
+            {view!.observedContexts.map((x) => (
+              <article key={x.url} data-testid="observed-context-card">
+                <label>
+                  <input
+                    type="checkbox"
+                    data-testid="observed-context-selected"
+                    checked={selectedObserved.includes(x.url)}
+                    onChange={(e) => {
+                      setSelectedObserved((old) =>
+                        e.target.checked
+                          ? [...old, x.url]
+                          : old.filter((v) => v !== x.url),
+                      );
+                      setDirty(true);
+                    }}
+                  />{" "}
+                  Select for Script DRAFT
+                </label>
+                <strong> @{x.author}</strong>
+                <p>{x.displayText}</p>
+                <a href={x.url} target="_blank" rel="noreferrer">
+                  Observed permalink
+                </a>
+                <p>
+                  {x.relationship} · {x.quality.bucket} · score{" "}
+                  {x.quality.score} ·{" "}
+                  {x.recommended ? "RECOMMENDED" : "HUMAN REVIEW"}
+                </p>
+                <details>
+                  <summary>Evidence / quality reasons</summary>
+                  <pre>{JSON.stringify(x.reasons, null, 2)}</pre>
+                </details>
+              </article>
             ))}
+            {!view!.observedContexts.length && (
+              <p>No persisted observed-card body is available.</p>
+            )}
           </details>
+          <p data-testid="conversation-draft-estimate">
+            Selected narration estimate: {view!.draftEstimate.minimumSeconds}–
+            {view!.draftEstimate.maximumSeconds}s · ESTIMATED_TEXT_ONLY, not
+            measured audio · target 60–90s.
+          </p>
           <details>
             <summary>All score breakdowns</summary>
             <pre style={{ maxHeight: 300, overflow: "auto" }}>
@@ -494,6 +674,7 @@ export function ConversationPanel({
                     requestId: crypto.randomUUID(),
                     revision: view!.review.revision,
                     selectedReplyIds: selected,
+                    selectedObservedUrls: selectedObserved,
                     replyLabels: labels,
                     decision,
                     reason,
@@ -510,26 +691,64 @@ export function ConversationPanel({
             Save reply selection & feedback
           </button>
           <button
+            data-testid="conversation-create-draft"
+            title={
+              reviewLocked
+                ? "Sandbox review writes are disabled"
+                : dirty
+                  ? "Save the current selection before creating a draft"
+                  : ""
+            }
+            disabled={
+              reviewLocked ||
+              busy ||
+              dirty ||
+              (!selected.length && !selectedObserved.length)
+            }
+            onClick={() =>
+              void action(async () => {
+                const draft = await studioRequest<any>(
+                  base + "/collections/" + collectionId + "/source-draft",
+                  { revision: view!.review.revision, confirmDraft: true },
+                );
+                const u = new URL(window.location.href);
+                u.searchParams.set("area", "Video Studio");
+                u.searchParams.set("step", "Script");
+                u.searchParams.set("session", draft.id);
+                u.searchParams.delete("view");
+                window.location.assign(u.pathname + u.search);
+              })
+            }
+          >
+            Create Script DRAFT
+          </button>
+          <button
             data-testid="conversation-copy-report"
             onClick={() =>
-              void copyReport(reportMarkdown())
-                .then(() => setNotice("Persisted report copied"))
+              void fullReport()
+                .then((full) => copyReport(fullReportMarkdown(full)))
+                .then(() => setNotice("Full persisted run report copied"))
                 .catch((e) => setError(e.message))
             }
           >
             Copy Report
           </button>
-          <button data-testid="conversation-export-markdown" onClick={exportMarkdown}>
+          <button
+            data-testid="conversation-export-markdown"
+            onClick={() =>
+              void fullReport()
+                .then((full) => exportMarkdown(fullReportMarkdown(full)))
+                .catch((e) => setError(e.message))
+            }
+          >
             Export Markdown
           </button>
           <button
             data-testid="conversation-export-json"
             onClick={() =>
-              exportJson("conversation-report.json", {
-                run,
-                record: view!.record,
-                review: view!.review,
-              })
+              void fullReport()
+                .then((full) => exportJson("conversation-report.json", full))
+                .catch((e) => setError(e.message))
             }
           >
             Export JSON

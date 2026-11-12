@@ -47,6 +47,10 @@ export interface PublicPost {
     reposts: number | null;
     shares: number | null;
   };
+  engagementFields?: Record<
+    'likeCount' | 'replyCount' | 'repostCount' | 'shareCount',
+    import('../studio/metadata-fields').ObservedField
+  >;
   provenance: {
     documentUrl: string;
     observedAt: string;
@@ -77,7 +81,7 @@ export interface UnverifiedCandidate {
     observedAt: string;
     author: { handle: string; name: string | null };
     originalText: string;
-    contextEvidence?:import('../studio/context-classification').ContextRegionEvidence[];
+    contextEvidence?: import('../studio/context-classification').ContextRegionEvidence[];
   };
 }
 export interface ThreadCollection {
@@ -143,6 +147,8 @@ export interface ConversationRun {
     urls?: string[];
     keyword?: string;
     limit: number;
+    priority?: 'HOT' | 'RECENT';
+    minInteractions?: number;
   };
   configHash: string;
   execution: 'LIVE' | 'SYNTHETIC';
@@ -152,7 +158,20 @@ export interface ConversationRun {
   completedAt: string | null;
   elapsedMs: number;
   candidates: PopularityCandidate[] | null;
-  ranking: { status: Coverage; reasons: string[]; selected: string[] } | null;
+  ranking: {
+    status: Coverage;
+    reasons: string[];
+    selected: string[];
+    priority?: string;
+    minInteractions?: number;
+    ranked?: Array<{
+      url: string;
+      score: number | null;
+      coverage: Coverage;
+      interactionTotal: number | null;
+      thresholdStatus: string;
+    }>;
+  } | null;
   captures: Array<{
     url: string;
     collection: ThreadCollection;
@@ -171,6 +190,7 @@ export interface ConversationReview {
   collectionId: string;
   revision: number;
   selectedReplyIds: string[];
+  selectedObservedUrls?: string[];
   replyLabels: Record<string, ReplyLabel>;
   decision: 'ACCEPT' | 'REJECT' | 'NEEDS_REVIEW';
   reason: string;
@@ -180,6 +200,7 @@ export interface ConversationReview {
     at: string;
     revision: number;
     selectedReplyIds: string[];
+    selectedObservedUrls?: string[];
     replyLabels: Record<string, ReplyLabel>;
     decision: string;
     reason: string;

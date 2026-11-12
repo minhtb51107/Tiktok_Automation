@@ -45,4 +45,26 @@ describe('DATA04 popularity — synthetic', () => {
         .value,
     ).toBeNull();
   });
+  test('HOT uses available partial evidence while RECENT uses timestamps and threshold retains unknown metadata', () => {
+    const a = { url: p('A', 10).url, post: p('A', 10), observedOrder: 0 },
+      b = { url: p('B', 500).url, post: p('B', 500), observedOrder: 1 },
+      unknown = {
+        url: 'https://www.threads.com/@test/post/C',
+        post: null,
+        observedOrder: 2,
+      };
+    b.post.engagement.reposts = null;
+    b.post.engagement.shares = null;
+    expect(
+      rankCandidates([a, b], 1, '2026-11-01T02:00:00Z', { priority: 'HOT' })
+        .selected,
+    ).toEqual([b.url]);
+    const ranked = rankCandidates([a, unknown], 2, '2026-11-01T02:00:00Z', {
+      priority: 'HOT',
+      minInteractions: 100,
+    });
+    expect(ranked.selected).toEqual([unknown.url]);
+    expect(ranked.ranked[0].thresholdStatus).toBe('UNKNOWN');
+    expect(ranked.status).toBe('PARTIAL');
+  });
 });

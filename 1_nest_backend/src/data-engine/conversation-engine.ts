@@ -14,6 +14,7 @@ import {
   type ThreadCollection,
   type PopularityCandidate,
 } from './conversation-contracts';
+import { observedContextViews } from './conversation-context';
 export interface ConversationProvider {
   execution: 'LIVE' | 'SYNTHETIC';
   discover(keyword: string): Promise<PopularityCandidate[]>;
@@ -53,15 +54,25 @@ function request(body: any): ConversationRun['request'] {
     !/^[\w-]{1,100}$/.test(body.requestId) ||
     !Number.isInteger(body.limit ?? 1) ||
     (body.limit ?? 1) < 1 ||
-    (body.limit ?? 1) > 2
+    (body.limit ?? 1) > 3
   )
     throw Error('CONVERSATION_INVALID_REQUEST');
   const limit = body.limit ?? 1;
+  const priority = body.priority === undefined ? 'HOT' : body.priority;
+  const minInteractions =
+    body.minInteractions === undefined ? 0 : body.minInteractions;
+  if (
+    !['HOT', 'RECENT'].includes(priority) ||
+    !Number.isSafeInteger(minInteractions) ||
+    minInteractions < 0 ||
+    minInteractions > 1_000_000_000
+  )
+    throw Error('CONVERSATION_INVALID_RANKING');
   if (body.urls !== undefined) {
     if (
       !Array.isArray(body.urls) ||
       body.urls.length < 1 ||
-      body.urls.length > 2
+      body.urls.length > 3
     )
       throw Error('CONVERSATION_INVALID_URLS');
     const urls = [
@@ -74,7 +85,13 @@ function request(body: any): ConversationRun['request'] {
       ),
     ];
     if (urls.length > limit) throw Error('CONVERSATION_LIMIT_MISMATCH');
-    return { requestId: body.requestId, urls, limit };
+    return {
+      requestId: body.requestId,
+      urls,
+      limit,
+      priority,
+      minInteractions,
+    };
   }
   if (
     typeof body.keyword !== 'string' ||
@@ -82,7 +99,13 @@ function request(body: any): ConversationRun['request'] {
     body.keyword.length > 120
   )
     throw Error('CONVERSATION_INVALID_KEYWORD');
-  return { requestId: body.requestId, keyword: body.keyword.trim(), limit };
+  return {
+    requestId: body.requestId,
+    keyword: body.keyword.trim(),
+    limit,
+    priority,
+    minInteractions,
+  };
 }
 /** Explicit bounded consumer. No timer, cron, auto resume or automatic production decisions. */
 export class ConversationEngine {
@@ -188,7 +211,7 @@ export class ConversationEngine {
               post: null,
             }))
           : await this.provider.discover(run.request.keyword!);
-        if (run.candidates.length > 6)
+        if (run.candidates.length > 10)
           throw Error('CONVERSATION_CANDIDATE_BUDGET_EXCEEDED');
         const seen = new Set<string>();
         run.candidates = run.candidates.filter((c) => {
@@ -203,6 +226,10 @@ export class ConversationEngine {
           run.candidates,
           run.request.limit,
           run.startedAt,
+          {
+            priority: run.request.priority,
+            minInteractions: run.request.minInteractions,
+          },
         );
         await this.save(run);
       }
@@ -431,6 +458,7 @@ export class ConversationEngine {
         collectionId: id,
         revision: 0,
         selectedReplyIds: [],
+        selectedObservedUrls: [],
         replyLabels: {},
         decision: 'NEEDS_REVIEW',
         reason: '',
@@ -455,10 +483,20 @@ export class ConversationEngine {
       )
         throw Error('CONVERSATION_INVALID_FEEDBACK');
       const selected = [...new Set<string>(body.selectedReplyIds)];
+      const observed = observedContextViews(record.collection),
+        selectedObserved = [
+          ...new Set<string>(
+            (body.selectedObservedUrls ?? [])
+              .map((url: unknown) => canonicalPost(url)?.url)
+              .filter((url: unknown): url is string => typeof url === 'string'),
+          ),
+        ];
       if (
         selected.some((x) => !record.collection.replies.some((r) => r.id === x))
       )
         throw Error('CONVERSATION_UNKNOWN_REPLY');
+      if (selectedObserved.some((url) => !observed.some((x) => x.url === url)))
+        throw Error('CONVERSATION_UNKNOWN_OBSERVED_CONTEXT');
       const replyLabels = body.replyLabels ?? {};
       if (
         !replyLabels ||
@@ -480,6 +518,7 @@ export class ConversationEngine {
       const inputHash = hash({
         revision: body.revision,
         selected,
+        selectedObserved,
         replyLabels,
         decision: body.decision,
         reason: body.reason,
@@ -497,6 +536,7 @@ export class ConversationEngine {
           ...old,
           revision,
           selectedReplyIds: selected,
+          selectedObservedUrls: selectedObserved,
           replyLabels,
           decision: body.decision,
           reason: body.reason,
@@ -508,6 +548,7 @@ export class ConversationEngine {
               at: new Date().toISOString(),
               revision,
               selectedReplyIds: selected,
+              selectedObservedUrls: selectedObserved,
               replyLabels,
               decision: body.decision,
               reason: body.reason,
@@ -534,6 +575,17 @@ export class ConversationEngine {
           parentId: r.parentId,
           originalText: r.originalText,
           evidence: r.evidence,
+        })),
+      observedReferences: observedContextViews(record.collection)
+        .filter((x) => (review.selectedObservedUrls || []).includes(x.url))
+        .map((x) => ({
+          id: x.id,
+          url: x.url,
+          originalText: x.originalText,
+          displayText: x.displayText,
+          relationship: x.relationship,
+          reasons: x.reasons,
+          raw: x.raw,
         })),
       reviewRevision: review.revision,
       qualityDecision: review.decision,

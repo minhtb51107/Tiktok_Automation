@@ -5,10 +5,10 @@ import {
   type RelationshipEvidence,
   type ThreadCollection,
 } from './conversation-contracts';
-import {canonicalPost} from './conversation-identity';
-export {canonicalPost} from './conversation-identity';
+import { canonicalPost } from './conversation-identity';
+export { canonicalPost } from './conversation-identity';
 export interface PublicDocument {
-  domReplies?:import('../studio/context-classification').DomReplyEvidence[];
+  domReplies?: import('../studio/context-classification').DomReplyEvidence[];
   url: string;
   observedAt: string;
   synthetic: boolean;
@@ -19,6 +19,7 @@ export interface PublicDocument {
     url: string;
     publishedAt: string | null;
     engagement: PublicPost['engagement'];
+    engagementFields?: PublicPost['engagementFields'];
   }>;
 }
 const text = (x: unknown): string | null =>
@@ -89,13 +90,36 @@ export function collectEvidence(
     if (x.comment) walk(x.comment, pointer + '/comment', id?.url);
   }
   doc.jsonLd.slice(0, 20).forEach((x, i) => walk(x, '/' + i));
-  for(const r of (doc.domReplies??[]).slice(0,40)){
-    const own=canonicalPost(r.subjectUrl),parent=canonicalPost(r.parentUrl);
-    if(!own||!parent||canonicalPost(r.documentUrl)?.url!==identity.url||r.headerScoped!==true||canonicalPost(r.subjectTimePermalink)?.url!==own.url||!r.pointer||!/^(replying to|đang trả lời)(?:\s+@[\w.-]+)?$/iu.test(r.label.trim()))continue;
+  for (const r of (doc.domReplies ?? []).slice(0, 40)) {
+    const own = canonicalPost(r.subjectUrl),
+      parent = canonicalPost(r.parentUrl);
+    if (
+      !own ||
+      !parent ||
+      canonicalPost(r.documentUrl)?.url !== identity.url ||
+      r.headerScoped !== true ||
+      canonicalPost(r.subjectTimePermalink)?.url !== own.url ||
+      !r.pointer ||
+      !/^(replying to|đang trả lời)(?:\s+@[\w.-]+)?$/iu.test(r.label.trim())
+    )
+      continue;
     // Existing conflicting structured records remain conservative; do not pick the convenient one.
-    const previous=nodes.get(own.url)||[];
-    if(previous.some(o=>o.kind!=='DOM_EXPLICIT_REPLY_TARGET'))continue;
-    nodes.set(own.url,[...previous,{node:{'@type':'Comment',url:own.url,text:r.bodyText,author:{url:r.authorUrl}},pointer:r.pointer,parent:parent.url,kind:'DOM_EXPLICIT_REPLY_TARGET'}]);
+    const previous = nodes.get(own.url) || [];
+    if (previous.some((o) => o.kind !== 'DOM_EXPLICIT_REPLY_TARGET')) continue;
+    nodes.set(own.url, [
+      ...previous,
+      {
+        node: {
+          '@type': 'Comment',
+          url: own.url,
+          text: r.bodyText,
+          author: { url: r.authorUrl },
+        },
+        pointer: r.pointer,
+        parent: parent.url,
+        kind: 'DOM_EXPLICIT_REPLY_TARGET',
+      },
+    ]);
   }
   // Conflicting handles for one stable post ID are not separate verified identities.
   const identityCounts = new Map<string, number>();
@@ -105,7 +129,10 @@ export function collectEvidence(
   }
   const accepted = new Map<string, ThreadCollection['replies'][number]>(),
     pending = new Map(nodes);
-  const documentHash = hash({jsonLd:doc.jsonLd,domReplies:doc.domReplies??[]});
+  const documentHash = hash({
+    jsonLd: doc.jsonLd,
+    domReplies: doc.domReplies ?? [],
+  });
   for (let pass = 0; pass < 21 && pending.size; pass++) {
     let progressed = false;
     for (const [url, observations] of pending) {
@@ -156,7 +183,10 @@ export function collectEvidence(
           documentUrl: identity!.url,
           observedAt: doc.observedAt,
           synthetic: doc.synthetic,
-          method: observation.kind==='DOM_EXPLICIT_REPLY_TARGET'?'PUBLIC_HEADER_REPLY_LINK_AND_DOM_PERMALINK':'PUBLIC_JSON_LD_AND_DOM_PERMALINK',
+          method:
+            observation.kind === 'DOM_EXPLICIT_REPLY_TARGET'
+              ? 'PUBLIC_HEADER_REPLY_LINK_AND_DOM_PERMALINK'
+              : 'PUBLIC_JSON_LD_AND_DOM_PERMALINK',
         },
         parentId: parent!.id,
         rootId: root.id,
@@ -176,6 +206,7 @@ export function collectEvidence(
         ) || [];
       if (matching.length === 1) {
         accepted.get(url)!.engagement = matching[0].engagement;
+        accepted.get(url)!.engagementFields = matching[0].engagementFields;
         accepted.get(url)!.publishedAt ??= date(matching[0].publishedAt);
         accepted.get(url)!.provenance.method +=
           ';UNIQUE_CARD_LABELLED_COUNTERS';

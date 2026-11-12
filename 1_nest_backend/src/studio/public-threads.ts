@@ -1,14 +1,17 @@
 import { BadRequestException } from '@nestjs/common';
 import { request } from 'https';
 import { lookup } from 'dns/promises';
-import {BrowserResourceGuard} from '../data-engine/browser-resource-guard';
-import type {BrowserResourceReport} from '../data-engine/browser-resource-policy';
+import { BrowserResourceGuard } from '../data-engine/browser-resource-guard';
+import type { BrowserResourceReport } from '../data-engine/browser-resource-policy';
 import puppeteer from 'puppeteer';
-import {observePublicContext} from './public-context-dom';
-import {newRequestTelemetry,decidePublicRequest} from './public-request-telemetry';
-import {labelledCounts,contextLabelledCounts} from './metadata-fields';
+import { observePublicContext } from './public-context-dom';
+import {
+  newRequestTelemetry,
+  decidePublicRequest,
+} from './public-request-telemetry';
+import { labelledCounts, contextLabelledCounts } from './metadata-fields';
 import { matchExactTarget } from './target-identity';
-import {existingPublicBrowser} from '../modules/core/scraper/public-discovery';
+import { existingPublicBrowser } from '../modules/core/scraper/public-discovery';
 
 const hosts = [
   'threads.com',
@@ -48,12 +51,12 @@ const decode = (s: string) =>
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
 export interface PublicRecord {
-  contextEvidence?:import('./context-classification').ContextRegionEvidence[];
-  topic?:string|null;
-  bodyText?:string;
-  topicEvidence?:{href:string;label:string};
-  shareCount?:number|null;
-  fields?:Record<string,import('./metadata-fields').ObservedField>;
+  contextEvidence?: import('./context-classification').ContextRegionEvidence[];
+  topic?: string | null;
+  bodyText?: string;
+  topicEvidence?: { href: string; label: string };
+  shareCount?: number | null;
+  fields?: Record<string, import('./metadata-fields').ObservedField>;
   text: string;
   author: string;
   handle: string | null;
@@ -69,10 +72,16 @@ export interface PublicRecord {
   [key: string]: unknown;
 }
 export interface SourceAttempt {
-  requestTelemetry?:import('./public-request-telemetry').RequestTelemetry;
-  domReplyEvidence?:import('./context-classification').DomReplyEvidence[];
-  browserResources?:BrowserResourceReport;
-  boundedObservation?: {requests:number;scrolls:number;stopReason:string;minimumAvailableMiB:number;snapshots:unknown[]};
+  requestTelemetry?: import('./public-request-telemetry').RequestTelemetry;
+  domReplyEvidence?: import('./context-classification').DomReplyEvidence[];
+  browserResources?: BrowserResourceReport;
+  boundedObservation?: {
+    requests: number;
+    scrolls: number;
+    stopReason: string;
+    minimumAvailableMiB: number;
+    snapshots: unknown[];
+  };
   scope?: 'TARGET_ONLY' | 'WITH_CONTEXT';
   matchedTargetId?: string | null;
   matchMethod?: 'DOM_PERMALINK' | 'PUBLIC_CANONICAL_METADATA' | 'UNVERIFIED';
@@ -97,10 +106,19 @@ async function publicGet(
   const u = new URL(threadsUrl(url));
   const resolving = lookup(u.hostname, { all: true });
   let dnsDeadline: ReturnType<typeof setTimeout> | undefined;
-  const addresses = await (absoluteDeadline ? Promise.race([
-    resolving,
-    new Promise<never>((_,reject)=>{dnsDeadline=setTimeout(()=>reject(Error('Public DNS deadline exceeded')),timeoutMs);}),
-  ]).finally(()=>{if(dnsDeadline)clearTimeout(dnsDeadline);}) : resolving);
+  const addresses = await (absoluteDeadline
+    ? Promise.race([
+        resolving,
+        new Promise<never>((_, reject) => {
+          dnsDeadline = setTimeout(
+            () => reject(Error('Public DNS deadline exceeded')),
+            timeoutMs,
+          );
+        }),
+      ]).finally(() => {
+        if (dnsDeadline) clearTimeout(dnsDeadline);
+      })
+    : resolving);
   // Pin a public IPv4 address so DNS cannot change between validation and connection.
   const a = addresses.find(
     (x) =>
@@ -141,10 +159,19 @@ async function publicGet(
         res.on('error', reject);
       },
     );
-    req.setTimeout(timeoutMs, () => req.destroy(Error('Public response timeout')));
+    req.setTimeout(timeoutMs, () =>
+      req.destroy(Error('Public response timeout')),
+    );
     // DATA-04 controlled reads also bound total response time, not just idle socket time.
-    const deadline = absoluteDeadline ? setTimeout(()=>req.destroy(Error('Public response deadline exceeded')),timeoutMs) : undefined;
-    req.on('close',()=>{if(deadline)clearTimeout(deadline);});
+    const deadline = absoluteDeadline
+      ? setTimeout(
+          () => req.destroy(Error('Public response deadline exceeded')),
+          timeoutMs,
+        )
+      : undefined;
+    req.on('close', () => {
+      if (deadline) clearTimeout(deadline);
+    });
     req.on('error', reject);
     req.end();
   });
@@ -178,8 +205,12 @@ export async function extractPublicThreads(
   try {
     let url = threadsUrl(input),
       html = '';
-    for (let n = 0; n <= (controlled?2:5); n++) {
-      const response = await publicGet(url,controlled?8000:20000,controlled);
+    for (let n = 0; n <= (controlled ? 2 : 5); n++) {
+      const response = await publicGet(
+        url,
+        controlled ? 8000 : 20000,
+        controlled,
+      );
       out.redirects.push({
         url,
         status: response.status,
@@ -190,7 +221,7 @@ export async function extractPublicThreads(
         response.status < 400 &&
         response.location
       ) {
-        if (n === (controlled?2:5)) throw Error('Redirect limit reached');
+        if (n === (controlled ? 2 : 5)) throw Error('Redirect limit reached');
         url = threadsUrl(new URL(response.location, url).href);
         continue;
       }
@@ -262,33 +293,70 @@ export async function extractPublicThreads(
     } else {
       let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
       let stage = 'browser';
-      const guard=new BrowserResourceGuard(controlled?(live03?Math.max(1,60000-(Date.now()-started)):20000):30000);
+      const guard = new BrowserResourceGuard(
+        controlled
+          ? live03
+            ? Math.max(1, 60000 - (Date.now() - started))
+            : 20000
+          : 30000,
+      );
       try {
         await guard.start();
-        browser = await guard.launch(signal=>puppeteer.launch({
-          executablePath: executable,
-          signal,
-          ...(live03?{timeout:Math.max(1,60000-(Date.now()-started))}:{}),
-          headless: true,
-          args: ['--disable-background-networking','--disable-extensions','--renderer-process-limit=1'],
-        }));
-        let stopReason='COMPLETED',minimumAvailableMiB=guard.report.minimumAvailableMiB!,scrollCount=0;
-        if(live03)out.boundedObservation={requests:out.redirects.length,scrolls:0,stopReason,minimumAvailableMiB,snapshots:[]};
-        const pages=await browser.pages();const page=pages[0]??await browser.newPage();
-        for(const extra of pages.slice(1))await extra.close();
+        browser = await guard.launch((signal) =>
+          puppeteer.launch({
+            executablePath: executable,
+            signal,
+            ...(live03
+              ? { timeout: Math.max(1, 60000 - (Date.now() - started)) }
+              : {}),
+            headless: true,
+            args: [
+              '--disable-background-networking',
+              '--disable-extensions',
+              '--renderer-process-limit=1',
+            ],
+          }),
+        );
+        let stopReason = 'COMPLETED',
+          minimumAvailableMiB = guard.report.minimumAvailableMiB!,
+          scrollCount = 0;
+        if (live03)
+          out.boundedObservation = {
+            requests: out.redirects.length,
+            scrolls: 0,
+            stopReason,
+            minimumAvailableMiB,
+            snapshots: [],
+          };
+        const pages = await browser.pages();
+        const page = pages[0] ?? (await browser.newPage());
+        for (const extra of pages.slice(1)) await extra.close();
         await page.setBypassServiceWorker(true);
         await page.setRequestInterception(true);
-        out.requestTelemetry=newRequestTelemetry();
-        let navCount = 0, requestCount=0;
+        out.requestTelemetry = newRequestTelemetry();
+        let navCount = 0,
+          requestCount = 0;
         page.on('request', (r) => {
           requestCount++;
           try {
             if (r.isNavigationRequest() && r.frame() === page.mainFrame())
               navCount++;
             out.browserNavigations = navCount;
-            if(live03&&requestCount>147)stopReason='REQUEST_BUDGET';
-            const admitted=decidePublicRequest(out.requestTelemetry!,r.url(),r.resourceType(),navCount,{events:controlled?(live03?147:150):Infinity,navigation:live03?2:controlled?4:6,blockHeavy:controlled});
-            void (admitted?r.continue():r.abort()).catch(()=>{out.requestTelemetry!.handlingFailures++});
+            if (live03 && requestCount > 147) stopReason = 'REQUEST_BUDGET';
+            const admitted = decidePublicRequest(
+              out.requestTelemetry!,
+              r.url(),
+              r.resourceType(),
+              navCount,
+              {
+                events: controlled ? (live03 ? 147 : 150) : Infinity,
+                navigation: live03 ? 2 : controlled ? 4 : 6,
+                blockHeavy: controlled,
+              },
+            );
+            void (admitted ? r.continue() : r.abort()).catch(() => {
+              out.requestTelemetry!.handlingFailures++;
+            });
           } catch {
             void r.abort();
           }
@@ -302,93 +370,219 @@ export async function extractPublicThreads(
           throw Error('Navigation HTTP ' + response.status());
         if (/\/login|\/accounts\//.test(page.url()))
           throw Error('Public access requires login; no login attempted');
-        if(/\/(?:challenge|checkpoint)(?:\/|\?|$)/i.test(page.url())||await page.evaluate(()=>!!document.querySelector('input[type="password"],iframe[src*="captcha"],[data-testid*="captcha"]')))throw Error('Public access protection encountered; stopped without bypass');
+        if (
+          /\/(?:challenge|checkpoint)(?:\/|\?|$)/i.test(page.url()) ||
+          (await page.evaluate(
+            () =>
+              !!document.querySelector(
+                'input[type="password"],iframe[src*="captcha"],[data-testid*="captcha"]',
+              ),
+          ))
+        )
+          throw Error(
+            'Public access protection encountered; stopped without bypass',
+          );
         await page
           .waitForSelector('[data-pressable-container="true"], article', {
             timeout: 10000,
           })
           .catch(() => {});
         stage = 'parser';
-        const snapshots:unknown[]=[];
-        const collected=new Map<string,any>();
-        for(let step=0;step<=(live03?4:0);step++){
-        guard.check();minimumAvailableMiB=guard.report.minimumAvailableMiB!;
-        if(live03&&stopReason!=='COMPLETED')break;
-        if(/\/(?:login|accounts|challenge|checkpoint)(?:\/|\?|$)/i.test(page.url())||await page.evaluate(()=>!!document.querySelector('input[type="password"],iframe[src*="captcha"],[data-testid*="captcha"]'))){stopReason='ACCESS_BLOCKED';break;}
-        const snapshot = await page.evaluate(() => {
-          const nodes = [
-            ...document.querySelectorAll('[data-pressable-container="true"]'),
-          ];
-          return nodes.slice(0, 50).map((node) => {
-            const spans = [...node.querySelectorAll('span[dir="auto"]')]
-              .map((x) => x.textContent?.trim() || '')
-              .filter(Boolean);
-            const time = node.querySelector('time');
-            const imgs = [...node.querySelectorAll('img')];
-            const avatar =
-              imgs.find((i) => i.width > 10 && i.width < 100)?.src || null;
-            const permalink =
-              [...node.querySelectorAll('a[href]')]
-                .map((a) => a.getAttribute('href') || '')
-                .find((h) => /^\/@[\w.-]+\/post\/[\w-]+\/?$/.test(h)) || null;
-            const visibleMetrics = spans.filter((s) =>
-              /^[\d.,]+[KkMm]?$/.test(s),
-            );
-            const controls=[...node.querySelectorAll('[role="button"],button')].map(c=>({label:c.querySelector('svg title')?.textContent||c.getAttribute('aria-label')||'',text:c.textContent||''}));
-            const metricIdentityCount=new Set([...node.querySelectorAll('a[href]')].map(a=>(a.getAttribute('href')||'').match(/^\/@[\w.-]+\/post\/([\w-]+)\/?$/)?.[1]).filter(Boolean)).size;
-            const topicLinks=[...node.querySelectorAll('a[href]')].filter(a=>{try{const u=new URL(a.getAttribute('href')||'',location.origin);return u.pathname==='/search'&&u.searchParams.get('serp_type')==='tags'&&!!u.searchParams.get('tag_id');}catch{return false;}});
-            const topicEvidence=topicLinks.length===1?{label:topicLinks[0].textContent?.trim()||'',href:topicLinks[0].getAttribute('href')||''}:null;
-            const content = spans
-              .filter(
-                (s) =>
-                  s !== permalink?.split('/')[1]?.slice(1) &&
-                  !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s) &&
-                  !visibleMetrics.includes(s) &&
-                  !['·', 'Tác giả', 'Author', 'Đã ghim', 'Pinned'].includes(s),
-              )
-              .join('\n');
-            // Body projection excludes structural chrome. Keep `content`/spans
-            // intact as the raw observation; never strip arbitrary authored lines.
-            const bodySpans=[...node.querySelectorAll('span[dir="auto"]')].filter(x=>{
-              if(x.closest('time,button,[role="button"]'))return false;
-              const link=x.closest('a[href]');
-              if(link){const href=link.getAttribute('href')||'';if(href.startsWith('/search?')||/^\/@[\w.-]+\/?$/.test(href)||href===permalink)return false;}
-              return true;
-            }).map(x=>x.textContent?.trim()||'').filter(Boolean);
-            return {
-              topicEvidence,
-              bodyText:bodySpans.join('\n'),
-              spans,
-              rawInnerText:(node as HTMLElement).innerText,
-              content,
-              permalink,
-              visibleMetrics,
-              controls,
-              metricIdentityCount,
-              timestampLabel:time?.textContent||null,
-              avatar,
-              createdAt: time?.getAttribute('datetime') || null,
-              media: [
-                ...imgs
-                  .filter((i) => i.src !== avatar && i.width >= 100)
-                  .map((i) => ({ url: i.src, kind: 'IMAGE' as const })),
-                ...[...node.querySelectorAll('video')]
-                  .filter((v) => v.currentSrc.startsWith('https:'))
-                  .map((v) => ({ url: v.currentSrc, kind: 'VIDEO' as const })),
-              ],
-            };
+        const snapshots: unknown[] = [];
+        const collected = new Map<string, any>();
+        for (let step = 0; step <= (live03 ? 4 : 0); step++) {
+          guard.check();
+          minimumAvailableMiB = guard.report.minimumAvailableMiB!;
+          if (live03 && stopReason !== 'COMPLETED') break;
+          if (
+            /\/(?:login|accounts|challenge|checkpoint)(?:\/|\?|$)/i.test(
+              page.url(),
+            ) ||
+            (await page.evaluate(
+              () =>
+                !!document.querySelector(
+                  'input[type="password"],iframe[src*="captcha"],[data-testid*="captcha"]',
+                ),
+            ))
+          ) {
+            stopReason = 'ACCESS_BLOCKED';
+            break;
+          }
+          const snapshot = await page.evaluate(() => {
+            const nodes = [
+              ...document.querySelectorAll('[data-pressable-container="true"]'),
+            ];
+            return nodes.slice(0, 50).map((node) => {
+              const spans = [...node.querySelectorAll('span[dir="auto"]')]
+                .map((x) => x.textContent?.trim() || '')
+                .filter(Boolean);
+              const time = node.querySelector('time');
+              const imgs = [...node.querySelectorAll('img')];
+              const avatar =
+                imgs.find((i) => i.width > 10 && i.width < 100)?.src || null;
+              const permalink =
+                [...node.querySelectorAll('a[href]')]
+                  .map((a) => a.getAttribute('href') || '')
+                  .find((h) => /^\/@[\w.-]+\/post\/[\w-]+\/?$/.test(h)) || null;
+              const visibleMetrics = spans.filter((s) =>
+                /^[\d.,]+[KkMm]?$/.test(s),
+              );
+              const controls = [
+                ...node.querySelectorAll('[role="button"],button'),
+              ].map((c) => ({
+                label:
+                  c.querySelector('svg title')?.textContent ||
+                  c.getAttribute('aria-label') ||
+                  '',
+                text: c.textContent || '',
+              }));
+              const metricIdentityCount = new Set(
+                [...node.querySelectorAll('a[href]')]
+                  .map(
+                    (a) =>
+                      (a.getAttribute('href') || '').match(
+                        /^\/@[\w.-]+\/post\/([\w-]+)\/?$/,
+                      )?.[1],
+                  )
+                  .filter(Boolean),
+              ).size;
+              const topicLinks = [...node.querySelectorAll('a[href]')].filter(
+                (a) => {
+                  try {
+                    const u = new URL(
+                      a.getAttribute('href') || '',
+                      location.origin,
+                    );
+                    return (
+                      u.pathname === '/search' &&
+                      u.searchParams.get('serp_type') === 'tags' &&
+                      !!u.searchParams.get('tag_id')
+                    );
+                  } catch {
+                    return false;
+                  }
+                },
+              );
+              const topicEvidence =
+                topicLinks.length === 1
+                  ? {
+                      label: topicLinks[0].textContent?.trim() || '',
+                      href: topicLinks[0].getAttribute('href') || '',
+                    }
+                  : null;
+              const content = spans
+                .filter(
+                  (s) =>
+                    s !== permalink?.split('/')[1]?.slice(1) &&
+                    !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s) &&
+                    !visibleMetrics.includes(s) &&
+                    !['·', 'Tác giả', 'Author', 'Đã ghim', 'Pinned'].includes(
+                      s,
+                    ),
+                )
+                .join('\n');
+              // Body projection excludes structural chrome. Keep `content`/spans
+              // intact as the raw observation; never strip arbitrary authored lines.
+              const bodySpans = [...node.querySelectorAll('span[dir="auto"]')]
+                .filter((x) => {
+                  if (x.closest('time,button,[role="button"]')) return false;
+                  const link = x.closest('a[href]');
+                  if (link) {
+                    const href = link.getAttribute('href') || '';
+                    if (
+                      href.startsWith('/search?') ||
+                      /^\/@[\w.-]+\/?$/.test(href) ||
+                      href === permalink
+                    )
+                      return false;
+                  }
+                  return true;
+                })
+                .map((x) => x.textContent?.trim() || '')
+                .filter(Boolean);
+              return {
+                topicEvidence,
+                bodyText: bodySpans.join('\n'),
+                spans,
+                rawInnerText: (node as HTMLElement).innerText,
+                content,
+                permalink,
+                visibleMetrics,
+                controls,
+                metricIdentityCount,
+                timestampLabel: time?.textContent || null,
+                avatar,
+                createdAt: time?.getAttribute('datetime') || null,
+                media: [
+                  ...imgs
+                    .filter((i) => i.src !== avatar && i.width >= 100)
+                    .map((i) => ({ url: i.src, kind: 'IMAGE' as const })),
+                  ...[...node.querySelectorAll('video')]
+                    .filter((v) => v.currentSrc.startsWith('https:'))
+                    .map((v) => ({
+                      url: v.currentSrc,
+                      kind: 'VIDEO' as const,
+                    })),
+                ],
+              };
+            });
           });
-        });
-        snapshots.push({step,observedAt:new Date().toISOString(),rows:snapshot});
-        for(const row of snapshot){if(row.permalink&&!collected.has(row.permalink)&&collected.size<40)collected.set(row.permalink,row);}
-        if(live03)out.boundedObservation={requests:requestCount+out.redirects.length,scrolls:scrollCount,stopReason,minimumAvailableMiB,snapshots};
-        if(!live03||collected.size>=40){if(live03)stopReason='CARD_BUDGET';break;}
-        if(step<4){await page.evaluate(()=>window.scrollBy(0,window.innerHeight));scrollCount++;await new Promise(r=>setTimeout(r,650));}
+          snapshots.push({
+            step,
+            observedAt: new Date().toISOString(),
+            rows: snapshot,
+          });
+          for (const row of snapshot) {
+            if (
+              row.permalink &&
+              !collected.has(row.permalink) &&
+              collected.size < 40
+            )
+              collected.set(row.permalink, row);
+          }
+          if (live03)
+            out.boundedObservation = {
+              requests: requestCount + out.redirects.length,
+              scrolls: scrollCount,
+              stopReason,
+              minimumAvailableMiB,
+              snapshots,
+            };
+          if (!live03 || collected.size >= 40) {
+            if (live03) stopReason = 'CARD_BUDGET';
+            break;
+          }
+          if (step < 4) {
+            await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+            scrollCount++;
+            await new Promise((r) => setTimeout(r, 650));
+          }
         }
-        const rows: Array<{metricIdentityCount?:number;permalink:string|null;content:string;bodyText:string;topicEvidence:{label:string;href:string}|null;controls:Array<{label:string;text:string}>;createdAt:string|null;timestampLabel:string|null;avatar:string|null;media:PublicRecord['media'];visibleMetrics:string[]}>=live03?[...collected.values()]:(snapshots[0] as any)?.rows||[];
-        const publicContext=await page.evaluate(observePublicContext);
-        out.domReplyEvidence=publicContext.replies;
-        if(live03)out.boundedObservation={requests:requestCount+out.redirects.length,scrolls:scrollCount,stopReason,minimumAvailableMiB,snapshots};
+        const rows: Array<{
+          metricIdentityCount?: number;
+          permalink: string | null;
+          content: string;
+          bodyText: string;
+          topicEvidence: { label: string; href: string } | null;
+          controls: Array<{ label: string; text: string }>;
+          createdAt: string | null;
+          timestampLabel: string | null;
+          avatar: string | null;
+          media: PublicRecord['media'];
+          visibleMetrics: string[];
+        }> = live03
+          ? [...collected.values()]
+          : (snapshots[0] as any)?.rows || [];
+        const publicContext = await page.evaluate(observePublicContext);
+        out.domReplyEvidence = publicContext.replies;
+        if (live03)
+          out.boundedObservation = {
+            requests: requestCount + out.redirects.length,
+            scrolls: scrollCount,
+            stopReason,
+            minimumAvailableMiB,
+            snapshots,
+          };
         diagnostic(
           'dom',
           rows.length ? 'DOM_FOUND' : 'DOM_UNAVAILABLE',
@@ -435,9 +629,9 @@ export async function extractPublicThreads(
             out.records = [anchor];
           }
           anchor.text = row.content;
-          anchor.topic=row.topicEvidence?.label||null;
-          anchor.bodyText=row.bodyText;
-          if(row.topicEvidence)anchor.topicEvidence=row.topicEvidence;
+          anchor.topic = row.topicEvidence?.label || null;
+          anchor.bodyText = row.bodyText;
+          if (row.topicEvidence) anchor.topicEvidence = row.topicEvidence;
           anchor.author = targetHandle;
           anchor.handle = targetHandle;
           anchor.url = 'https://www.threads.com' + row.permalink;
@@ -446,8 +640,38 @@ export async function extractPublicThreads(
           anchor.provenance.identity = 'exact DOM permalink /post/' + targetId;
         }
         if (row) {
-          anchor.fields={...labelledCounts(row.controls),createdAt:{status:row.createdAt?'AVAILABLE':'UNAVAILABLE',value:row.createdAt,raw:row.timestampLabel,source:'exact target time[datetime]'},avatar:{status:row.avatar?'AVAILABLE':'UNAVAILABLE',value:row.avatar,raw:null,source:'exact target DOM image'},media:{status:row.media.length?'AVAILABLE':'NOT_PRESENT',value:row.media.length,raw:null,source:'exact target visible media elements; hidden media not assessed'}};
-          for(const key of ['likeCount','replyCount','repostCount','shareCount'])anchor[key]=anchor.fields[key].value;
+          anchor.fields = {
+            ...labelledCounts(row.controls, out.retrievedAt),
+            createdAt: {
+              status: row.createdAt ? 'AVAILABLE' : 'UNAVAILABLE',
+              value: row.createdAt,
+              raw: row.timestampLabel,
+              source: 'exact target time[datetime]',
+              observedAt: out.retrievedAt,
+            },
+            avatar: {
+              status: row.avatar ? 'AVAILABLE' : 'UNAVAILABLE',
+              value: row.avatar,
+              raw: null,
+              source: 'exact target DOM image',
+              observedAt: out.retrievedAt,
+            },
+            media: {
+              status: row.media.length ? 'AVAILABLE' : 'NOT_PRESENT',
+              value: row.media.length,
+              raw: null,
+              source:
+                'exact target visible media elements; hidden media not assessed',
+              observedAt: out.retrievedAt,
+            },
+          };
+          for (const key of [
+            'likeCount',
+            'replyCount',
+            'repostCount',
+            'shareCount',
+          ])
+            anchor[key] = anchor.fields[key].value;
           anchor.avatar = row.avatar;
           anchor.createdAt = row.createdAt;
           anchor.media = row.media;
@@ -469,10 +693,18 @@ export async function extractPublicThreads(
               continue;
             seen.add(related.permalink);
             const handle = related.permalink.split('/')[1].slice(1);
-            const metrics=contextLabelledCounts(related.controls,related.metricIdentityCount);
+            const metrics = contextLabelledCounts(
+              related.controls,
+              related.metricIdentityCount,
+              out.retrievedAt,
+            );
             out.contextCandidates!.push({
-              contextEvidence:publicContext.regions.filter(e=>e.subjectUrl==='https://www.threads.com'+related.permalink),
-              bodyText:related.bodyText,
+              contextEvidence: publicContext.regions.filter(
+                (e) =>
+                  e.subjectUrl ===
+                  'https://www.threads.com' + related.permalink,
+              ),
+              bodyText: related.bodyText,
               text: related.content,
               author: handle,
               handle,
@@ -483,11 +715,11 @@ export async function extractPublicThreads(
               url: 'https://www.threads.com' + related.permalink,
               media: related.media,
               visibleMetrics: related.visibleMetrics,
-              fields:metrics,
-              likeCount:metrics.likeCount.value as number|null,
-              replyCount:metrics.replyCount.value as number|null,
-              repostCount:metrics.repostCount.value as number|null,
-              shareCount:metrics.shareCount.value as number|null,
+              fields: metrics,
+              likeCount: metrics.likeCount.value as number | null,
+              replyCount: metrics.replyCount.value as number | null,
+              repostCount: metrics.repostCount.value as number | null,
+              shareCount: metrics.shareCount.value as number | null,
               provenance: {
                 text: 'public DOM card below source in thread view; relationship unverified',
                 handle: 'DOM permalink',
@@ -505,18 +737,50 @@ export async function extractPublicThreads(
           `Exact matching: ${out.matchMethod}. ${out.contextCandidates!.length} context candidates kept separately. Reply hierarchy and engagement labels remain unverified.`,
         );
       } catch (e) {
-        if(guard.report.stopCode)diagnostic('resource',guard.report.stopCode,'Browser supervisor stopped this owned operation; see browserResources.');
+        if (guard.report.stopCode)
+          diagnostic(
+            'resource',
+            guard.report.stopCode,
+            'Browser supervisor stopped this owned operation; see browserResources.',
+          );
         diagnostic(
           stage,
           stage.toUpperCase() + '_ERROR',
           e instanceof Error ? e.message : 'Browser failed',
         );
       } finally {
-        try{await guard.close()}catch{diagnostic('resource','CONVERSATION_BROWSER_CLEANUP_UNVERIFIED','Owned browser cleanup could not be verified; no subsequent browser may start.');}
-        out.browserResources=guard.report;
-        if(guard.report.stopCode&&!out.diagnostics.some(d=>d.code===guard.report.stopCode))diagnostic('resource',guard.report.stopCode,'Owned browser stopped; see supervisor evidence.');
-        if(out.boundedObservation){out.boundedObservation.minimumAvailableMiB=guard.report.minimumAvailableMiB??out.boundedObservation.minimumAvailableMiB;if(guard.report.stopCode)out.boundedObservation.stopReason=guard.report.stopCode;}
-        for(const warning of guard.report.warnings)diagnostic('resource',warning,'Low RAM is advisory; not a benchmarked browser minimum.');
+        try {
+          await guard.close();
+        } catch {
+          diagnostic(
+            'resource',
+            'CONVERSATION_BROWSER_CLEANUP_UNVERIFIED',
+            'Owned browser cleanup could not be verified; no subsequent browser may start.',
+          );
+        }
+        out.browserResources = guard.report;
+        if (
+          guard.report.stopCode &&
+          !out.diagnostics.some((d) => d.code === guard.report.stopCode)
+        )
+          diagnostic(
+            'resource',
+            guard.report.stopCode,
+            'Owned browser stopped; see supervisor evidence.',
+          );
+        if (out.boundedObservation) {
+          out.boundedObservation.minimumAvailableMiB =
+            guard.report.minimumAvailableMiB ??
+            out.boundedObservation.minimumAvailableMiB;
+          if (guard.report.stopCode)
+            out.boundedObservation.stopReason = guard.report.stopCode;
+        }
+        for (const warning of guard.report.warnings)
+          diagnostic(
+            'resource',
+            warning,
+            'Low RAM is advisory; not a benchmarked browser minimum.',
+          );
       }
     }
     if (!out.matchedTargetId) {

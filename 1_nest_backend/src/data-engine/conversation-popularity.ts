@@ -17,6 +17,10 @@ export const POPULARITY_CONFIG = Object.freeze({
   caps: { likes: 10000, replies: 500, reposts: 500, shares: 500 },
   freshnessHours: 168,
 });
+export interface PopularityRankingOptions {
+  priority?: 'BALANCED' | 'HOT' | 'RECENT';
+  minInteractions?: number;
+}
 /** No follower/view estimates. Velocity requires two observations of exactly the same post. */
 export function popularity(
   post: PublicPost,
@@ -107,10 +111,26 @@ export function rankCandidates(
   candidates: PopularityCandidate[],
   limit: number,
   asOf: string,
+  options: PopularityRankingOptions = {},
 ) {
+  const priority = options.priority ?? 'BALANCED',
+    minInteractions = options.minInteractions ?? 0;
   const scored = candidates.map((x) => ({
     candidate: x,
     metric: x.post ? popularity(x.post, asOf) : null,
+    interactionTotal: x.post
+      ? Object.values(x.post.engagement)
+          .filter(
+            (v): v is number =>
+              typeof v === 'number' && Number.isFinite(v) && v >= 0,
+          )
+          .reduce((a, b) => a + b, 0)
+      : null,
+    knownInteractions: x.post
+      ? Object.values(x.post.engagement).filter(
+          (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0,
+        ).length
+      : 0,
   }));
   // Avoid ranking incomparable sparse observations as if they were popularity evidence.
   const keys = scored.map((x) =>
@@ -125,19 +145,71 @@ export function rankCandidates(
     scored.length > 0 &&
     scored.every((x) => x.metric?.coverage === 'SUFFICIENT') &&
     new Set(keys).size === 1;
-  scored.sort((a, b) =>
-    sufficient
-      ? b.metric!.score! - a.metric!.score! ||
-        a.candidate.observedOrder - b.candidate.observedOrder
-      : a.candidate.observedOrder - b.candidate.observedOrder,
+  const eligible = scored.filter(
+    (x) =>
+      !minInteractions ||
+      !x.knownInteractions ||
+      x.interactionTotal! >= minInteractions,
   );
+  eligible.sort((a, b) => {
+    if (priority === 'RECENT') {
+      const at = Date.parse(a.candidate.post?.publishedAt || ''),
+        bt = Date.parse(b.candidate.post?.publishedAt || '');
+      if (Number.isFinite(at) || Number.isFinite(bt))
+        return (
+          (Number.isFinite(bt) ? bt : -Infinity) -
+            (Number.isFinite(at) ? at : -Infinity) ||
+          a.candidate.observedOrder - b.candidate.observedOrder
+        );
+    }
+    if (priority === 'HOT' || sufficient) {
+      const as = a.metric?.score,
+        bs = b.metric?.score;
+      if (
+        (as !== null && as !== undefined) ||
+        (bs !== null && bs !== undefined)
+      )
+        return (
+          (bs ?? -1) - (as ?? -1) ||
+          a.candidate.observedOrder - b.candidate.observedOrder
+        );
+    }
+    return a.candidate.observedOrder - b.candidate.observedOrder;
+  });
+  const status = sufficient
+    ? ('SUFFICIENT' as const)
+    : eligible.some((x) => x.metric?.score !== null)
+      ? ('PARTIAL' as const)
+      : ('UNKNOWN' as const);
   return {
-    status: sufficient ? ('SUFFICIENT' as const) : ('PARTIAL' as const),
+    status,
+    priority,
+    minInteractions,
     reasons: [
       sufficient
         ? 'Comparable observed metrics; ranked by popularity/1'
-        : 'Insufficient comparable metadata; preserving observed order. HOT status unproven',
+        : priority === 'HOT'
+          ? 'Sparse observed metrics ranked flexibly; HOT status remains unproven'
+          : priority === 'RECENT'
+            ? 'Observed publication times prioritized; missing dates remain UNKNOWN'
+            : 'Insufficient comparable metadata; preserving observed order. HOT status unproven',
+      minInteractions
+        ? 'Known totals below the configured threshold are excluded; UNKNOWN totals are retained for review'
+        : 'No interaction threshold applied',
     ],
-    selected: scored.slice(0, limit).map((x) => x.candidate.url),
+    ranked: eligible.map((x) => ({
+      url: x.candidate.url,
+      score: x.metric?.score ?? null,
+      coverage: x.metric?.coverage ?? 'UNKNOWN',
+      interactionTotal: x.knownInteractions ? x.interactionTotal : null,
+      thresholdStatus: !minInteractions
+        ? 'NOT_APPLIED'
+        : !x.knownInteractions
+          ? 'UNKNOWN'
+          : x.interactionTotal! >= minInteractions
+            ? 'PASS'
+            : 'FAIL',
+    })),
+    selected: eligible.slice(0, limit).map((x) => x.candidate.url),
   };
 }
