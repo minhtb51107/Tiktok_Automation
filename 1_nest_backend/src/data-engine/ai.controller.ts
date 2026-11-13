@@ -89,6 +89,10 @@ export class AiContentStudioService {
         error: /^AI_[A-Z0-9_]+$/.test(e.message)
           ? e.message
           : 'AI_HEALTH_FAILED',
+        providerDiagnostic:
+          typeof e.providerDiagnostic === 'string'
+            ? e.providerDiagnostic
+            : null,
         checkedAt: new Date().toISOString(),
       };
     }

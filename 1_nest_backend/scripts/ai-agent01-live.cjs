@@ -67,6 +67,7 @@ async function main() {
   } catch (error) {
     report.status = error.message === 'AI_BLOCKED_BILLING' ? 'BLOCKED_BILLING' : error.message === 'AI_BLOCKED_AUTH' ? 'BLOCKED_AUTH' : error.message === 'AI_RATE_LIMITED' ? 'RATE_LIMITED' : 'FAILED';
     report.error = /^AI_[A-Z0-9_]+$/.test(error.message) ? error.message : 'AI_LIVE_FAILED';
+    report.providerDiagnostic = typeof error.providerDiagnostic === 'string' ? error.providerDiagnostic : null;
   } finally {
     report.completedAt = new Date().toISOString();
     await fs.writeFile(path.join(outputRoot, 'report.json'), JSON.stringify(report, null, 2));

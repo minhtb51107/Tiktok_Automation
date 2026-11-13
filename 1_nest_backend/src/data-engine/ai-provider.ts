@@ -118,6 +118,51 @@ function classify(error: any) {
   return 'AI_PROVIDER_ERROR';
 }
 
+const redactDiagnostic = (value: string) =>
+  value
+    .replace(/Bearer\s+[^\s"']+/gi, 'Bearer [REDACTED]')
+    .replace(/hf_[A-Za-z0-9_-]{8,}/g, '[REDACTED_HF_TOKEN]')
+    .replace(/(https?:\/\/[^\s?"']+)\?[^\s"']+/gi, '$1?[REDACTED_QUERY]')
+    .replace(
+      /("?(?:access[_-]?token|authorization|api[_-]?key|secret)"?\s*[:=]\s*)"?[^,}\s"]+"?/gi,
+      '$1[REDACTED]',
+    )
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, 800);
+
+export async function safeProviderDiagnostic(error: any) {
+  const response = error?.httpResponse ?? error?.response;
+  let body = '';
+  try {
+    if (response && typeof response.clone === 'function')
+      body = await response.clone().text();
+    else if (response && typeof response.text === 'function')
+      body = await response.text();
+    else if (typeof error?.body === 'string') body = error.body;
+  } catch {
+    body = '';
+  }
+  const parts: string[] = [];
+  if (body) {
+    try {
+      const parsed = JSON.parse(body);
+      for (const key of ['error', 'message', 'detail', 'code', 'type']) {
+        const value = parsed?.[key];
+        if (typeof value === 'string' || typeof value === 'number')
+          parts.push(`${key}: ${String(value)}`);
+      }
+    } catch {
+      parts.push(body);
+    }
+  }
+  if (!parts.length && typeof error?.message === 'string')
+    parts.push(error.message);
+  const diagnostic = redactDiagnostic(parts.join('; '));
+  return diagnostic || null;
+}
+
 export class HuggingFaceContentProvider implements ContentAiProvider {
   readonly name = 'HUGGING_FACE' as const;
   private requests = 0;
@@ -180,8 +225,9 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
       };
     } catch (error: any) {
       const code = /^AI_/.test(error?.message || '')
-        ? error.message
-        : classify(error);
+          ? error.message
+          : classify(error),
+        providerDiagnostic = await safeProviderDiagnostic(error);
       throw Object.assign(Error(code), {
         category: code,
         httpStatus:
@@ -191,6 +237,7 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
               error?.status,
           ) || null,
         redactedMessage: code,
+        providerDiagnostic,
       });
     }
   }

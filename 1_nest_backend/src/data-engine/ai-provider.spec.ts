@@ -58,14 +58,32 @@ describe('Hugging Face bounded provider', () => {
       (() => ({
         chatCompletion: async () => {
           throw {
-            httpResponse: { status: 402 },
+            httpResponse: {
+              status: 402,
+              clone: () => ({
+                text: async () =>
+                  JSON.stringify({
+                    error: 'Payment required for routed request',
+                    detail:
+                      'account balance check failed; token=hf_secret_should_not_escape',
+                  }),
+              }),
+            },
             message: 'sensitive response body',
           };
         },
       })) as any,
     );
-    await expect(
-      provider.completeJson({ system: 'test', input: {} }),
-    ).rejects.toThrow('AI_BLOCKED_BILLING');
+    try {
+      await provider.completeJson({ system: 'test', input: {} });
+      throw Error('EXPECTED_PROVIDER_ERROR');
+    } catch (error: any) {
+      expect(error.message).toBe('AI_BLOCKED_BILLING');
+      expect(error.providerDiagnostic).toContain('Payment required');
+      expect(error.providerDiagnostic).toContain('[REDACTED_HF_TOKEN]');
+      expect(error.providerDiagnostic).not.toContain(
+        'hf_secret_should_not_escape',
+      );
+    }
   });
 });
