@@ -27,6 +27,7 @@ export interface AiProviderConfig {
   requestBudget: number;
   tokenBudget: number;
   credential: 'present' | 'absent';
+  reasoningMode: 'DISABLED' | 'MODEL_DEFAULT';
 }
 export interface AiCompletion {
   provider: 'HUGGING_FACE';

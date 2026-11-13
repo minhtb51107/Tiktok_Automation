@@ -49,6 +49,7 @@ class FakeProvider implements ContentAiProvider {
       requestBudget: 4,
       tokenBudget: 4_000,
       credential: 'present',
+      reasoningMode: 'DISABLED',
     };
   }
   async completeJson(request: AiJsonRequest): Promise<AiCompletion> {

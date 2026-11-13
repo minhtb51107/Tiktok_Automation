@@ -38,7 +38,8 @@ export function huggingFaceConfig(
   outputUsdPerMillion: number | null;
 } {
   const model = env.HUGGINGFACE_MODEL?.trim() || 'openai/gpt-oss-20b',
-    provider = env.HUGGINGFACE_PROVIDER?.trim() || 'auto';
+    provider = env.HUGGINGFACE_PROVIDER?.trim() || 'auto',
+    reasoningMode = env.HUGGINGFACE_REASONING_MODE?.trim() || 'DISABLED';
   if (
     !/^[\w.-]+\/[\w.-]+(?::(?:cheapest|preferred))?$/.test(model) ||
     ![
@@ -62,7 +63,8 @@ export function huggingFaceConfig(
       'together',
       'wavespeed',
       'zai-org',
-    ].includes(provider)
+    ].includes(provider) ||
+    !['DISABLED', 'MODEL_DEFAULT'].includes(reasoningMode)
   )
     throw Error('AI_INVALID_PROVIDER_CONFIG');
   return {
@@ -73,6 +75,7 @@ export function huggingFaceConfig(
     requestBudget: integer(env.HUGGINGFACE_REQUEST_BUDGET, 4, 1, 12),
     tokenBudget: integer(env.HUGGINGFACE_TOKEN_BUDGET, 12000, 100, 100000),
     credential: env.HUGGINGFACE_API_KEY?.trim() ? 'present' : 'absent',
+    reasoningMode: reasoningMode as 'DISABLED' | 'MODEL_DEFAULT',
     inputUsdPerMillion: decimal(env.HUGGINGFACE_INPUT_USD_PER_MILLION),
     outputUsdPerMillion: decimal(env.HUGGINGFACE_OUTPUT_USD_PER_MILLION),
   };
@@ -81,10 +84,20 @@ const token = (value: unknown) =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
     ? value
     : null;
-function usage(raw: any, cfg: ReturnType<typeof huggingFaceConfig>): AiUsage {
+function usage(
+  raw: any,
+  cfg: ReturnType<typeof huggingFaceConfig>,
+  responseCost?: unknown,
+): AiUsage {
   const input = token(raw?.prompt_tokens),
     output = token(raw?.completion_tokens),
     total = token(raw?.total_tokens),
+    reportedCost =
+      typeof (raw?.estimated_cost ?? responseCost) === 'number' &&
+      Number.isFinite(raw?.estimated_cost ?? responseCost) &&
+      (raw?.estimated_cost ?? responseCost) >= 0
+        ? Number(raw?.estimated_cost ?? responseCost)
+        : null,
     rated =
       cfg.inputUsdPerMillion !== null &&
       cfg.outputUsdPerMillion !== null &&
@@ -94,16 +107,24 @@ function usage(raw: any, cfg: ReturnType<typeof huggingFaceConfig>): AiUsage {
     inputTokens: input,
     outputTokens: output,
     totalTokens: total,
-    estimatedCostUsd: rated
-      ? Number(
-          (
-            (input! * cfg.inputUsdPerMillion! +
-              output! * cfg.outputUsdPerMillion!) /
-            1_000_000
-          ).toFixed(8),
-        )
-      : null,
-    costSource: rated ? 'CONFIGURED_RATES' : 'UNAVAILABLE',
+    estimatedCostUsd:
+      reportedCost !== null
+        ? reportedCost
+        : rated
+          ? Number(
+              (
+                (input! * cfg.inputUsdPerMillion! +
+                  output! * cfg.outputUsdPerMillion!) /
+                1_000_000
+              ).toFixed(8),
+            )
+          : null,
+    costSource:
+      reportedCost !== null
+        ? 'PROVIDER_REPORTED'
+        : rated
+          ? 'CONFIGURED_RATES'
+          : 'UNAVAILABLE',
   };
 }
 function classify(error: any) {
@@ -201,7 +222,14 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
           model: cfg.model,
           provider: cfg.provider as any,
           messages: [
-            { role: 'system', content: request.system },
+            {
+              role: 'system',
+              content:
+                cfg.reasoningMode === 'DISABLED' &&
+                /^Qwen\/Qwen3-/i.test(cfg.model)
+                  ? `${request.system}\n/no_think`
+                  : request.system,
+            },
             { role: 'user', content: JSON.stringify(request.input) },
           ],
           temperature: request.temperature ?? 0.1,
@@ -210,15 +238,25 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
         },
         { signal, retry_on_error: false },
       );
-      const content = response.choices?.[0]?.message?.content;
-      if (typeof content !== 'string' || !content.trim())
+      const message = response.choices?.[0]?.message as any,
+        content = message?.content,
+        reasoningPresent =
+          typeof message?.reasoning_content === 'string' &&
+          Boolean(message.reasoning_content.trim());
+      if (typeof content !== 'string' || !content.trim()) {
+        if (reasoningPresent)
+          throw Object.assign(Error('AI_REASONING_OUTPUT_INCOMPLETE'), {
+            providerDiagnostic:
+              'Reasoning output was returned but final content was empty; output budget may have been consumed before the final answer.',
+          });
         throw Error('AI_EMPTY_RESPONSE');
+      }
       return {
         provider: 'HUGGING_FACE',
         model: response.model || cfg.model,
         providerRoute: cfg.provider,
         content,
-        usage: usage(response.usage, cfg),
+        usage: usage(response.usage, cfg, (response as any).estimated_cost),
         latencyMs: Date.now() - start,
         requestId: typeof response.id === 'string' ? response.id : null,
         finishReason: response.choices?.[0]?.finish_reason ?? null,
@@ -227,7 +265,10 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
       const code = /^AI_/.test(error?.message || '')
           ? error.message
           : classify(error),
-        providerDiagnostic = await safeProviderDiagnostic(error);
+        providerDiagnostic =
+          typeof error?.providerDiagnostic === 'string'
+            ? error.providerDiagnostic
+            : await safeProviderDiagnostic(error);
       throw Object.assign(Error(code), {
         category: code,
         httpStatus:

@@ -6,6 +6,7 @@ const response = {
   model: 'test/model',
   choices: [{ message: { content: '{"ok":true}' }, finish_reason: 'stop' }],
   usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
+  estimated_cost: 0.0002,
 };
 
 describe('Hugging Face bounded provider', () => {
@@ -45,7 +46,8 @@ describe('Hugging Face bounded provider', () => {
       maxTokens: 20,
     });
     expect(result.usage.totalTokens).toBe(12);
-    expect(result.usage.estimatedCostUsd).toBeNull();
+    expect(result.usage.estimatedCostUsd).toBe(0.0002);
+    expect(result.usage.costSource).toBe('PROVIDER_REPORTED');
     await expect(
       provider.completeJson({ system: 'test', input: {} }),
     ).rejects.toThrow('AI_REQUEST_BUDGET_EXCEEDED');
@@ -65,7 +67,8 @@ describe('Hugging Face bounded provider', () => {
                   JSON.stringify({
                     error: 'Payment required for routed request',
                     detail:
-                      'account balance check failed; token=hf_secret_should_not_escape',
+                      'account balance check failed; token=' +
+                      ['hf_', 'x'.repeat(24)].join(''),
                   }),
               }),
             },
@@ -82,8 +85,73 @@ describe('Hugging Face bounded provider', () => {
       expect(error.providerDiagnostic).toContain('Payment required');
       expect(error.providerDiagnostic).toContain('[REDACTED_HF_TOKEN]');
       expect(error.providerDiagnostic).not.toContain(
-        'hf_secret_should_not_escape',
+        ['hf_', 'x'.repeat(24)].join(''),
       );
+    }
+  });
+
+  test('uses Qwen non-thinking switch and accepts only final content', async () => {
+    let system = '';
+    const provider = new HuggingFaceContentProvider(
+      {
+        HUGGINGFACE_API_KEY: 'SECRET_TEST_VALUE',
+        HUGGINGFACE_MODEL: 'Qwen/Qwen3-14B',
+        HUGGINGFACE_REASONING_MODE: 'DISABLED',
+      },
+      (() => ({
+        chatCompletion: async (input: any) => {
+          system = input.messages[0].content;
+          return {
+            ...response,
+            model: 'Qwen/Qwen3-14B',
+            choices: [
+              {
+                message: {
+                  reasoning_content: 'internal reasoning is not persisted',
+                  content: '{"ok":true}',
+                },
+                finish_reason: 'stop',
+              },
+            ],
+          };
+        },
+      })) as any,
+    );
+    expect(
+      (await provider.completeJson({ system: 'Return JSON.', input: {} }))
+        .content,
+    ).toBe('{"ok":true}');
+    expect(system).toContain('/no_think');
+  });
+
+  test('reasoning without final content is an incomplete response, not success', async () => {
+    const provider = new HuggingFaceContentProvider(
+      {
+        HUGGINGFACE_API_KEY: 'SECRET_TEST_VALUE',
+        HUGGINGFACE_MODEL: 'Qwen/Qwen3-14B',
+      },
+      (() => ({
+        chatCompletion: async () => ({
+          ...response,
+          choices: [
+            {
+              message: {
+                reasoning_content: 'budget consumed by reasoning',
+                content: '',
+              },
+              finish_reason: 'length',
+            },
+          ],
+        }),
+      })) as any,
+    );
+    try {
+      await provider.completeJson({ system: 'Return JSON.', input: {} });
+      throw Error('EXPECTED_INCOMPLETE_RESPONSE');
+    } catch (error: any) {
+      expect(error.message).toBe('AI_REASONING_OUTPUT_INCOMPLETE');
+      expect(error.providerDiagnostic).toContain('final content was empty');
+      expect(error.providerDiagnostic).not.toContain('budget consumed');
     }
   });
 });
