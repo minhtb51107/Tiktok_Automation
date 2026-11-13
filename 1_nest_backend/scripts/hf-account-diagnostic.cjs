@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /* Authentication/model metadata only. This script never performs inference. */
 const crypto = require('crypto');
+require('./load-local-env.cjs');
 
 const token = process.env.HUGGINGFACE_API_KEY?.trim();
 if (!token) throw Error('HF_DIAG_TOKEN_ABSENT');

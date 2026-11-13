@@ -1,5 +1,5 @@
 // Start only if the configured local port is free. Never stops another process.
-require('dotenv/config');
+require('./load-local-env.cjs');
 const fs = require('node:fs');
 const localFile = require('node:path').resolve(__dirname, '../.studio-data/runtime.local.json');
 if (fs.existsSync(localFile)) {

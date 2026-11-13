@@ -3,6 +3,7 @@
 const fs = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
+require('./load-local-env.cjs');
 const { DataStore } = require('../dist/data-engine/store');
 const { DataEngine } = require('../dist/data-engine/engine');
 const { ConversationEngine } = require('../dist/data-engine/conversation-engine');

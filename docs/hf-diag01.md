@@ -32,6 +32,8 @@ Model availability metadata does not prove that billing or authorization will su
 
 Place the intended `tiktok_automation` token directly in the feature worktree's ignored `1_nest_backend/.env`, then run `hf-account-diagnostic.cjs` again. Do not paste the token into chat. The gate is satisfied only when `whoami-v2` reports `minhtb51107` and the expected token display name/permissions.
 
+At the latest check, that worktree-local `.env` did not exist, so the new identity gate is `BLOCKED_CONFIG`. Runtime startup and the AI diagnostic/live runners now reject `DOTENV_CONFIG_PATH` when it resolves outside the current backend directory. They no longer silently fall back to the old worktree. Process-level deployment variables remain supported, but an external dotenv file path is not.
+
 Only after that identity check should two separately approved inference probes be considered:
 
 1. `Qwen/Qwen3-14B`, provider `auto`, JSON `{ "ok": true }`, temperature 0, maximum 24 output tokens, one request, no retry.
