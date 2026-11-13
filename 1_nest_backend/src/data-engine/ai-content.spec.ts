@@ -48,6 +48,7 @@ class FakeProvider implements ContentAiProvider {
       maxTokens: 1_000,
       requestBudget: 4,
       tokenBudget: 4_000,
+      costBudgetUsd: 0.5,
       credential: 'present',
       reasoningMode: 'DISABLED',
     };
@@ -55,54 +56,72 @@ class FakeProvider implements ContentAiProvider {
   async completeJson(request: AiJsonRequest): Promise<AiCompletion> {
     this.calls.push(request);
     const input = request.input as any;
-    const isScript = Array.isArray(input.sources);
-    const content = isScript
+    const isPlan = Array.isArray(input.collections),
+      isScript = Array.isArray(input.sources),
+      isCandidateBatch = Array.isArray(input.candidates),
+      isSummary = Array.isArray(input.candidateAssessments);
+    const content = isPlan
       ? JSON.stringify({
-          hook: 'Một câu chuyện công việc đáng bàn',
-          sections: [
-            {
-              kind: 'QUOTE',
-              sourceIds: [input.sources[0].sourceId],
-              text: 'Nguồn kiểm thử.',
-              purpose: 'context',
-            },
-            {
-              kind: 'COMMENTARY',
-              sourceIds: [],
-              text: 'Phần bình luận nguyên tác cần người dùng duyệt.',
-              purpose: 'analysis',
-            },
+          selectedCollectionId: input.collections[0].collectionId,
+          rationale: ['Nguồn kiểm thử có nội dung rõ ràng'],
+          steps: [
+            'search_threads',
+            'get_post_details',
+            'get_conversation',
+            'evaluate_candidates',
+            'propose_script',
           ],
-          warnings: ['SYNTHETIC TEST DATA'],
         })
-      : JSON.stringify({
-          topic: 'Công việc',
-          contentFocus: 'Góc nhìn có dẫn chứng',
-          candidates: input.candidates.map((row: any) => ({
-            sourceId: this.invalidSource ? 'INVENTED_SOURCE' : row.sourceId,
-            disposition: 'SELECT',
-            contentRole: 'COUNTERPOINT',
-            contextRelation: 'SAME_CONTEXT',
-            relevance: 90,
-            usefulness: 85,
-            reasons: ['Có lập luận'],
-            missingEvidence: [],
-          })),
-          selectedSourceIds: input.candidates.map((row: any) => row.sourceId),
-          excludedSourceIds: [],
-          missingInformation: [],
-          feasibility: {
-            status: 'READY_FOR_SCRIPT',
-            estimatedMinimumSeconds: 65,
-            estimatedMaximumSeconds: 80,
-            reasons: ['Đủ cấu trúc'],
-          },
-          editorialRecommendation: {
-            hook: 'Vì sao?',
-            structure: ['Bối cảnh', 'Phản biện'],
-            warnings: [],
-          },
-        });
+      : isScript
+        ? JSON.stringify({
+            hook: 'Một câu chuyện công việc đáng bàn',
+            sections: [
+              {
+                kind: 'QUOTE',
+                sourceIds: [input.sources[0].sourceId],
+                text: 'Nguồn kiểm thử.',
+                purpose: 'context',
+              },
+              {
+                kind: 'COMMENTARY',
+                sourceIds: [],
+                text: 'Phần bình luận nguyên tác cần người dùng duyệt.',
+                purpose: 'analysis',
+              },
+            ],
+            warnings: ['SYNTHETIC TEST DATA'],
+          })
+        : isCandidateBatch
+          ? JSON.stringify({
+              candidates: input.candidates.map((row: any) => ({
+                sourceId: this.invalidSource ? 'INVENTED_SOURCE' : row.sourceId,
+                disposition: 'SELECT',
+                contentRole: 'COUNTERPOINT',
+                contextRelation: 'SAME_CONTEXT',
+                relevance: 90,
+                usefulness: 85,
+                reasons: ['Có lập luận'],
+                missingEvidence: [],
+              })),
+            })
+          : isSummary
+            ? JSON.stringify({
+                topic: 'Công việc',
+                contentFocus: 'Góc nhìn có dẫn chứng',
+                missingInformation: [],
+                feasibility: {
+                  status: 'READY_FOR_SCRIPT',
+                  estimatedMinimumSeconds: 65,
+                  estimatedMaximumSeconds: 80,
+                  reasons: ['Đủ cấu trúc'],
+                },
+                editorialRecommendation: {
+                  hook: 'Vì sao?',
+                  structure: ['Bối cảnh', 'Phản biện'],
+                  warnings: [],
+                },
+              })
+            : JSON.stringify({ error: 'unexpected-input' });
     return {
       provider: 'HUGGING_FACE',
       model: 'test/model',
@@ -205,10 +224,10 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
     expect((await evaluator.evaluate(input)).id).toBe(
       (await evaluator.evaluate(input)).id,
     );
-    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls).toHaveLength(2);
   });
 
-  test('deterministic agent invokes bounded tools and returns only a DRAFT', async () => {
+  test('model planner invokes bounded tools and returns only a DRAFT', async () => {
     const evaluator = new AiContentEvaluator(data, provider);
     const agent = new AiResearchAgent(data, conversations, evaluator, provider);
     const body = {
@@ -221,7 +240,8 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
     const run = await agent.run(body);
     expect(run.error).toBeNull();
     expect(run.status).toBe('WAITING_REVIEW');
-    expect(run.mode).toBe('DETERMINISTIC_ORCHESTRATION_V1');
+    expect(run.mode).toBe('MODEL_PLANNER_VALIDATED_TOOLS_V1');
+    expect(run.plan?.selectedCollectionId).toBe(collectionId);
     expect(run.toolCalls.map((x) => x.tool)).toEqual([
       'search_threads',
       'get_post_details',
@@ -231,7 +251,31 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
     ]);
     expect(run.proposal?.status).toBe('DRAFT_REQUIRES_HUMAN_REVIEW');
     expect(run.productionApproved).toBe(false);
+    const feedback = await evaluator.saveFeedback(run.assessmentIds[0], {
+      requestId: 'feedback-1',
+      expectedRevision: 0,
+      decision: 'NEEDS_REVIEW',
+      selectedSourceIds: ['REPLY_AI_TEST'],
+      reason: 'Cần người dùng xác minh quan hệ nguồn.',
+    });
+    expect(feedback.revision).toBe(1);
+    expect(feedback.productionApproved).toBe(false);
+    expect((await evaluator.feedback(run.assessmentIds[0]))?.reason).toContain(
+      'xác minh',
+    );
+    const review = await agent.saveReview(run.proposal!.id, {
+      requestId: 'script-review-1',
+      expectedRevision: 0,
+      hook: 'Hook do người dùng chỉnh sửa',
+      sections: run.proposal!.sections,
+      feedback: 'Giữ ở trạng thái DRAFT.',
+    });
+    expect(review.revision).toBe(1);
+    expect(review.productionApproved).toBe(false);
+    expect((await agent.review(run.proposal!.id))?.hook).toContain(
+      'người dùng',
+    );
     expect((await agent.run(body)).id).toBe(run.id);
-    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls).toHaveLength(4);
   });
 });

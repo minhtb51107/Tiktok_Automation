@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import type {
   AiAgentRun,
+  AiAssessmentFeedback,
   AiContentAssessment,
+  AiScriptSection,
+  AiScriptReview,
   AiStyle,
 } from "../../../1_nest_backend/src/data-engine/ai-contracts";
 import { studioRequest } from "./integration-api";
@@ -27,6 +30,16 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
     null,
   );
   const [run, setRun] = useState<AiAgentRun | null>(null);
+  const [feedback, setFeedback] = useState<AiAssessmentFeedback | null>(null);
+  const [decision, setDecision] = useState<
+    "ACCEPT" | "REJECT" | "NEEDS_REVIEW"
+  >("NEEDS_REVIEW");
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const [feedbackReason, setFeedbackReason] = useState("");
+  const [scriptReview, setScriptReview] = useState<AiScriptReview | null>(null);
+  const [draftHook, setDraftHook] = useState("");
+  const [draftSections, setDraftSections] = useState<AiScriptSection[]>([]);
+  const [scriptFeedback, setScriptFeedback] = useState("");
   const [instruction, setInstruction] = useState(
     "Phân tích nội dung đã lưu và đề xuất kịch bản DRAFT có dẫn nguồn.",
   );
@@ -57,6 +70,32 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
       mounted = false;
     };
   }, [collectionId]);
+
+  useEffect(() => {
+    if (!assessment) return;
+    void studioRequest<AiAssessmentFeedback | null>(
+      `/data/ai/assessments/${assessment.id}/feedback`,
+    ).then((row) => {
+      setFeedback(row);
+      setDecision(row?.decision ?? "NEEDS_REVIEW");
+      setSelectedSourceIds(
+        row?.selectedSourceIds ?? assessment.selectedSourceIds,
+      );
+      setFeedbackReason(row?.reason ?? "");
+    });
+  }, [assessment]);
+
+  useEffect(() => {
+    if (!run?.proposal) return;
+    void studioRequest<AiScriptReview | null>(
+      `/data/ai/script-proposals/${run.proposal.id}/review`,
+    ).then((row) => {
+      setScriptReview(row);
+      setDraftHook(row?.hook ?? run.proposal!.hook);
+      setDraftSections(row?.sections ?? run.proposal!.sections);
+      setScriptFeedback(row?.feedback ?? "");
+    });
+  }, [run]);
 
   const action = async (work: () => Promise<void>) => {
     if (busy) return;
@@ -93,6 +132,36 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
           collectionIds: [collectionId],
         }),
       );
+    });
+  const saveFeedback = () =>
+    action(async () => {
+      if (!assessment) throw Error("Chưa có AI assessment.");
+      const row = await studioRequest<AiAssessmentFeedback>(
+        `/data/ai/assessments/${assessment.id}/feedback`,
+        {
+          requestId: crypto.randomUUID(),
+          expectedRevision: feedback?.revision ?? 0,
+          decision,
+          selectedSourceIds,
+          reason: feedbackReason,
+        },
+      );
+      setFeedback(row);
+    });
+  const saveScriptReview = () =>
+    action(async () => {
+      if (!run?.proposal) throw Error("Chưa có Script DRAFT.");
+      const row = await studioRequest<AiScriptReview>(
+        `/data/ai/script-proposals/${run.proposal.id}/review`,
+        {
+          requestId: crypto.randomUUID(),
+          expectedRevision: scriptReview?.revision ?? 0,
+          hook: draftHook,
+          sections: draftSections,
+          feedback: scriptFeedback,
+        },
+      );
+      setScriptReview(row);
     });
 
   return (
@@ -171,6 +240,18 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
           <ul>
             {assessment.candidates.map((candidate) => (
               <li key={candidate.sourceId}>
+                <input
+                  type="checkbox"
+                  aria-label={`Chọn ${candidate.sourceId}`}
+                  checked={selectedSourceIds.includes(candidate.sourceId)}
+                  onChange={(event) =>
+                    setSelectedSourceIds((current) =>
+                      event.target.checked
+                        ? [...new Set([...current, candidate.sourceId])]
+                        : current.filter((id) => id !== candidate.sourceId),
+                    )
+                  }
+                />{" "}
                 <code>{candidate.sourceId}</code> · {candidate.disposition} ·{" "}
                 {candidate.contextRelation} · {candidate.reasons.join("; ")}
               </li>
@@ -190,13 +271,34 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
               )}
             </pre>
           </details>
+          <label>
+            Editorial feedback (không phải production approval)
+            <select
+              value={decision}
+              onChange={(event) =>
+                setDecision(event.target.value as typeof decision)
+              }
+            >
+              <option value="NEEDS_REVIEW">NEEDS_REVIEW</option>
+              <option value="ACCEPT">ACCEPT selection</option>
+              <option value="REJECT">REJECT selection</option>
+            </select>
+          </label>
+          <textarea
+            value={feedbackReason}
+            placeholder="Lý do và điểm cần xác minh"
+            onChange={(event) => setFeedbackReason(event.target.value)}
+          />
+          <button disabled={busy} onClick={() => void saveFeedback()}>
+            Lưu AI feedback · revision {feedback?.revision ?? 0}
+          </button>
         </details>
       )}
       <hr />
       <h4>Research Agent V1</h4>
       <p>
-        {status?.toolMode || "DETERMINISTIC_ORCHESTRATION_V1"}: tool calls được
-        backend kiểm tra; chưa tuyên bố model-driven function calling.
+        {status?.toolMode || "MODEL_PLANNER_VALIDATED_TOOLS_V1"}: model tạo JSON
+        plan; backend kiểm tra schema và chỉ thực thi tool allowlist.
       </p>
       <textarea
         value={instruction}
@@ -227,6 +329,12 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
           <summary>
             Agent · {run.status} · {run.toolCalls.length} tool calls
           </summary>
+          {run.plan && (
+            <p>
+              Chọn collection <code>{run.plan.selectedCollectionId}</code> ·{" "}
+              {run.plan.rationale.join("; ")}
+            </p>
+          )}
           <ol>
             {run.toolCalls.map((call) => (
               <li key={call.index}>
@@ -234,7 +342,43 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
               </li>
             ))}
           </ol>
-          {run.proposal && <pre>{JSON.stringify(run.proposal, null, 2)}</pre>}
+          {run.proposal && (
+            <div data-testid="ai-script-draft-editor">
+              <label>
+                Hook DRAFT
+                <textarea
+                  value={draftHook}
+                  onChange={(event) => setDraftHook(event.target.value)}
+                />
+              </label>
+              {draftSections.map((section, index) => (
+                <label key={section.id || index}>
+                  {section.kind} ·{" "}
+                  {section.sourceIds.join(", ") || "original commentary"}
+                  <textarea
+                    value={section.text}
+                    onChange={(event) =>
+                      setDraftSections((current) =>
+                        current.map((row, rowIndex) =>
+                          rowIndex === index
+                            ? { ...row, text: event.target.value }
+                            : row,
+                        ),
+                      )
+                    }
+                  />
+                </label>
+              ))}
+              <textarea
+                value={scriptFeedback}
+                placeholder="Phản hồi cho Script DRAFT"
+                onChange={(event) => setScriptFeedback(event.target.value)}
+              />
+              <button disabled={busy} onClick={() => void saveScriptReview()}>
+                Lưu Script DRAFT · revision {scriptReview?.revision ?? 0}
+              </button>
+            </div>
+          )}
           <p>
             Approval: {run.approval} · production approved:{" "}
             {String(run.productionApproved)}

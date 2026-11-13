@@ -26,6 +26,7 @@ export interface AiProviderConfig {
   maxTokens: number;
   requestBudget: number;
   tokenBudget: number;
+  costBudgetUsd: number;
   credential: 'present' | 'absent';
   reasoningMode: 'DISABLED' | 'MODEL_DEFAULT';
 }
@@ -141,6 +142,35 @@ export interface AiScriptProposal {
   };
   createdAt: string;
 }
+export interface AiAssessmentFeedback {
+  schemaVersion: 'ai-assessment-feedback/1';
+  assessmentId: string;
+  revision: number;
+  decision: 'ACCEPT' | 'REJECT' | 'NEEDS_REVIEW';
+  selectedSourceIds: string[];
+  reason: string;
+  updatedAt: string;
+  history: Array<{
+    revision: number;
+    decision: 'ACCEPT' | 'REJECT' | 'NEEDS_REVIEW';
+    selectedSourceIds: string[];
+    reason: string;
+    at: string;
+  }>;
+  productionApproved: false;
+}
+export interface AiScriptReview {
+  schemaVersion: 'ai-script-review/1';
+  proposalId: string;
+  revision: number;
+  hook: string;
+  sections: AiScriptSection[];
+  feedback: string;
+  status: 'DRAFT_REQUIRES_HUMAN_REVIEW';
+  updatedAt: string;
+  history: Array<{ revision: number; feedback: string; at: string }>;
+  productionApproved: false;
+}
 export interface AiAgentToolCall {
   index: number;
   tool:
@@ -161,11 +191,23 @@ export interface AiAgentRun {
   requestId: string;
   requestHash: string;
   status: AiRunStatus;
-  mode: 'DETERMINISTIC_ORCHESTRATION_V1';
+  mode: 'MODEL_PLANNER_VALIDATED_TOOLS_V1';
   instruction: string;
   style: AiStyle;
   targetDurationSeconds: number;
   collectionIds: string[];
+  plan: {
+    selectedCollectionId: string;
+    rationale: string[];
+    steps: AiAgentToolCall['tool'][];
+    provider: {
+      name: 'HUGGING_FACE';
+      model: string;
+      route: string;
+      latencyMs: number;
+      usage: AiUsage;
+    };
+  } | null;
   toolCalls: AiAgentToolCall[];
   assessmentIds: string[];
   proposal: AiScriptProposal | null;

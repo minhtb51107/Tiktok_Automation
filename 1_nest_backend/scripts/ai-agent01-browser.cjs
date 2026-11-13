@@ -35,9 +35,45 @@ async function main() {
     assert.match(state.provider || '', /HUGGING_FACE/);
     assert.match(state.panelText || '', /Human review required/);
     assert.equal(aiRequests.some((request) => request.method === 'POST'), false, 'opening Studio must not call AI');
+    let persistence = null;
+    if (process.argv.includes('--exercise-save')) {
+      await page.click('[data-testid="ai-assessment"] input[type="checkbox"]');
+      const feedbackArea = '[data-testid="ai-assessment"] textarea';
+      await page.click(feedbackArea);
+      await page.type(feedbackArea, 'Browser acceptance: giữ NEEDS_REVIEW, chưa production approval.');
+      const feedbackResponse = page.waitForResponse((response) =>
+        response.url().includes('/feedback') && response.request().method() === 'POST');
+      await page.evaluate(() => [...document.querySelectorAll('button')]
+        .find((button) => button.textContent?.includes('Lưu AI feedback'))?.click());
+      assert.equal((await feedbackResponse).status(), 201);
+
+      const draft = '[data-testid="ai-script-draft-editor"]';
+      const textareas = await page.$$(draft + ' textarea');
+      assert.ok(textareas.length >= 3, 'editable hook, section and feedback must exist');
+      await textareas[0].click({ clickCount: 3 });
+      await textareas[0].type('Hook DRAFT đã chỉnh trong browser acceptance');
+      await textareas[textareas.length - 1].type('Giữ bản nháp để người dùng duyệt.');
+      const reviewResponse = page.waitForResponse((response) =>
+        response.url().includes('/review') && response.request().method() === 'POST');
+      await page.evaluate(() => [...document.querySelectorAll('button')]
+        .find((button) => button.textContent?.includes('Lưu Script DRAFT'))?.click());
+      assert.equal((await reviewResponse).status(), 201);
+      await page.reload({ waitUntil: 'networkidle0' });
+      await page.waitForSelector('[data-testid="ai-script-draft-editor"]');
+      persistence = await page.evaluate(() => ({
+        feedbackRevision: [...document.querySelectorAll('button')]
+          .find((button) => button.textContent?.includes('Lưu AI feedback'))?.textContent,
+        scriptRevision: [...document.querySelectorAll('button')]
+          .find((button) => button.textContent?.includes('Lưu Script DRAFT'))?.textContent,
+        hook: document.querySelector('[data-testid="ai-script-draft-editor"] textarea')?.value,
+      }));
+      assert.match(persistence.feedbackRevision || '', /revision 1/);
+      assert.match(persistence.scriptRevision || '', /revision 1/);
+      assert.equal(persistence.hook, 'Hook DRAFT đã chỉnh trong browser acceptance');
+    }
     const panel = await page.$('[data-testid="ai-content-panel"]');
     await panel.screenshot({ path: path.join(output, 'ai-content-panel.png') });
-    const result = { ...state, aiRequests, automaticLivePost: false, url: page.url() };
+    const result = { ...state, persistence, aiRequests, automaticLivePost: false, url: page.url() };
     fs.writeFileSync(path.join(output, 'browser-verification.json'), JSON.stringify(result, null, 2));
     process.stdout.write(JSON.stringify(result));
   } finally {

@@ -39,7 +39,7 @@ export class AiContentStudioService {
       config: this.provider.config(),
       liveCalls: 'EXPLICIT_ONLY',
       automaticFallback: false,
-      toolMode: 'DETERMINISTIC_ORCHESTRATION_V1',
+      toolMode: 'MODEL_PLANNER_VALIDATED_TOOLS_V1',
       approvals: 'UNCHANGED',
       scheduler: 'OFF',
     };
@@ -150,6 +150,17 @@ export class AiContentController {
   @Get('assessments/:id') assessment(@Param('id') id: string) {
     return this.call(() => this.service.evaluator.get(id));
   }
+  @Get('assessments/:id/feedback') feedback(@Param('id') id: string) {
+    return this.call(() => this.service.evaluator.feedback(id));
+  }
+  @Post('assessments/:id/feedback') saveFeedback(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Headers('origin') origin?: string,
+  ) {
+    this.origin(origin);
+    return this.call(() => this.service.evaluator.saveFeedback(id, body));
+  }
   @Post('collections/:id/evaluate') evaluate(
     @Param('id') id: string,
     @Body() body: any,
@@ -179,5 +190,16 @@ export class AiContentController {
   ) {
     this.origin(origin);
     return this.call(() => this.service.agent.cancel(id));
+  }
+  @Get('script-proposals/:id/review') scriptReview(@Param('id') id: string) {
+    return this.call(() => this.service.agent.review(id));
+  }
+  @Post('script-proposals/:id/review') saveScriptReview(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Headers('origin') origin?: string,
+  ) {
+    this.origin(origin);
+    return this.call(() => this.service.agent.saveReview(id, body));
   }
 }

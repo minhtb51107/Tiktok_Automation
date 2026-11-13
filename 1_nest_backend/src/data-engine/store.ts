@@ -2,8 +2,8 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { replaceFile } from '../studio/atomic-file';
-import {DATA_SCHEMA} from './contracts';
-import {hash} from './rules';
+import { DATA_SCHEMA } from './contracts';
+import { hash } from './rules';
 /** Same local JSON/atomic-rename strategy as Studio. One backend writer only. */
 export class DataStore {
   constructor(
@@ -12,22 +12,43 @@ export class DataStore {
       : path.resolve('.studio-data/data-engine'),
   ) {}
   private file(key: string) {
-    if (!/^(posts|bronze|evaluations|runs|production-jobs|crawler-runs|gold-shadows|gold-feedback|conversation-runs|thread-collections|thread-replies|conversation-feedback|editorial-plans|content-quality-runs|ai-assessments|ai-agent-runs|ai-script-proposals)\/[a-f0-9]{64}\.json$/.test(key))
+    if (
+      !/^(posts|bronze|evaluations|runs|production-jobs|crawler-runs|gold-shadows|gold-feedback|conversation-runs|thread-collections|thread-replies|conversation-feedback|editorial-plans|content-quality-runs|ai-assessments|ai-agent-runs|ai-script-proposals|ai-feedback|ai-script-reviews)\/[a-f0-9]{64}\.json$/.test(
+        key,
+      )
+    )
       throw Error('Invalid data storage key');
     return path.join(this.root, key);
   }
   async read<T>(key: string): Promise<T | null> {
     try {
-      const value=JSON.parse(await fs.readFile(this.file(key), 'utf8'));
-      if(value.schemaVersion!==DATA_SCHEMA)throw Error('DATA_SCHEMA_UNSUPPORTED: '+key);
-      if(key.startsWith('bronze/')){
-        const {schemaVersion,id,postId,rawHash,inputHash,ingestedAt,rightsStatus,...input}=value;
-        if(rightsStatus!=='UNKNOWN'||hash(value.rawPayload)!==rawHash||hash(input)!==inputHash||hash({postId,inputHash})!==id||key!=='bronze/'+id+'.json')throw Error('DATA_INTEGRITY_ERROR: '+key);
+      const value = JSON.parse(await fs.readFile(this.file(key), 'utf8'));
+      if (value.schemaVersion !== DATA_SCHEMA)
+        throw Error('DATA_SCHEMA_UNSUPPORTED: ' + key);
+      if (key.startsWith('bronze/')) {
+        const {
+          schemaVersion,
+          id,
+          postId,
+          rawHash,
+          inputHash,
+          ingestedAt,
+          rightsStatus,
+          ...input
+        } = value;
+        if (
+          rightsStatus !== 'UNKNOWN' ||
+          hash(value.rawPayload) !== rawHash ||
+          hash(input) !== inputHash ||
+          hash({ postId, inputHash }) !== id ||
+          key !== 'bronze/' + id + '.json'
+        )
+          throw Error('DATA_INTEGRITY_ERROR: ' + key);
       }
       return value;
     } catch (e: any) {
       if (e.code === 'ENOENT') return null;
-      if(/^DATA_(SCHEMA|INTEGRITY)/.test(e.message||''))throw e;
+      if (/^DATA_(SCHEMA|INTEGRITY)/.test(e.message || '')) throw e;
       throw Error('DATA_STORAGE_CORRUPT: ' + key);
     }
   }
@@ -52,7 +73,26 @@ export class DataStore {
     }
     await replaceFile(temp, file);
   }
-  async *rows<T>(kind: 'posts' | 'runs' | 'production-jobs' | 'crawler-runs' | 'gold-shadows' | 'gold-feedback' | 'conversation-runs' | 'thread-collections' | 'thread-replies' | 'conversation-feedback' | 'editorial-plans' | 'content-quality-runs' | 'ai-assessments' | 'ai-agent-runs' | 'ai-script-proposals') {
+  async *rows<T>(
+    kind:
+      | 'posts'
+      | 'runs'
+      | 'production-jobs'
+      | 'crawler-runs'
+      | 'gold-shadows'
+      | 'gold-feedback'
+      | 'conversation-runs'
+      | 'thread-collections'
+      | 'thread-replies'
+      | 'conversation-feedback'
+      | 'editorial-plans'
+      | 'content-quality-runs'
+      | 'ai-assessments'
+      | 'ai-agent-runs'
+      | 'ai-script-proposals'
+      | 'ai-feedback'
+      | 'ai-script-reviews',
+  ) {
     let entries: string[];
     try {
       entries = await fs.readdir(path.join(this.root, kind));

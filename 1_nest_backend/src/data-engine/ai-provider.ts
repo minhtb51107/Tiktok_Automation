@@ -12,6 +12,12 @@ export interface ContentAiProvider {
   readonly name: 'HUGGING_FACE';
   config(): AiProviderConfig;
   completeJson(request: AiJsonRequest): Promise<AiCompletion>;
+  metrics?(): {
+    requests: number;
+    reservedOutputTokens: number;
+    reportedCostUsd: number;
+    costTrackingAvailable: boolean;
+  };
 }
 
 const integer = (
@@ -37,7 +43,7 @@ export function huggingFaceConfig(
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
 } {
-  const model = env.HUGGINGFACE_MODEL?.trim() || 'openai/gpt-oss-20b',
+  const model = env.HUGGINGFACE_MODEL?.trim() || 'Qwen/Qwen3-14B',
     provider = env.HUGGINGFACE_PROVIDER?.trim() || 'auto',
     reasoningMode = env.HUGGINGFACE_REASONING_MODE?.trim() || 'DISABLED';
   if (
@@ -71,9 +77,10 @@ export function huggingFaceConfig(
     model,
     provider,
     timeoutMs: integer(env.HUGGINGFACE_TIMEOUT_MS, 60000, 5000, 120000),
-    maxTokens: integer(env.HUGGINGFACE_MAX_TOKENS, 1800, 16, 4096),
-    requestBudget: integer(env.HUGGINGFACE_REQUEST_BUDGET, 4, 1, 12),
-    tokenBudget: integer(env.HUGGINGFACE_TOKEN_BUDGET, 12000, 100, 100000),
+    maxTokens: integer(env.HUGGINGFACE_MAX_TOKENS, 2048, 16, 4096),
+    requestBudget: integer(env.HUGGINGFACE_REQUEST_BUDGET, 100, 1, 100),
+    tokenBudget: integer(env.HUGGINGFACE_TOKEN_BUDGET, 204800, 100, 500000),
+    costBudgetUsd: decimal(env.HUGGINGFACE_COST_BUDGET_USD) ?? 0.5,
     credential: env.HUGGINGFACE_API_KEY?.trim() ? 'present' : 'absent',
     reasoningMode: reasoningMode as 'DISABLED' | 'MODEL_DEFAULT',
     inputUsdPerMillion: decimal(env.HUGGINGFACE_INPUT_USD_PER_MILLION),
@@ -188,6 +195,8 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
   readonly name = 'HUGGING_FACE' as const;
   private requests = 0;
   private tokens = 0;
+  private costUsd = 0;
+  private costUnknown = false;
   constructor(
     private env: NodeJS.ProcessEnv = process.env,
     private clientFactory = (token: string) => new InferenceClient(token),
@@ -200,12 +209,23 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
     } = huggingFaceConfig(this.env);
     return safe;
   }
+  metrics() {
+    return {
+      requests: this.requests,
+      reservedOutputTokens: this.tokens,
+      reportedCostUsd: Number(this.costUsd.toFixed(8)),
+      costTrackingAvailable: !this.costUnknown,
+    };
+  }
   async completeJson(request: AiJsonRequest): Promise<AiCompletion> {
     const cfg = huggingFaceConfig(this.env),
       key = this.env.HUGGINGFACE_API_KEY?.trim();
     if (!key) throw Error('AI_BLOCKED_AUTH');
     if (this.requests >= cfg.requestBudget)
       throw Error('AI_REQUEST_BUDGET_EXCEEDED');
+    if (this.costUnknown) throw Error('AI_COST_TRACKING_UNAVAILABLE');
+    if (this.costUsd >= cfg.costBudgetUsd)
+      throw Error('AI_COST_BUDGET_EXCEEDED');
     const max = Math.min(request.maxTokens ?? cfg.maxTokens, cfg.maxTokens);
     if (this.tokens + max > cfg.tokenBudget)
       throw Error('AI_TOKEN_BUDGET_EXCEEDED');
@@ -251,12 +271,21 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
           });
         throw Error('AI_EMPTY_RESPONSE');
       }
+      const requestUsage = usage(
+        response.usage,
+        cfg,
+        (response as any).estimated_cost,
+      );
+      if (requestUsage.estimatedCostUsd === null) this.costUnknown = true;
+      else this.costUsd += requestUsage.estimatedCostUsd;
+      if (this.costUsd > cfg.costBudgetUsd)
+        throw Error('AI_COST_BUDGET_EXCEEDED');
       return {
         provider: 'HUGGING_FACE',
         model: response.model || cfg.model,
         providerRoute: cfg.provider,
         content,
-        usage: usage(response.usage, cfg, (response as any).estimated_cost),
+        usage: requestUsage,
         latencyMs: Date.now() - start,
         requestId: typeof response.id === 'string' ? response.id : null,
         finishReason: response.choices?.[0]?.finish_reason ?? null,
