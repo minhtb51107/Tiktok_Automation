@@ -11,9 +11,10 @@ import { StudioService } from './studio.service';
 import { ScraperService } from '../modules/core/scraper/scraper.service';
 import {PublishingService} from './publishing.service';
 import {PublishingController} from './publishing.controller';
+import {AiContentController,AiContentStudioService} from '../data-engine/ai.controller';
 
 @Module({
-  controllers: [ContentQualityController,StudioOperationsController,StudioController,PublishingController,DataController,ThreadsController,CrawlerController,ConversationController,EditorialController],
-  providers: [ContentQualityService,StudioOperations,StudioService, ScraperService,PublishingService,DataStudioService,ThreadsDiscoveryService,CrawlerStudioService,ConversationStudioService,EditorialStudioService],
+  controllers: [AiContentController,ContentQualityController,StudioOperationsController,StudioController,PublishingController,DataController,ThreadsController,CrawlerController,ConversationController,EditorialController],
+  providers: [AiContentStudioService,ContentQualityService,StudioOperations,StudioService, ScraperService,PublishingService,DataStudioService,ThreadsDiscoveryService,CrawlerStudioService,ConversationStudioService,EditorialStudioService],
 })
 export class StudioModule {}

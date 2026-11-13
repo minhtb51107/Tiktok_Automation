@@ -12,7 +12,7 @@ export class DataStore {
       : path.resolve('.studio-data/data-engine'),
   ) {}
   private file(key: string) {
-    if (!/^(posts|bronze|evaluations|runs|production-jobs|crawler-runs|gold-shadows|gold-feedback|conversation-runs|thread-collections|thread-replies|conversation-feedback|editorial-plans|content-quality-runs)\/[a-f0-9]{64}\.json$/.test(key))
+    if (!/^(posts|bronze|evaluations|runs|production-jobs|crawler-runs|gold-shadows|gold-feedback|conversation-runs|thread-collections|thread-replies|conversation-feedback|editorial-plans|content-quality-runs|ai-assessments|ai-agent-runs|ai-script-proposals)\/[a-f0-9]{64}\.json$/.test(key))
       throw Error('Invalid data storage key');
     return path.join(this.root, key);
   }
@@ -52,7 +52,7 @@ export class DataStore {
     }
     await replaceFile(temp, file);
   }
-  async *rows<T>(kind: 'posts' | 'runs' | 'production-jobs' | 'crawler-runs' | 'gold-shadows' | 'gold-feedback' | 'conversation-runs' | 'thread-collections' | 'thread-replies' | 'conversation-feedback' | 'editorial-plans' | 'content-quality-runs') {
+  async *rows<T>(kind: 'posts' | 'runs' | 'production-jobs' | 'crawler-runs' | 'gold-shadows' | 'gold-feedback' | 'conversation-runs' | 'thread-collections' | 'thread-replies' | 'conversation-feedback' | 'editorial-plans' | 'content-quality-runs' | 'ai-assessments' | 'ai-agent-runs' | 'ai-script-proposals') {
     let entries: string[];
     try {
       entries = await fs.readdir(path.join(this.root, kind));

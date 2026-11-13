@@ -10,6 +10,7 @@ import type {
 } from "../../../1_nest_backend/src/data-engine/conversation-contracts";
 import { studioRequest, exportJson } from "./integration-api";
 import { copyReport } from "./copy-report";
+import { AiContentPanel } from "./AiContentPanel";
 type View = {
   record: {
     id: string;
@@ -775,6 +776,7 @@ export function ConversationPanel({
           </details>
         </article>
       )}
+      <AiContentPanel collectionId={collectionId || undefined} />
     </details>
   );
 }
