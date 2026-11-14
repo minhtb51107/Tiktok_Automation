@@ -10,6 +10,7 @@ import type {
   AiAssessmentFeedback,
   AiCandidateAssessment,
   AiCollectionInput,
+  AiCompletion,
   AiContentAssessment,
   AiScriptProposal,
   AiScriptReview,
@@ -54,6 +55,28 @@ const score = (value: unknown) => {
 };
 const optionalScore = (value: unknown) =>
   value === null || value === undefined ? null : score(value);
+const validateCompletion = <T>(
+  provider: ContentAiProvider,
+  completion: AiCompletion,
+  validate: () => T,
+) => {
+  try {
+    const result = validate();
+    provider.recordValidationOutcome?.(completion.ledgerId, 'VALIDATED');
+    return result;
+  } catch (error: any) {
+    const category = /^AI_[A-Z0-9_]+$/.test(error?.message || '')
+      ? error.message
+      : 'AI_SCHEMA_VALIDATION_FAILED';
+    provider.recordValidationOutcome?.(
+      completion.ledgerId,
+      'VALIDATION_FAILED',
+      category,
+      completion.content,
+    );
+    throw error;
+  }
+};
 const usageZero = (): AiUsage => ({
   inputTokens: 0,
   outputTokens: 0,
@@ -432,13 +455,15 @@ export class AiContentEvaluator {
         signal,
       });
       candidateRows.push(
-        ...validateCandidateBatch(
-          cleanJson(completion.content),
-          new Map(
-            batch.map((row) => [
-              row.sourceId,
-              row.relationshipEvidence as AiCandidateAssessment['relationshipEvidence'],
-            ]),
+        ...validateCompletion(this.provider, completion, () =>
+          validateCandidateBatch(
+            cleanJson(completion.content),
+            new Map(
+              batch.map((row) => [
+                row.sourceId,
+                row.relationshipEvidence as AiCandidateAssessment['relationshipEvidence'],
+              ]),
+            ),
           ),
         ),
       );
@@ -852,9 +877,11 @@ export class AiResearchAgent {
           maxTokens: Math.min(800, this.provider.config().maxTokens),
           signal: abort.signal,
         }),
-        validPlan = validatePlan(
-          cleanJson(planCompletion.content),
-          new Set(run.collectionIds),
+        validPlan = validateCompletion(this.provider, planCompletion, () =>
+          validatePlan(
+            cleanJson(planCompletion.content),
+            new Set(run.collectionIds),
+          ),
         );
       run.plan = {
         ...validPlan,
@@ -970,7 +997,9 @@ export class AiResearchAgent {
               },
               signal: abort.signal,
             }),
-            valid = validateProposal(cleanJson(completion.content), allowed),
+            valid = validateCompletion(this.provider, completion, () =>
+              validateProposal(cleanJson(completion.content), allowed),
+            ),
             proposal: AiScriptProposal = {
               schemaVersion: 'ai-script-proposal/1',
               id: hash({ assessmentId: chosen.id, requestHash, valid }),
@@ -1147,7 +1176,9 @@ export class AiResearchAgent {
           selectionRevision: feedback.revision,
         },
       }),
-      valid = validateProposal(cleanJson(completion.content), allowed),
+      valid = validateCompletion(this.provider, completion, () =>
+        validateProposal(cleanJson(completion.content), allowed),
+      ),
       unverified = sources.filter(
         (row) =>
           row.kind === 'CONTEXT' &&

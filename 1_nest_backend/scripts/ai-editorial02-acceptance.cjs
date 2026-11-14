@@ -141,23 +141,13 @@ async function main() {
     collectionIds: [collectionId],
   });
   if (agentRun.status !== 'WAITING_REVIEW') throw Error(agentRun.error || 'AI_EDITORIAL02_AGENT_FAILED');
-  const feedback = await evaluator.saveFeedback(assessment.id, {
-    requestId: 'ai-editorial02-reference-selection',
-    expectedRevision: 0,
-    decision: 'ACCEPT',
+  const referenceSelection = {
+    status: 'REFERENCE_ONLY_NOT_USER_APPROVAL',
     selectedSourceIds: validReferenceIds,
-    reason: 'Isolated acceptance using persisted editorial reference selection; not parent verification or production approval.',
-  });
-  const reviewedProposal = await agent.proposeReviewed(assessment.id, {
-    requestId: 'ai-editorial02-reviewed-proposal',
-    expectedFeedbackRevision: feedback.revision,
-    targetDurationSeconds: 75,
-    instruction: 'Tạo Script DRAFT SERIOUS 65–90 giây có hook, bối cảnh, các góc nhìn đã chọn, bình luận nguyên tác phân biệt rõ và kết luận. Không bịa dữ kiện, không lặp nội dung.',
-  });
+  };
   const observed = observedContextViews(collection, 'SERIOUS');
   const sourceMap = new Map(observed.map((row) => [row.id, row]));
-  const integrity = assessment.candidates.every((row) => actualIds.has(row.sourceId)) &&
-    reviewedProposal.sourceIds.every((id) => id === collection.root.id || actualIds.has(id));
+  const integrity = assessment.candidates.every((row) => actualIds.has(row.sourceId));
   if (!integrity) throw Error('AI_EDITORIAL02_SOURCE_INTEGRITY');
   const prior = await optionalJson(priorReportPath);
   const baongoc = await optionalJson(baongocReportPath);
@@ -197,8 +187,7 @@ async function main() {
       },
     })),
     agentRun,
-    feedback,
-    reviewedProposal,
+    referenceSelection,
     supportingCaptures: {
       pngkhatuPriorLiveAssessment: prior?.assessments?.find((row) => row.collectionId !== prior.agentRun?.plan?.selectedCollectionId) ?? null,
       baongocOfflineAvailability: baongoc ? {
@@ -227,7 +216,7 @@ async function main() {
     assessment: { selected: assessment.selectedSourceIds.length, excluded: assessment.excludedSourceIds.length, feasibility: assessment.feasibility.status },
     agreement,
     agentProposal: agentRun.proposal && { id: agentRun.proposal.id, duration: agentRun.proposal.estimatedDuration, gate: agentRun.proposal.durationGate },
-    reviewedProposal: { id: reviewedProposal.id, duration: reviewedProposal.estimatedDuration, gate: reviewedProposal.durationGate, sources: reviewedProposal.sourceIds.length },
+    reviewedProposal: null,
     budget: report.budget,
   }));
 }

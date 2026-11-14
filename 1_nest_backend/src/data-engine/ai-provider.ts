@@ -1,4 +1,15 @@
 import { InferenceClient } from '@huggingface/inference';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  writeSync,
+} from 'node:fs';
+import * as path from 'node:path';
 import type { AiCompletion, AiProviderConfig, AiUsage } from './ai-contracts';
 
 export interface AiJsonRequest {
@@ -12,12 +23,51 @@ export interface ContentAiProvider {
   readonly name: 'HUGGING_FACE';
   config(): AiProviderConfig;
   completeJson(request: AiJsonRequest): Promise<AiCompletion>;
+  recordValidationOutcome?(
+    ledgerId: string,
+    outcome: 'VALIDATED' | 'VALIDATION_FAILED',
+    category?: string,
+    modelOutput?: string,
+  ): void;
   metrics?(): {
     requests: number;
     reservedOutputTokens: number;
     reportedCostUsd: number;
     costTrackingAvailable: boolean;
   };
+  ledgerMetrics?(): {
+    requests: number;
+    pending: number;
+    providerSucceeded: number;
+    providerFailed: number;
+    validated: number;
+    validationFailed: number;
+    reportedCostUsd: number;
+    costTrackingAvailable: boolean;
+  };
+}
+
+export interface AiInferenceLedgerEvent {
+  schemaVersion: 'ai-inference-ledger/1';
+  ledgerId: string;
+  at: string;
+  status:
+    | 'PENDING'
+    | 'PROVIDER_SUCCEEDED'
+    | 'PROVIDER_FAILED'
+    | 'VALIDATED'
+    | 'VALIDATION_FAILED';
+  model?: string;
+  provider?: string;
+  inputHash?: string;
+  requestedMaxTokens?: number;
+  providerRequestId?: string | null;
+  usage?: AiUsage;
+  latencyMs?: number;
+  failureCategory?: string;
+  httpStatus?: number | null;
+  diagnostic?: string | null;
+  sanitizedModelOutput?: string;
 }
 
 const integer = (
@@ -160,6 +210,83 @@ const redactDiagnostic = (value: string) =>
     .trim()
     .slice(0, 800);
 
+const sanitizeModelOutput = (value: string) =>
+  value
+    .replace(/Bearer\s+[^\s"']+/gi, 'Bearer [REDACTED]')
+    .replace(/hf_[A-Za-z0-9_-]{8,}/g, '[REDACTED_HF_TOKEN]')
+    .replace(
+      /("?(?:access[_-]?token|authorization|api[_-]?key|secret)"?\s*[:=]\s*)"?[^,}\s"]+"?/gi,
+      '$1[REDACTED]',
+    )
+    .slice(0, 32_000);
+
+export class AiInferenceLedger {
+  readonly file: string;
+  constructor(env: NodeJS.ProcessEnv = process.env) {
+    this.file = path.resolve(
+      env.HUGGINGFACE_LEDGER_PATH?.trim() ||
+        path.join(
+          env.STUDIO_DATA_ROOT?.trim() || path.resolve('.studio-data'),
+          'ai-inference-ledger.jsonl',
+        ),
+    );
+  }
+  append(event: AiInferenceLedgerEvent) {
+    mkdirSync(path.dirname(this.file), { recursive: true });
+    const fd = openSync(this.file, 'a');
+    try {
+      writeSync(fd, `${JSON.stringify(event)}\n`, undefined, 'utf8');
+      fsyncSync(fd);
+    } catch {
+      throw Error('AI_LEDGER_WRITE_FAILED');
+    } finally {
+      closeSync(fd);
+    }
+  }
+  events(): AiInferenceLedgerEvent[] {
+    if (!existsSync(this.file)) return [];
+    return readFileSync(this.file, 'utf8')
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as AiInferenceLedgerEvent);
+  }
+  summary() {
+    const requests = new Map<string, AiInferenceLedgerEvent[]>();
+    for (const event of this.events())
+      requests.set(event.ledgerId, [
+        ...(requests.get(event.ledgerId) ?? []),
+        event,
+      ]);
+    let reportedCostUsd = 0,
+      costTrackingAvailable = true;
+    for (const events of requests.values()) {
+      const usageEvent = [...events]
+        .reverse()
+        .find((event) => event.usage !== undefined);
+      if (!usageEvent) continue;
+      if (usageEvent.usage?.estimatedCostUsd === null)
+        costTrackingAvailable = false;
+      else reportedCostUsd += usageEvent.usage!.estimatedCostUsd!;
+    }
+    const count = (status: AiInferenceLedgerEvent['status']) =>
+      [...requests.values()].filter((events) =>
+        events.some((event) => event.status === status),
+      ).length;
+    return {
+      requests: requests.size,
+      pending: [...requests.values()].filter(
+        (events) => events[events.length - 1]?.status === 'PENDING',
+      ).length,
+      providerSucceeded: count('PROVIDER_SUCCEEDED'),
+      providerFailed: count('PROVIDER_FAILED'),
+      validated: count('VALIDATED'),
+      validationFailed: count('VALIDATION_FAILED'),
+      reportedCostUsd: Number(reportedCostUsd.toFixed(8)),
+      costTrackingAvailable,
+    };
+  }
+}
+
 export async function safeProviderDiagnostic(error: any) {
   const response = error?.httpResponse ?? error?.response;
   let body = '';
@@ -197,10 +324,14 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
   private tokens = 0;
   private costUsd = 0;
   private costUnknown = false;
+  private ledger: AiInferenceLedger;
   constructor(
     private env: NodeJS.ProcessEnv = process.env,
     private clientFactory = (token: string) => new InferenceClient(token),
-  ) {}
+    ledger?: AiInferenceLedger,
+  ) {
+    this.ledger = ledger ?? new AiInferenceLedger(env);
+  }
   config() {
     const {
       inputUsdPerMillion: _i,
@@ -217,6 +348,26 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
       costTrackingAvailable: !this.costUnknown,
     };
   }
+  ledgerMetrics() {
+    return this.ledger.summary();
+  }
+  recordValidationOutcome(
+    ledgerId: string,
+    outcome: 'VALIDATED' | 'VALIDATION_FAILED',
+    category?: string,
+    modelOutput?: string,
+  ) {
+    this.ledger.append({
+      schemaVersion: 'ai-inference-ledger/1',
+      ledgerId,
+      at: new Date().toISOString(),
+      status: outcome,
+      ...(category ? { failureCategory: category } : {}),
+      ...(outcome === 'VALIDATION_FAILED' && modelOutput
+        ? { sanitizedModelOutput: sanitizeModelOutput(modelOutput) }
+        : {}),
+    });
+  }
   async completeJson(request: AiJsonRequest): Promise<AiCompletion> {
     const cfg = huggingFaceConfig(this.env),
       key = this.env.HUGGINGFACE_API_KEY?.trim();
@@ -229,6 +380,27 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
     const max = Math.min(request.maxTokens ?? cfg.maxTokens, cfg.maxTokens);
     if (this.tokens + max > cfg.tokenBudget)
       throw Error('AI_TOKEN_BUDGET_EXCEEDED');
+    const ledgerId = randomUUID(),
+      inputHash = createHash('sha256')
+        .update(
+          JSON.stringify({
+            system: request.system,
+            input: request.input,
+            maxTokens: max,
+            temperature: request.temperature ?? 0.1,
+          }),
+        )
+        .digest('hex');
+    this.ledger.append({
+      schemaVersion: 'ai-inference-ledger/1',
+      ledgerId,
+      at: new Date().toISOString(),
+      status: 'PENDING',
+      model: cfg.model,
+      provider: cfg.provider,
+      inputHash,
+      requestedMaxTokens: max,
+    });
     this.requests++;
     this.tokens += max;
     const timeout = AbortSignal.timeout(cfg.timeoutMs),
@@ -236,6 +408,8 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
         ? AbortSignal.any([request.signal, timeout])
         : timeout,
       start = Date.now();
+    let observedUsage: AiUsage | undefined,
+      observedProviderRequestId: string | null = null;
     try {
       const response = await this.clientFactory(key).chatCompletion(
         {
@@ -258,6 +432,15 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
         },
         { signal, retry_on_error: false },
       );
+      observedUsage = usage(
+        response.usage,
+        cfg,
+        (response as any).estimated_cost,
+      );
+      observedProviderRequestId =
+        typeof response.id === 'string' ? response.id : null;
+      if (observedUsage.estimatedCostUsd === null) this.costUnknown = true;
+      else this.costUsd += observedUsage.estimatedCostUsd;
       const message = response.choices?.[0]?.message as any,
         content = message?.content,
         reasoningPresent =
@@ -271,25 +454,29 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
           });
         throw Error('AI_EMPTY_RESPONSE');
       }
-      const requestUsage = usage(
-        response.usage,
-        cfg,
-        (response as any).estimated_cost,
-      );
-      if (requestUsage.estimatedCostUsd === null) this.costUnknown = true;
-      else this.costUsd += requestUsage.estimatedCostUsd;
-      if (this.costUsd > cfg.costBudgetUsd)
-        throw Error('AI_COST_BUDGET_EXCEEDED');
-      return {
+      const completion: AiCompletion = {
+        ledgerId,
         provider: 'HUGGING_FACE',
         model: response.model || cfg.model,
         providerRoute: cfg.provider,
         content,
-        usage: requestUsage,
+        usage: observedUsage,
         latencyMs: Date.now() - start,
-        requestId: typeof response.id === 'string' ? response.id : null,
+        requestId: observedProviderRequestId,
         finishReason: response.choices?.[0]?.finish_reason ?? null,
       };
+      this.ledger.append({
+        schemaVersion: 'ai-inference-ledger/1',
+        ledgerId,
+        at: new Date().toISOString(),
+        status: 'PROVIDER_SUCCEEDED',
+        providerRequestId: completion.requestId,
+        usage: completion.usage,
+        latencyMs: completion.latencyMs,
+      });
+      if (this.costUsd > cfg.costBudgetUsd)
+        throw Error('AI_COST_BUDGET_EXCEEDED');
+      return completion;
     } catch (error: any) {
       const code = /^AI_/.test(error?.message || '')
           ? error.message
@@ -298,14 +485,30 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
           typeof error?.providerDiagnostic === 'string'
             ? error.providerDiagnostic
             : await safeProviderDiagnostic(error);
+      const httpStatus =
+        Number(
+          error?.httpResponse?.status ??
+            error?.response?.status ??
+            error?.status,
+        ) || null;
+      this.ledger.append({
+        schemaVersion: 'ai-inference-ledger/1',
+        ledgerId,
+        at: new Date().toISOString(),
+        status: 'PROVIDER_FAILED',
+        failureCategory: code,
+        httpStatus,
+        diagnostic: providerDiagnostic,
+        ...(observedProviderRequestId !== null
+          ? { providerRequestId: observedProviderRequestId }
+          : {}),
+        ...(observedUsage ? { usage: observedUsage } : {}),
+        latencyMs: Date.now() - start,
+      });
       throw Object.assign(Error(code), {
+        ledgerId,
         category: code,
-        httpStatus:
-          Number(
-            error?.httpResponse?.status ??
-              error?.response?.status ??
-              error?.status,
-          ) || null,
+        httpStatus,
         redactedMessage: code,
         providerDiagnostic,
       });

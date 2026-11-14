@@ -52,14 +52,13 @@ async function main() {
   const selectedSourceIds = referenceIds.filter((id) => allowed.has(id));
   if (selectedSourceIds.length < 2) throw Error('AI_EDITORIAL02_REFERENCE_SELECTION_MISSING');
   const evaluator = new AiContentEvaluator(data, provider);
-  const current = await evaluator.feedback(assessment.id);
-  const feedback = await evaluator.saveFeedback(assessment.id, {
-    requestId: 'ai-editorial02-final-selection',
-    expectedRevision: current?.revision ?? 0,
-    decision: 'ACCEPT',
-    selectedSourceIds,
-    reason: 'Persisted editorial reference selection for isolated Script DRAFT acceptance; not parent verification or production approval.',
-  });
+  const feedback = await evaluator.feedback(assessment.id);
+  const approvedIds = [...(feedback?.selectedSourceIds ?? [])].sort();
+  if (
+    feedback?.decision !== 'ACCEPT' ||
+    JSON.stringify(approvedIds) !== JSON.stringify([...selectedSourceIds].sort())
+  )
+    throw Error('AI_EXPLICIT_USER_EDITORIAL_SELECTION_REQUIRED');
   const conversations = new ConversationEngine(data, {
     execution: 'LIVE',
     discover: async () => { throw Error('AI_EDITORIAL02_CRAWLER_DISABLED'); },
@@ -87,7 +86,7 @@ async function main() {
       unchanged: sha(sourceBefore) === sha(sourceAfter),
     },
     limitations: [
-      'Candidate quality uses the prior LIVE assessment plus persisted editorial selection.',
+      'Candidate quality uses the prior LIVE assessment plus an explicit persisted user editorial selection.',
       'AI Content Quality V2 LIVE schema acceptance remains PARTIAL.',
       'Duration is estimated from narration text and is not measured audio.',
       'Observed contexts remain unverified parent relationships and require human review.',

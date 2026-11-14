@@ -39,6 +39,10 @@ export class AiContentStudioService {
       config: this.provider.config(),
       liveCalls: 'EXPLICIT_ONLY',
       automaticFallback: false,
+      durableLedger: this.provider.ledgerMetrics?.() ?? null,
+      durableLedgerScope: 'AI_EDITORIAL02B_AND_LATER',
+      historicalInferenceAccounting:
+        'UNKNOWN_NOT_MIGRATED_DO_NOT_INFER_ZERO',
       toolMode: 'MODEL_PLANNER_VALIDATED_TOOLS_V1',
       approvals: 'UNCHANGED',
       scheduler: 'OFF',
@@ -53,13 +57,30 @@ export class AiContentStudioService {
         maxTokens: 24,
         temperature: 0,
       });
-      const parsed = JSON.parse(
-        response.content
-          .trim()
-          .replace(/^```(?:json)?\s*/i, '')
-          .replace(/\s*```$/, ''),
-      );
-      if (parsed?.ok !== true) throw Error('AI_HEALTH_SCHEMA_INVALID');
+      let parsed: any;
+      try {
+        parsed = JSON.parse(
+          response.content
+            .trim()
+            .replace(/^```(?:json)?\s*/i, '')
+            .replace(/\s*```$/, ''),
+        );
+        if (parsed?.ok !== true) throw Error('AI_HEALTH_SCHEMA_INVALID');
+        this.provider.recordValidationOutcome?.(
+          response.ledgerId,
+          'VALIDATED',
+        );
+      } catch (error: any) {
+        this.provider.recordValidationOutcome?.(
+          response.ledgerId,
+          'VALIDATION_FAILED',
+          /^AI_[A-Z0-9_]+$/.test(error?.message || '')
+            ? error.message
+            : 'AI_HEALTH_SCHEMA_INVALID',
+          response.content,
+        );
+        throw error;
+      }
       return {
         status: 'READY',
         provider: response.provider,

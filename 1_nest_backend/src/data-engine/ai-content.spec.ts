@@ -39,7 +39,14 @@ const root: PublicPost = {
 class FakeProvider implements ContentAiProvider {
   readonly name = 'HUGGING_FACE' as const;
   calls: AiJsonRequest[] = [];
+  validationOutcomes: Array<{
+    ledgerId: string;
+    outcome: 'VALIDATED' | 'VALIDATION_FAILED';
+    category?: string;
+    modelOutput?: string;
+  }> = [];
   invalidSource = false;
+  invalidScript = false;
   config(): AiProviderConfig {
     return {
       model: 'test/model',
@@ -52,6 +59,19 @@ class FakeProvider implements ContentAiProvider {
       credential: 'present',
       reasoningMode: 'DISABLED',
     };
+  }
+  recordValidationOutcome(
+    ledgerId: string,
+    outcome: 'VALIDATED' | 'VALIDATION_FAILED',
+    category?: string,
+    modelOutput?: string,
+  ) {
+    this.validationOutcomes.push({
+      ledgerId,
+      outcome,
+      category,
+      modelOutput,
+    });
   }
   async completeJson(request: AiJsonRequest): Promise<AiCompletion> {
     this.calls.push(request);
@@ -73,24 +93,26 @@ class FakeProvider implements ContentAiProvider {
           ],
         })
       : isScript
-        ? JSON.stringify({
-            hook: 'Một câu chuyện công việc đáng bàn',
-            sections: [
-              {
-                kind: 'QUOTE',
-                sourceIds: [input.sources[0].sourceId],
-                text: 'Nguồn kiểm thử.',
-                purpose: 'context',
-              },
-              {
-                kind: 'COMMENTARY',
-                sourceIds: [],
-                text: 'Phần bình luận nguyên tác cần người dùng duyệt.',
-                purpose: 'analysis',
-              },
-            ],
-            warnings: ['SYNTHETIC TEST DATA'],
-          })
+        ? this.invalidScript
+          ? JSON.stringify({ hook: 'Thiếu sections có cấu trúc.' })
+          : JSON.stringify({
+              hook: 'Một câu chuyện công việc đáng bàn',
+              sections: [
+                {
+                  kind: 'QUOTE',
+                  sourceIds: [input.sources[0].sourceId],
+                  text: 'Nguồn kiểm thử.',
+                  purpose: 'context',
+                },
+                {
+                  kind: 'COMMENTARY',
+                  sourceIds: [],
+                  text: 'Phần bình luận nguyên tác cần người dùng duyệt.',
+                  purpose: 'analysis',
+                },
+              ],
+              warnings: ['SYNTHETIC TEST DATA'],
+            })
         : isCandidateBatch
           ? JSON.stringify({
               candidates: input.candidates.map((row: any) => ({
@@ -133,6 +155,7 @@ class FakeProvider implements ContentAiProvider {
               })
             : JSON.stringify({ error: 'unexpected-input' });
     return {
+      ledgerId: `synthetic-ledger-${this.calls.length}`,
       provider: 'HUGGING_FACE',
       model: 'test/model',
       providerRoute: 'mock-test',
@@ -345,5 +368,41 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
     ).rejects.toThrow('AI_ASSESSMENT_NOT_FOUND');
     expect((await agent.run(body)).id).toBe(run.id);
     expect(provider.calls).toHaveLength(4);
+  });
+
+  test('rejects an invalid reviewed Script proposal without persisting it', async () => {
+    const evaluator = new AiContentEvaluator(data, provider),
+      record = await conversations.collection(collectionId),
+      assessment = await evaluator.evaluate({
+        collectionId,
+        collection: record.collection,
+        style: 'SERIOUS',
+        heuristic: record.evaluation,
+      }),
+      feedback = await evaluator.saveFeedback(assessment.id, {
+        requestId: 'script-schema-feedback',
+        expectedRevision: 0,
+        decision: 'ACCEPT',
+        selectedSourceIds: ['REPLY_AI_TEST'],
+        reason: 'SYNTHETIC TEST DATA only.',
+      }),
+      agent = new AiResearchAgent(data, conversations, evaluator, provider);
+    provider.invalidScript = true;
+    await expect(
+      agent.proposeReviewed(assessment.id, {
+        requestId: 'script-schema-invalid',
+        expectedFeedbackRevision: feedback.revision,
+        targetDurationSeconds: 75,
+        instruction: 'Validate the Script proposal schema.',
+      }),
+    ).rejects.toThrow('AI_SCRIPT_SCHEMA_INVALID');
+    const validation =
+      provider.validationOutcomes[provider.validationOutcomes.length - 1];
+    expect(validation).toMatchObject({
+      outcome: 'VALIDATION_FAILED',
+      category: 'AI_SCRIPT_SCHEMA_INVALID',
+    });
+    expect(validation?.modelOutput).toContain('Thiếu sections');
+    expect(await agent.latestProposalForAssessment(assessment.id)).toBeNull();
   });
 });

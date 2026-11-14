@@ -1,5 +1,11 @@
-import { describe, expect, test } from '@jest/globals';
+import { describe, expect, jest, test } from '@jest/globals';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import * as path from 'node:path';
 import { HuggingFaceContentProvider, huggingFaceConfig } from './ai-provider';
+
+const memoryLedger = () =>
+  ({ append: jest.fn(), events: () => [], file: 'MEMORY' }) as any;
 
 const response = {
   id: 'request-test',
@@ -21,6 +27,8 @@ describe('Hugging Face bounded provider', () => {
 
   test('uses configured model/provider, captures usage and never retries', async () => {
     let calls = 0;
+    const dir = await mkdtemp(path.join(tmpdir(), 'ai-ledger-success-'));
+    const ledger = path.join(dir, 'ledger.jsonl');
     const provider = new HuggingFaceContentProvider(
       {
         HUGGINGFACE_API_KEY: 'SECRET_TEST_VALUE',
@@ -29,6 +37,7 @@ describe('Hugging Face bounded provider', () => {
         HUGGINGFACE_REQUEST_BUDGET: '1',
         HUGGINGFACE_TOKEN_BUDGET: '100',
         HUGGINGFACE_MAX_TOKENS: '50',
+        HUGGINGFACE_LEDGER_PATH: ledger,
       },
       (() => ({
         chatCompletion: async (input: any, options: any) => {
@@ -39,6 +48,7 @@ describe('Hugging Face bounded provider', () => {
           return response;
         },
       })) as any,
+      undefined,
     );
     const result = await provider.completeJson({
       system: 'test',
@@ -48,10 +58,45 @@ describe('Hugging Face bounded provider', () => {
     expect(result.usage.totalTokens).toBe(12);
     expect(result.usage.estimatedCostUsd).toBe(0.0002);
     expect(result.usage.costSource).toBe('PROVIDER_REPORTED');
+    provider.recordValidationOutcome(
+      result.ledgerId,
+      'VALIDATION_FAILED',
+      'AI_SCRIPT_SCHEMA_INVALID',
+      '{"api_key":"secret-test","bad":true}',
+    );
     await expect(
       provider.completeJson({ system: 'test', input: {} }),
     ).rejects.toThrow('AI_REQUEST_BUDGET_EXCEEDED');
     expect(calls).toBe(1);
+    const events = (await readFile(ledger, 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line));
+    expect(events.map((event) => event.status)).toEqual([
+      'PENDING',
+      'PROVIDER_SUCCEEDED',
+      'VALIDATION_FAILED',
+    ]);
+    expect(events[0]).toMatchObject({
+      model: 'test/model',
+      requestedMaxTokens: 20,
+    });
+    expect(events[0].inputHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(events[1].usage.totalTokens).toBe(12);
+    expect(events[2].failureCategory).toBe('AI_SCRIPT_SCHEMA_INVALID');
+    expect(events[2].sanitizedModelOutput).not.toContain('secret-test');
+    expect(JSON.stringify(events)).not.toContain('SECRET_TEST_VALUE');
+    expect(provider.ledgerMetrics()).toEqual({
+      requests: 1,
+      pending: 0,
+      providerSucceeded: 1,
+      providerFailed: 0,
+      validated: 0,
+      validationFailed: 1,
+      reportedCostUsd: 0.0002,
+      costTrackingAvailable: true,
+    });
+    await rm(dir, { recursive: true, force: true });
   });
 
   test('classifies HTTP 402 and does not leak provider response', async () => {
@@ -76,6 +121,7 @@ describe('Hugging Face bounded provider', () => {
           };
         },
       })) as any,
+      memoryLedger(),
     );
     try {
       await provider.completeJson({ system: 'test', input: {} });
@@ -116,6 +162,7 @@ describe('Hugging Face bounded provider', () => {
           };
         },
       })) as any,
+      memoryLedger(),
     );
     expect(
       (await provider.completeJson({ system: 'Return JSON.', input: {} }))
@@ -144,6 +191,7 @@ describe('Hugging Face bounded provider', () => {
           ],
         }),
       })) as any,
+      memoryLedger(),
     );
     try {
       await provider.completeJson({ system: 'Return JSON.', input: {} });

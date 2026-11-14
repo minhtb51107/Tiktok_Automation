@@ -31,6 +31,7 @@ export interface AiProviderConfig {
   reasoningMode: 'DISABLED' | 'MODEL_DEFAULT';
 }
 export interface AiCompletion {
+  ledgerId: string;
   provider: 'HUGGING_FACE';
   model: string;
   providerRoute: string;
