@@ -67,8 +67,10 @@ function sameSource(a: string, b: string) {
 }
 export function ConversationPanel({
   sourceUrl,
+  product,
 }: {
   sourceUrl?: string | null;
+  product?: { jobId: string; collectionId: string | null; sessionRevision: number; onApplied: (session: any) => void };
 }) {
   const { locked, runtime } = useRuntimeSafety();
   const reviewLocked = locked && !runtime.capabilities?.review;
@@ -776,7 +778,18 @@ export function ConversationPanel({
           </details>
         </article>
       )}
-      <AiContentPanel collectionId={collectionId || undefined} />
+      <AiContentPanel
+        collectionId={collectionId || undefined}
+        materialize={
+          product && product.collectionId === collectionId
+            ? {
+                jobId: product.jobId,
+                sessionRevision: product.sessionRevision,
+                onApplied: product.onApplied,
+              }
+            : undefined
+        }
+      />
     </details>
   );
 }

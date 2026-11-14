@@ -2,20 +2,21 @@ import type { StudioSession, StudioItem } from '../studio/studio.contracts';
 import type { EditorialPlan } from './editorial-contracts';
 import { editorSettings } from '../video-pipeline/editor-state';
 import {sourceProvenance,combinedProvenance} from './studio-integration';
+import { observedContextViews } from './conversation-context';
 /** Extends the existing DATA03 seed, preserving root and reply identities separately from editorial scene IDs. */
 export function editorialSession(
   s: StudioSession,
   plan: EditorialPlan,
 ): StudioSession {
   const root = plan.bundle.collection.root,
-    original = s.items[0];
+    original = s.items[0],
+    observed = new Map(observedContextViews(plan.bundle.collection).map((row) => [row.id, row]));
   const provenance=combinedProvenance([
     sourceProvenance({sourceUrl:root.url,sourcePostId:root.id,provenance:{synthetic:root.provenance.synthetic,identityEvidence:root.provenance.method==='EXISTING_EXACT_TARGET_EXTRACTOR'?'DOM_PERMALINK':undefined}}),
-    ...plan.selectedReplyIds.map(id=>{const r=plan.bundle.collection.replies.find(r=>r.id===id)!;return r.provenance.synthetic===true?'SYNTHETIC' as const:r.provenance.synthetic===false&&r.extractionStatus==='VERIFIED'?'REAL' as const:'UNKNOWN' as const;})
+    ...plan.selectedReplyIds.map(id=>{const r=plan.bundle.collection.replies.find(r=>r.id===id)!;return r.provenance.synthetic===true?'SYNTHETIC' as const:r.provenance.synthetic===false&&r.extractionStatus==='VERIFIED'?'REAL' as const:'UNKNOWN' as const;}),
+    ...(plan.selectedObservedUrls || []).map(() => 'UNKNOWN' as const),
   ]);
-  const origin = {
-    ...s.productionOrigin!,
-    conversation: {
+  const conversationOrigin = {
       sourceProvenance:provenance,
       collectionId: plan.collectionId,
       planId: plan.id,
@@ -23,10 +24,13 @@ export function editorialSession(
       bundleHash: plan.bundleHash,
       selectionRevision: plan.selectionRevision,
       selectedReplyIds: plan.selectedReplyIds,
-    },
+      selectedObservedUrls: plan.selectedObservedUrls || [],
   };
-  s.productionOrigin = origin;
-  s.project.productionOrigin = origin;
+  if (s.productionOrigin) {
+    const origin = { ...s.productionOrigin, conversation: conversationOrigin };
+    s.productionOrigin = origin;
+    s.project.productionOrigin = origin;
+  }
   s.project.editorialPlan = JSON.parse(JSON.stringify(plan));
   s.items = plan.sections
     .filter((section) => section.narrationText.trim())
@@ -34,21 +38,24 @@ export function editorialSession(
       const reply = plan.bundle.collection.replies.find(
           (r) => r.id === section.sourceId,
         ),
-        source = reply || root;
+        observedRow = section.sourceId ? observed.get(section.sourceId) : undefined,
+        source = reply || observedRow || root;
       const commentary = section.kind === 'COMMENTARY';
       return {
         id: section.id,
-        sourceId: commentary ? undefined : reply ? reply.id : original.sourceId,
+        sourceId: commentary ? undefined : reply ? reply.id : observedRow ? observedRow.id : original.sourceId,
         sourceReference: {
-          entityType: reply ? 'COMMENT' : 'POST',
+          entityType: reply || observedRow ? 'COMMENT' : 'POST',
           entityId: source.id,
         },
         sourceUrl: source.url,
         author: commentary
           ? { displayName: 'Bình luận biên tập' }
+          : observedRow
+            ? { displayName: observedRow.author, handle: observedRow.author }
           : {
-              displayName: source.author.name || source.author.handle,
-              handle: source.author.handle,
+              displayName: (reply || root).author.name || (reply || root).author.handle,
+              handle: (reply || root).author.handle,
             },
         originalText: section.originalText,
         displayText: section.displayText,
@@ -66,35 +73,49 @@ export function editorialSession(
           stage: section.stage,
           parentId: section.parentId,
           permalink: section.permalink,
+          sourceEvidence: section.sourceEvidence,
         },
         ...(!commentary
           ? {
               rawExtraction: reply
                 ? {
-                    text: source.originalText,
-                    author: source.author.name || source.author.handle,
-                    handle: source.author.handle,
+                    text: reply.originalText,
+                    author: reply.author.name || reply.author.handle,
+                    handle: reply.author.handle,
                     avatar: null,
-                    createdAt: source.publishedAt,
+                    createdAt: reply.publishedAt,
                     type: 'COMMENT',
                     parentReference: reply.parentId,
                     media: [],
-                    likeCount: source.engagement.likes,
-                    replyCount: source.engagement.replies,
-                    repostCount: source.engagement.reposts,
-                    shareCount: source.engagement.shares,
+                    likeCount: reply.engagement.likes,
+                    replyCount: reply.engagement.replies,
+                    repostCount: reply.engagement.reposts,
+                    shareCount: reply.engagement.shares,
                     provenance: {
                       text: 'Verified conversation ' + plan.collectionId,
                       parent: JSON.stringify(reply.evidence),
                     },
                   }
+                : observedRow
+                  ? {
+                      ...observedRow.raw,
+                      bodyText: observedRow.originalText,
+                      text: observedRow.originalText,
+                      type: 'UNKNOWN' as const,
+                      parentReference: null,
+                      provenance: {
+                        ...observedRow.raw.provenance,
+                        parent: 'Observed on target page; parent relationship unverified',
+                      },
+                    }
                 : original.rawExtraction,
               metadata: reply ? undefined : original.metadata,
             }
           : {}),
       };
     });
-  s.project.posts[0].commentIds = plan.selectedReplyIds;
+  s.project.posts[0].commentIds = [...plan.selectedReplyIds];
+  s.project.posts[0].commentIds.push(...(plan.selectedObservedUrls || []).map((url) => observedContextViews(plan.bundle.collection).find((row) => row.url === url)!.id));
   s.project.comments = plan.selectedReplyIds.map((id) => {
     const r = plan.bundle.collection.replies.find((x) => x.id === id)!;
     return {
@@ -108,8 +129,22 @@ export function editorialSession(
       },
       text: r.originalText,
       mediaAssetIds: [],
+      relationshipStatus: 'PARENT_VERIFIED' as const,
     };
   });
+  s.project.comments.push(...(plan.selectedObservedUrls || []).map((url) => {
+    const row = observedContextViews(plan.bundle.collection).find((candidate) => candidate.url === url)!;
+    return {
+      id: row.id,
+      sourceId: row.id,
+      postId: root.id,
+      author: { displayName: row.author, handle: row.author },
+      text: row.originalText,
+      mediaAssetIds: [],
+      relationshipStatus: 'OBSERVED_ON_TARGET_PAGE' as const,
+      observedTargetUrl: root.url,
+    };
+  }));
   s.project.sources.push(
     ...plan.selectedReplyIds.map((id) => {
       const r = plan.bundle.collection.replies.find((x) => x.id === id)!;
@@ -119,6 +154,16 @@ export function editorialSession(
         canonicalUrl: r.url,
         retrievedAt: r.provenance.observedAt,
         synthetic: r.provenance.synthetic,
+      };
+    }),
+    ...(plan.selectedObservedUrls || []).map((url) => {
+      const row = observedContextViews(plan.bundle.collection).find((candidate) => candidate.url === url)!;
+      return {
+        id: row.id,
+        platform: 'THREADS' as const,
+        canonicalUrl: row.url,
+        retrievedAt: plan.bundle.collection.completedAt,
+        synthetic: plan.bundle.collection.root.provenance.synthetic,
       };
     }),
   );

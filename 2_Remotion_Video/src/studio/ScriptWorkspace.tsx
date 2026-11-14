@@ -128,7 +128,7 @@ export function ScriptWorkspace({
                   {item.manualLocks.join(", ") || "none"}
                 </small>
               </div>
-              {item.editorial&&<p data-testid="script-editorial-role">{item.editorial.stage} · {item.editorial.kind} · parent {item.editorial.parentId||'root/editorial'} {item.editorial.permalink&&<a href={item.editorial.permalink} target="_blank" rel="noreferrer">Source</a>}</p>}
+              {item.editorial&&<p data-testid="script-editorial-role">{item.editorial.stage} · {item.editorial.kind} · {item.editorial.sourceEvidence||'UNKNOWN'} · parent {item.editorial.parentId||'unverified/root/editorial'} {item.editorial.permalink&&<a href={item.editorial.permalink} target="_blank" rel="noreferrer">Source</a>}</p>}
               <label>Original text · read only</label>
               <blockquote>{item.originalText}</blockquote>
               <PronunciationEditor key={item.id} item={item} edit={patch=>edit(item.id,patch)}/>

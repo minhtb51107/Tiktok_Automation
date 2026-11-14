@@ -828,7 +828,7 @@ export function catalogProvenance(catalog:Data01CatalogResponse|null|undefined):
 export function sessionProvenance(session:StudioSession|null,catalog:Data01CatalogResponse|null|undefined):SourceProvenance {
  if(!session)return 'UNKNOWN';
  const editorial=session.project.editorialPlan,origin=session.productionOrigin?.conversation;
- if(editorial&&origin?.bundleHash===editorial.bundleHash&&editorial.bundle.sourceLink?.postId===session.productionOrigin?.postId&&JSON.stringify(origin.selectedReplyIds)===JSON.stringify(editorial.selectedReplyIds)&&['REAL','SYNTHETIC','UNKNOWN'].includes(origin.sourceProvenance||''))return origin.sourceProvenance!;
+ if(editorial&&origin?.bundleHash===editorial.bundleHash&&editorial.bundle.sourceLink?.postId===session.productionOrigin?.postId&&JSON.stringify(origin.selectedReplyIds)===JSON.stringify(editorial.selectedReplyIds)&&JSON.stringify(origin.selectedObservedUrls||[])===JSON.stringify(editorial.selectedObservedUrls||[])&&['REAL','SYNTHETIC','UNKNOWN'].includes(origin.sourceProvenance||''))return origin.sourceProvenance!;
  if(editorial&&session.productionOrigin?.conversation?.bundleHash===editorial.bundleHash&&editorial.bundle.collection.root.provenance.synthetic===true&&session.project.sources.length>0&&session.project.sources.every(s=>s.synthetic===true))return 'SYNTHETIC';
  return combinedProvenance(session.items.filter(i=>i.selected).map(i=>{const row=matchCatalogIdentity(i.sourceUrl,catalog?.rows||[]);return row?rowProvenance(row):'UNKNOWN';}));
 }

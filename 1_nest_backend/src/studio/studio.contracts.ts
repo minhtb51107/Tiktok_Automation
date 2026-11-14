@@ -17,7 +17,7 @@ export interface StudioItem {
     observedAt: string;
     parentId: string | null;
   };
-  editorial?:{planId:string;sectionId:string;kind:import('../data-engine/editorial-contracts').EditorialKind;stage:string;parentId:string|null;permalink:string|null};
+  editorial?:{planId:string;sectionId:string;kind:import('../data-engine/editorial-contracts').EditorialKind;stage:string;parentId:string|null;permalink:string|null;sourceEvidence?:import('../data-engine/editorial-contracts').EditorialSection['sourceEvidence']};
   contentMapping?:{topic:string|null;bodyText:string;status:'VERIFIED'|'REVIEW_REQUIRED';evidence:{type:'DOM'|'USER_CONFIRMED';detail:string;sourceUrl:string};includeTopicInTts:boolean};
   spokenApproval?:import('./voice.types').SpokenApproval;
   voiceSettings?:import('./voice.types').VoiceSettings;

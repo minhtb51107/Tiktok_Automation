@@ -15,6 +15,11 @@ export interface EditorialSection {
   displayText: string;
   narrationText: string;
   locked: boolean;
+  sourceEvidence?:
+    | 'ROOT_VERIFIED'
+    | 'PARENT_VERIFIED'
+    | 'OBSERVED_RELATIONSHIP_UNVERIFIED'
+    | 'AI_COMMENTARY';
 }
 export interface Feasibility {
   version: string;
@@ -45,6 +50,8 @@ export interface EditorialPlan {
   collectionId: string;
   selectionRevision: number;
   selectedReplyIds: string[];
+  /** Explicit human selection. These URLs remain unverified observations. */
+  selectedObservedUrls?: string[];
   bundle: {
     collection: ThreadCollection;
     quality: ConversationEvaluation;

@@ -15,6 +15,8 @@ import {
   type PopularityCandidate,
 } from './conversation-contracts';
 import { observedContextViews } from './conversation-context';
+import { crawlerInput } from './crawler-adapter';
+import type { SourceAttempt } from '../studio/public-types';
 export interface ConversationProvider {
   execution: 'LIVE' | 'SYNTHETIC';
   discover(keyword: string): Promise<PopularityCandidate[]>;
@@ -195,6 +197,121 @@ export class ConversationEngine {
       if (run.execution !== this.provider.execution)
         throw Error('CONVERSATION_EXECUTION_MISMATCH');
       return this.process(run);
+    });
+  }
+  /**
+   * Reuses an already persisted exact-target Studio capture without another
+   * network request. Context cards remain unverified observations; this bridge
+   * never manufactures parent evidence.
+   */
+  async importObservedCapture(attempt: SourceAttempt, requestId: string) {
+    return this.exclusive(async () => {
+      if (!/^[\w-]{1,100}$/.test(requestId))
+        throw Error('CONVERSATION_INVALID_REQUEST');
+      const input = crawlerInput(attempt, requestId, false),
+        identity = canonicalPost(attempt.canonicalUrl || attempt.resolvedUrl || '');
+      if (!input || !identity || !attempt.records[0])
+        throw Error('CONVERSATION_EXACT_ROOT_BODY_UNVERIFIED');
+      const raw = attempt.records[0],
+        now = attempt.retrievedAt,
+        contexts = (attempt.contextCandidates || []).flatMap((candidate) => {
+          const id = canonicalPost(candidate.url);
+          if (!id || !candidate.text?.trim()) return [];
+          return [
+            {
+              url: id.url,
+              reason: 'DOM_CONTEXT_WITHOUT_RELATIONSHIP_EVIDENCE',
+              observation: {
+                level: 'OBSERVED_ON_TARGET_PAGE' as const,
+                targetUrl: identity.url,
+                observedAt: now,
+                author: { handle: id.handle, name: candidate.author || null },
+                originalText: candidate.text,
+              },
+            },
+          ];
+        }),
+        collection: ThreadCollection = {
+          version: CONVERSATION_VERSION,
+          root: {
+            id: identity.id,
+            url: identity.url,
+            author: { handle: identity.handle, name: input.author.name },
+            originalText: input.originalBody!,
+            topic: input.topic,
+            itemType: input.itemType,
+            rawPayload: input.rawPayload,
+            publishedAt: input.publishedAt,
+            engagement: input.engagement,
+            provenance: {
+              documentUrl: identity.url,
+              observedAt: now,
+              synthetic: false,
+              method: 'REUSED_EXACT_STUDIO_CAPTURE',
+            },
+          },
+          replies: [],
+          unverified: contexts,
+          reportedReplyCount: raw.replyCount,
+          observedReplyCount: contexts.length,
+          verifiedReplyCount: 0,
+          unverifiedCandidateCount: contexts.length,
+          startedAt: now,
+          completedAt: now,
+          status: contexts.length ? 'PARTIAL' : 'UNKNOWN',
+          warnings: [
+            'Imported from an existing exact-target capture; no second crawl.',
+            'Observed cards are not parent-verified replies.',
+          ],
+          sourceCapture: structuredClone(attempt),
+        },
+        id = hash({ version: CONVERSATION_VERSION, requestId }),
+        existing = await this.data.store.read<ConversationRun>(
+          key('conversation-runs', id),
+        );
+      if (existing) return existing;
+      const run: ConversationRun = {
+        schemaVersion: DATA_SCHEMA,
+        version: CONVERSATION_VERSION,
+        id,
+        request: {
+          requestId,
+          urls: [identity.url],
+          limit: 1,
+          priority: 'HOT',
+          minInteractions: 0,
+        },
+        configHash: configHash(),
+        execution: 'LIVE',
+        status: 'RUNNING',
+        stage: 'PERSISTING_SHADOW',
+        startedAt: now,
+        completedAt: null,
+        elapsedMs: 0,
+        candidates: [{ url: identity.url, observedOrder: 0, post: collection.root }],
+        ranking: rankCandidates(
+          [{ url: identity.url, observedOrder: 0, post: collection.root }],
+          1,
+          now,
+          { priority: 'HOT', minInteractions: 0 },
+        ),
+        captures: [{ url: identity.url, collection }],
+        results: [],
+        history: [],
+        error: null,
+      };
+      await this.save(run);
+      const record = await this.persist(run, collection);
+      run.results.push({
+        url: identity.url,
+        collectionId: record.id,
+        evaluation: record.evaluation,
+      });
+      run.status = 'COMPLETED';
+      run.stage = 'WAITING_HUMAN_REVIEW';
+      run.completedAt = new Date().toISOString();
+      await this.save(run);
+      return run;
     });
   }
   private async process(run: ConversationRun) {

@@ -10,6 +10,7 @@ import type {
   DurationAssessment,
 } from './editorial-contracts';
 import type { VideoTimeline, AudioAsset } from '../video-pipeline/contracts';
+import { observedContextViews, type ObservedContextView } from './conversation-context';
 export const EDITORIAL_CONFIG = Object.freeze({
   version: 'feasibility/1',
   defaultReadingSpeed:1.2,
@@ -81,14 +82,28 @@ export function selectedReplies(c: ThreadCollection, ids: string[]) {
     return r;
   });
 }
+/** Resolves only exact observations persisted for this target page. It never upgrades relationship evidence. */
+export function selectedObservedContexts(c: ThreadCollection, urls: string[]): ObservedContextView[] {
+  if (new Set(urls).size !== urls.length)
+    throw Error('EDITORIAL_DUPLICATE_OBSERVED_SELECTION');
+  const available = new Map(observedContextViews(c).map((row) => [row.url, row]));
+  return urls.map((url) => {
+    const row = available.get(canonicalPost(url)?.url || '');
+    if (!row || row.relationship !== 'OBSERVED_RELATIONSHIP_UNVERIFIED')
+      throw Error('EDITORIAL_OBSERVED_SELECTION_UNAVAILABLE');
+    return row;
+  });
+}
 export function feasibility(
   c: ThreadCollection,
   q: ConversationEvaluation,
   ids: string[],
   sections?: EditorialSection[],
   humanLabels: Record<string, string> = {},
+  observedUrls: string[] = [],
 ): Feasibility {
   const replies = selectedReplies(c, ids),
+    observed = selectedObservedContexts(c, observedUrls),
     substantive = replies.filter(
       (r) =>
         (humanLabels[r.id] ||
@@ -98,6 +113,7 @@ export function feasibility(
   const sourceText = [
       c.root.originalText,
       ...substantive.map((r) => r.originalText),
+      ...observed.map((row) => row.displayText),
     ].join('\n'),
     narration = sections?.map((s) => s.narrationText).join('\n') ?? sourceText;
   const sourceTokens = words(sourceText),
@@ -110,8 +126,12 @@ export function feasibility(
       ) || [];
   const missing: string[] = [],
     reasons: string[] = [];
-  if (!replies.length) missing.push('SELECT_VERIFIED_REPLY');
-  if (!substantive.length) missing.push('SUBSTANTIVE_VERIFIED_REPLY');
+  if (!replies.length && !observed.length) missing.push('SELECT_CONVERSATION_MATERIAL');
+  if (!substantive.length && !observed.length) missing.push('SUBSTANTIVE_CONVERSATION_MATERIAL');
+  if (observed.length) {
+    missing.push('OBSERVED_PARENT_RELATIONSHIP_UNVERIFIED');
+    reasons.push('Human-selected target-page observations remain unverified and require editorial review.');
+  }
   if (!personal) missing.push('CLEAR_SITUATION_OR_ARGUMENT');
   if (!commentary.some((s) => s.stage === 'HOOK'))
     missing.push('ORIGINAL_HOOK');
@@ -144,7 +164,7 @@ export function feasibility(
     status = 'NEEDS_EDITORIAL_ENRICHMENT';
     missing.push('HUMAN_REPLY_QUALITY_REVIEW');
     reasons.push('Uncertain lexical classification needs human review.');
-  } else if (!replies.length || !substantive.length || sourceTokens < 25) {
+  } else if ((!replies.length && !observed.length) || (!substantive.length && !observed.length) || sourceTokens < 25) {
     status = 'INSUFFICIENT_CONTENT';
     reasons.push(
       'Popularity cannot replace substantive discussion; do not manufacture length.',
@@ -154,7 +174,10 @@ export function feasibility(
     reasons.push(
       'Source context is limited; editor must determine whether meaningful analysis is possible.',
     );
-  } else if (missing.length || estimate.minimumSeconds <= EDITORIAL_CONFIG.minReleaseSeconds) {
+  } else if (
+    missing.some((code) => code !== 'OBSERVED_PARENT_RELATIONSHIP_UNVERIFIED') ||
+    estimate.minimumSeconds <= EDITORIAL_CONFIG.minReleaseSeconds
+  ) {
     status = 'NEEDS_EDITORIAL_ENRICHMENT';
     reasons.push(
       'Requires original editorial work or more meaningful material, not slower speech/padding.',
@@ -194,6 +217,10 @@ export function feasibility(
       substantiveReplies: {
         value: substantive.length,
         reason: 'Verified and substantive replies only',
+      },
+      selectedObservedContexts: {
+        value: observed.length,
+        reason: 'Explicitly selected target-page observations; not parent verification',
       },
       originalSections: {
         value: commentary.length,

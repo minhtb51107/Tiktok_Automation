@@ -21,7 +21,7 @@ import { RenderWorkspace } from "./RenderWorkspace";
 import { DashboardWorkspace } from "./DashboardWorkspace";
 import {ContentLibraryWorkspace} from "./ContentLibraryWorkspace";
 import {CollectionWorkspace} from "./CollectionWorkspace";
-import {ProjectList} from "./ProjectList";
+import {ProjectList,type ProductPipelineView} from "./ProjectList";
 import {studioRoute} from "../../../1_nest_backend/src/studio/studio-navigation";
 import "./uiops02.css";
 import { DiscoveryWorkspace } from "./DiscoveryWorkspace";
@@ -256,6 +256,8 @@ function AreaIcon({ area }: { area: StudioArea }) {
 }
 
 function App() {
+  const [productJobs, setProductJobs] = useState<ProductPipelineView[]>([]);
+  const [activeProductJobId, setActiveProductJobId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<
       { id: string; title: string; updatedAt?: string }[]
     >([]),
@@ -295,10 +297,12 @@ function App() {
   const busy = localBusy || jobActive;
 
   const refresh = async () => {
-    const list = await api<{ id: string; title: string; updatedAt?: string }[]>(
-      "",
-    );
+    const [list,jobs] = await Promise.all([
+      api<{ id: string; title: string; updatedAt?: string }[]>(""),
+      studioRequest<ProductPipelineView[]>('/product-jobs').catch(()=>[]),
+    ]);
     setSessions(list);
+    setProductJobs(jobs);
     return list;
   };
 
@@ -432,6 +436,9 @@ function App() {
   const navigateAreaBySlug=(slug:AreaSlug)=>navigateArea(SLUG_TO_AREA[slug]);
   const openProject=(id:string)=>{if(!canLeave())return;void run(async()=>{accept(await api('/'+id));setArea('Video Studio');setProjectPicker(false);setStep('Source');});};
   const createProject=()=>{if(!canLeave())return;void run(async()=>{accept(await api('','POST'));await refresh();setArea('Video Studio');setProjectPicker(false);setStep('Source');});};
+  const createProjectFromUrl=(sourceUrl:string)=>{if(!canLeave())return;void run(async()=>{const job=await studioRequest<ProductPipelineView>('/product-jobs',{sourceUrl});setProductJobs(current=>[job,...current.filter(row=>row.id!==job.id)]);await refresh();accept(await api('/'+job.sessionId));setArea('Video Studio');setProjectPicker(false);setStep('Source');setNotice('Collection job started. Source shows progress; AI, TTS and render remain explicit.');});};
+  const applyProductReview=(job:ProductPipelineView)=>void run(async()=>{if(!job.collectionId)throw Error('Source collection is not ready.');const view=await studioRequest<{review:{revision:number}}>(`/data/conversations/collections/${job.collectionId}`);const result=await studioRequest<{job:ProductPipelineView;session:StudioSession}>(`/product-jobs/${job.id}/apply-review`,{revision:view.review.revision});setProductJobs(current=>current.map(row=>row.id===job.id?result.job:row));accept(result.session);setActiveProductJobId(job.id);setProjectPicker(false);setArea('Discovery');setNotice('Accepted review applied. Save/review an AI Script DRAFT, then apply it to this same project. Rights and publishing approval remain unchanged.');});
+  const openProductReview=(job:ProductPipelineView)=>void run(async()=>{const s=await api<StudioSession>('/'+job.sessionId);accept(s);setActiveProductJobId(job.id);setProjectPicker(false);setArea('Discovery');setNotice('Review Source evidence, AI selection and Script DRAFT for this project.');});
   const isEditorFull=area==='Video Studio'&&!projectPicker&&step==='Video Editor'&&session!==null;
   const showContextualStepBar=area==='Video Studio'&&!projectPicker&&session!==null;
 
@@ -648,7 +655,7 @@ function App() {
         )}
 
         {/* Primary Area Router */}
-        {area==='Video Studio'&&(projectPicker||!session)?<ProjectList projects={sessions} busy={busy} onOpen={openProject} onCreate={createProject} onQueue={()=>navigateArea('Production Queue')}/>:area === "Dashboard" ? (
+        {area==='Video Studio'&&(projectPicker||!session)?<ProjectList projects={sessions} productJobs={productJobs} busy={busy} onOpen={openProject} onCreate={createProject} onCreateFromUrl={createProjectFromUrl} onApplyReview={applyProductReview} onReview={openProductReview} onQueue={()=>navigateArea('Production Queue')}/>:area === "Dashboard" ? (
           <DashboardWorkspace
             sessionsCount={sessions.length}
             session={session}
@@ -662,7 +669,16 @@ function App() {
         ) : area === "Data Review" ? (
           <ContentLibraryWorkspace/>
         ) : area==='Discovery'?(
-          <CollectionWorkspace onReview={()=>navigateArea('Data Review')}/>
+          <CollectionWorkspace
+            onReview={()=>navigateArea('Data Review')}
+            sourceUrl={productJobs.find(job=>job.id===activeProductJobId)?.sourceUrl}
+            product={session&&activeProductJobId?{
+              jobId:activeProductJobId,
+              collectionId:productJobs.find(job=>job.id===activeProductJobId)?.collectionId||null,
+              sessionRevision:session.revision,
+              onApplied:(next)=>{accept(next);void refresh();setArea('Video Studio');setProjectPicker(false);setStep('Script');setNotice('Reviewed Script DRAFT is now editable in this project.');},
+            }:undefined}
+          />
         ) : area === "Settings" ? (
           <SettingsWorkspace
             session={session}

@@ -76,6 +76,8 @@ import type {
 } from '../data-engine/conversation-contracts';
 import { observedContextViews } from '../data-engine/conversation-context';
 import { canonicalPost } from '../data-engine/conversation-identity';
+import { editorialSession } from '../data-engine/editorial-adapter';
+import type { EditorialPlan } from '../data-engine/editorial-contracts';
 
 export function threadsUrl(value: unknown): string {
   return validateThreadsUrl(value);
@@ -831,6 +833,19 @@ export class StudioService {
   }
   async load(id: string): Promise<StudioSession> {
     return JSON.parse(await fs.readFile(this.file(id), 'utf8'));
+  }
+  /** Materializes a reviewed editorial DRAFT into the same Source project. No approval, TTS or render is implied. */
+  async applyEditorialDraft(id: string, revision: number, plan: EditorialPlan) {
+    return this.exclusive(async () => {
+      const session = await this.load(id);
+      if (session.revision !== revision)
+        throw new ConflictException('Session changed. Reopen before applying Script DRAFT.');
+      const priorPlan = session.project.editorialPlan;
+      if (priorPlan?.id === plan.id && priorPlan.revision === plan.revision)
+        return session;
+      const materialized = editorialSession(session, structuredClone(plan));
+      return this.persist(materialized);
+    });
   }
   async list() {
     await fs.mkdir(this.root, { recursive: true });

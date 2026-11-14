@@ -94,8 +94,8 @@ export function EditorialPanel({
               checked={selection}
               onChange={(e) => setSelection(e.target.checked)}
             />{" "}
-            I explicitly confirm the saved reply selection for editorial
-            planning.
+            I explicitly confirm the saved verified/observed selection for
+            editorial planning. Observed context remains unverified.
           </label>
           <button
             data-testid="editorial-create-plan"
@@ -153,7 +153,8 @@ export function EditorialPanel({
               </summary>
               {s.permalink && (
                 <a href={s.permalink} target="_blank" rel="noreferrer">
-                  Source · parent {s.parentId || "root"}
+                  Source · {s.sourceEvidence || "UNKNOWN"} · parent{" "}
+                  {s.parentId || "unverified/root"}
                 </a>
               )}
               <blockquote>

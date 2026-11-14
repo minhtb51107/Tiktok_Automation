@@ -6,7 +6,7 @@ import {
   type EditorialPlan,
   type EditorialSection,
 } from './editorial-contracts';
-import { feasibility, selectedReplies } from './editorial-feasibility';
+import { feasibility, selectedObservedContexts, selectedReplies } from './editorial-feasibility';
 const key = (id: string) => {
   if (!/^[a-f0-9]{64}$/.test(id)) throw Error('EDITORIAL_INVALID_ID');
   return 'editorial-plans/' + id + '.json';
@@ -54,16 +54,20 @@ export class EditorialEngine {
         review = await this.conversations.review(body.collectionId);
       if (review.revision !== body.selectionRevision)
         throw Error('EDITORIAL_STALE_REVISION');
-      if (!review.selectedReplyIds.length)
-        throw Error('EDITORIAL_SELECT_VERIFIED_REPLY');
+      const observedUrls = review.selectedObservedUrls || [];
+      if (!review.selectedReplyIds.length && !observedUrls.length)
+        throw Error('EDITORIAL_SELECT_CONVERSATION_MATERIAL');
       const replies = selectedReplies(
           record.collection,
           review.selectedReplyIds,
         ),
+        observed = selectedObservedContexts(record.collection, observedUrls),
         id = hash({
           version: EDITORIAL_VERSION,
           collectionId: body.collectionId,
           selectionRevision: review.revision,
+          selectedReplyIds: review.selectedReplyIds,
+          selectedObservedUrls: observedUrls,
           style: 'SERIOUS',
         });
       for await (const row of this.conversations.data.store.rows<EditorialPlan>(
@@ -93,6 +97,7 @@ export class EditorialEngine {
         displayText: text,
         narrationText: text,
         locked: false,
+        sourceEvidence: 'PARENT_VERIFIED',
       });
       const commentary = (
         stage: 'HOOK' | 'COMMENTARY' | 'RESOLUTION',
@@ -107,17 +112,21 @@ export class EditorialEngine {
         displayText: '',
         narrationText: '',
         locked: false,
+        sourceEvidence: 'AI_COMMENTARY',
       });
       const sections = [
         commentary('HOOK'),
-        quote(
-          'root',
-          'CONTEXT',
-          record.collection.root.originalText,
-          record.collection.root.id,
-          null,
-          record.collection.root.url,
-        ),
+        {
+          ...quote(
+            'root',
+            'CONTEXT',
+            record.collection.root.originalText,
+            record.collection.root.id,
+            null,
+            record.collection.root.url,
+          ),
+          sourceEvidence: 'ROOT_VERIFIED' as const,
+        },
         ...replies.map((r) =>
           quote(
             'reply-' + r.id,
@@ -128,6 +137,19 @@ export class EditorialEngine {
             r.url,
           ),
         ),
+        ...observed.map((row) => ({
+          ...quote(
+            'observed-' + row.id,
+            'DISCUSSION',
+            row.originalText,
+            row.id,
+            null,
+            row.url,
+          ),
+          displayText: row.displayText,
+          narrationText: row.displayText,
+          sourceEvidence: 'OBSERVED_RELATIONSHIP_UNVERIFIED' as const,
+        })),
         commentary('COMMENTARY'),
         commentary('RESOLUTION'),
       ];
@@ -147,6 +169,7 @@ export class EditorialEngine {
         collectionId: record.id,
         selectionRevision: review.revision,
         selectedReplyIds: [...review.selectedReplyIds],
+        selectedObservedUrls: [...observedUrls],
         bundle,
         bundleHash: hash(bundle),
         sections,
@@ -156,6 +179,7 @@ export class EditorialEngine {
           review.selectedReplyIds,
           sections,
           bundle.humanReplyLabels,
+          observedUrls,
         ),
         style: 'SERIOUS',
         scriptStatus: 'DRAFT',
@@ -232,6 +256,7 @@ export class EditorialEngine {
         plan.selectedReplyIds,
         sections,
         plan.bundle.humanReplyLabels,
+        plan.selectedObservedUrls || [],
       );
       plan.history.push({
         at: plan.updatedAt,
@@ -261,7 +286,8 @@ export class EditorialEngine {
       const review = await this.conversations.review(plan.collectionId);
       if (
         review.revision !== plan.selectionRevision ||
-        hash(review.selectedReplyIds) !== hash(plan.selectedReplyIds)
+        hash(review.selectedReplyIds) !== hash(plan.selectedReplyIds) ||
+        hash(review.selectedObservedUrls || []) !== hash(plan.selectedObservedUrls || [])
       )
         throw Error('EDITORIAL_SELECTION_CHANGED');
       const f = feasibility(
@@ -270,6 +296,7 @@ export class EditorialEngine {
         plan.selectedReplyIds,
         plan.sections,
         plan.bundle.humanReplyLabels,
+        plan.selectedObservedUrls || [],
       );
       if (f.status !== 'READY_FOR_SCRIPT')
         throw Error('EDITORIAL_NOT_FEASIBLE');

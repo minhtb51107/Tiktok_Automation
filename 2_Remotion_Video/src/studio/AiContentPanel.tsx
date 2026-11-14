@@ -23,7 +23,7 @@ type Status = {
   toolMode: string;
 };
 
-export function AiContentPanel({ collectionId }: { collectionId?: string }) {
+export function AiContentPanel({ collectionId, materialize }: { collectionId?: string; materialize?: { jobId: string; sessionRevision: number; onApplied: (session: any) => void } }) {
   const [mode, setMode] = useState<"RULE" | "AI">("RULE");
   const [style, setStyle] = useState<AiStyle>("SERIOUS");
   const [status, setStatus] = useState<Status | null>(null);
@@ -174,6 +174,20 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
         },
       );
       setScriptReview(row);
+    });
+  const materializeScript = () =>
+    action(async () => {
+      if (!activeProposal || !scriptReview || !materialize)
+        throw Error("Hãy lưu Script DRAFT trước khi áp dụng vào project.");
+      const result = await studioRequest<any>(
+        `/product-jobs/${materialize.jobId}/materialize-script`,
+        {
+          proposalId: activeProposal.id,
+          reviewRevision: scriptReview.revision,
+          sessionRevision: materialize.sessionRevision,
+        },
+      );
+      materialize.onApplied(result.session);
     });
   const createReviewedDraft = () =>
     action(async () => {
@@ -457,6 +471,16 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
           <button disabled={busy} onClick={() => void saveScriptReview()}>
             Lưu Script DRAFT · revision {scriptReview?.revision ?? 0}
           </button>
+          {materialize && (
+            <button
+              data-testid="ai-materialize-script"
+              disabled={busy || !scriptReview}
+              title="Uses only sources selected in the persisted conversation review"
+              onClick={() => void materializeScript()}
+            >
+              Apply reviewed Script to this project
+            </button>
+          )}
         </div>
       )}
       {error && <p role="alert">{error}</p>}

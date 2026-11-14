@@ -9,7 +9,7 @@ import type {
   ProductionSnapshot,
 } from './production-contracts';
 import { productionSession } from './production-adapter';
-import {selectedReplies} from './editorial-feasibility';
+import {selectedObservedContexts,selectedReplies} from './editorial-feasibility';
 import type {EditorialSnapshot,EditorialPlan} from './editorial-contracts';
 import type {ConversationReview} from './conversation-contracts';
 
@@ -289,8 +289,9 @@ export class ProductionConsumer {
     const p=snapshot.plan;
     if(hash(p)!==snapshot.planHash||hash(p.bundle)!==p.bundleHash||p.bundle.sourceLink?.bronzeId!==bronzeId||p.scriptStatus!=='DRAFT'||p.editorialSelectionConfirmed!==true)throw Error('PRODUCTION_EDITORIAL_INTEGRITY');
     selectedReplies(p.bundle.collection,p.selectedReplyIds);
+    selectedObservedContexts(p.bundle.collection,p.selectedObservedUrls || []);
     const current=await this.data.store.read<EditorialPlan>('editorial-plans/'+p.id+'.json');
     const review=await this.data.store.read<ConversationReview>('conversation-feedback/'+p.collectionId+'.json');
-    if(!current||hash(current)!==snapshot.planHash||review?.revision!==p.selectionRevision||hash(review.selectedReplyIds)!==hash(p.selectedReplyIds))throw Error('PRODUCTION_EDITORIAL_STALE');
+    if(!current||hash(current)!==snapshot.planHash||review?.revision!==p.selectionRevision||hash(review.selectedReplyIds)!==hash(p.selectedReplyIds)||hash(review.selectedObservedUrls||[])!==hash(p.selectedObservedUrls||[]))throw Error('PRODUCTION_EDITORIAL_STALE');
   }
 }
