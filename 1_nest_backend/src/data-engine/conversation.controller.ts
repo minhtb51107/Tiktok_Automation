@@ -20,6 +20,7 @@ import {
 } from './conversation-public';
 import { conversationMediaFile } from './conversation-media';
 import { observedContextViews } from './conversation-context';
+import { sourceQualityAdapter } from './conversation-extraction-v2';
 import { estimatedDuration } from './editorial-feasibility';
 @Injectable()
 export class ConversationStudioService {
@@ -72,6 +73,7 @@ export class ConversationStudioService {
         record,
         review: await this.engine.review(result.collectionId),
         observedContexts: observedContextViews(record.collection),
+        normalized: sourceQualityAdapter(record.collection),
       });
     }
     return {
@@ -108,6 +110,7 @@ export class ConversationController {
   @Get('options') options() {
     return {
       version: 'threads-conversation/1',
+      extractionVersion: 'conversation-normalized/2',
       syntheticEnabled: this.service.engine.provider.execution === 'SYNTHETIC',
       liveEnabled: process.env.STUDIO_DATA04_LIVE_ENABLED === '1',
       schedulerEnabled: false,
@@ -160,6 +163,7 @@ export class ConversationController {
         record,
         review,
         observedContexts,
+        normalized: sourceQualityAdapter(record.collection),
         draftEstimate: {
           ...estimatedDuration(narration, 1.3),
           source: 'ESTIMATED_TEXT_ONLY',

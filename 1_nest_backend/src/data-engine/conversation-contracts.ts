@@ -84,9 +84,21 @@ export interface UnverifiedCandidate {
     contextEvidence?: import('../studio/context-classification').ContextRegionEvidence[];
   };
 }
+export interface ConversationObservationSummary {
+  /** Exact post permalinks observed as a card subject, not every link inside a card. */
+  subjectPermalinks: number;
+  /** Cards for which author and non-empty original body were captured. */
+  materializedCards: number;
+  /** Subject permalinks retained without enough body/author data. */
+  missingBody: number;
+  parentVerified: number;
+}
 export interface ThreadCollection {
   /** Immutable exact-target capture, including separately labelled observed context. */
   sourceCapture?: import('../studio/public-types').SourceAttempt;
+  /** V2 card observations from the bounded conversation page visit. Raw source capture remains immutable. */
+  observedCards?: import('../studio/public-types').PublicRecord[];
+  observationSummary?: ConversationObservationSummary;
   version: typeof CONVERSATION_VERSION;
   root: PublicPost;
   replies: VerifiedReply[];

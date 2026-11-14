@@ -31,6 +31,39 @@ type View = {
     selectable: true;
     recommended: boolean;
   }>;
+  normalized: {
+    version: "conversation-normalized/2";
+    rootDisplayText: string;
+    counts: {
+      subjectPermalinks: number;
+      materialized: number;
+      verified: number;
+      observedConversation: number;
+      related: number;
+      unknown: number;
+      incompleteObservations: number;
+      missingBody: number;
+    };
+    groups: Record<
+      | "PARENT_VERIFIED"
+      | "OBSERVED_CONVERSATION"
+      | "RELATED_OR_RECOMMENDED"
+      | "UNKNOWN"
+      | "INCOMPLETE",
+      Array<{
+        id: string;
+        url: string;
+        author: string | null;
+        displayText: string | null;
+        evidence: string[];
+      }>
+    >;
+    automation: {
+      selectedVerifiedReplyIds: string[];
+      status: string;
+      reasons: string[];
+    };
+  };
   draftEstimate: {
     minimumSeconds: number;
     maximumSeconds: number;
@@ -70,7 +103,12 @@ export function ConversationPanel({
   product,
 }: {
   sourceUrl?: string | null;
-  product?: { jobId: string; collectionId: string | null; sessionRevision: number; onApplied: (session: any) => void };
+  product?: {
+    jobId: string;
+    collectionId: string | null;
+    sessionRevision: number;
+    onApplied: (session: any) => void;
+  };
 }) {
   const { locked, runtime } = useRuntimeSafety();
   const reviewLocked = locked && !runtime.capabilities?.review;
@@ -107,7 +145,18 @@ export function ConversationPanel({
   const viewMatches =
     !sourceUrl ||
     (view && sameSource(view.record.collection.root.url, sourceUrl));
-  const c = viewMatches ? view?.record.collection : undefined,
+  const rawCollection = viewMatches ? view?.record.collection : undefined;
+  // UI/report projection only. The backend record keeps immutable originalText.
+  const c = rawCollection
+      ? {
+          ...rawCollection,
+          root: {
+            ...rawCollection.root,
+            originalText:
+              view?.normalized.rootDisplayText || rawCollection.root.originalText,
+          },
+        }
+      : undefined,
     q = viewMatches ? view?.record.evaluation : undefined;
   const resultKey = collections.map((x) => x.collectionId).join(",");
   async function load() {
@@ -220,7 +269,8 @@ export function ConversationPanel({
             `${selectedObserved.includes(x.url) ? "[SELECTED]" : "[NOT SELECTED]"} @${x.author}\n${x.url}\n${x.displayText}\nRelationship: ${x.relationship}; quality: ${x.quality.bucket} (${x.quality.score}); reasons: ${x.reasons.join("; ")}`,
         )
         .join("\n\n") || "No persisted observed context is available.";
-    return `# DATA-04 Conversation Report\n\nExecution: ${run?.execution || "UNKNOWN"}\nRun: ${run?.id || "—"}\nStatus: ${run?.status || "UNKNOWN"}\nElapsed: ${run?.elapsedMs ?? "—"} ms\nRanking: ${run?.ranking?.status || "UNKNOWN"} — ${run?.ranking?.reasons.join("; ") || ""}\n\n## Exact source\n${c?.root.url || ""}\n@${c?.root.author.handle || ""}\n${c?.root.originalText || ""}\nType: ${c?.root.itemType || "UNKNOWN"}\n\n## Exact-root attachments\n${media}\n\nCollection: ${c?.status || "UNKNOWN"}\nReported replies: ${c?.reportedReplyCount ?? "UNKNOWN"}; observed: ${c?.observedReplyCount ?? 0}; verified: ${c?.verifiedReplyCount ?? 0}; unverified: ${c?.unverifiedCandidateCount ?? 0}\nPopularity: ${score(q?.popularity.score)}; Conversation: ${score(q?.conversation.score)}; Video suitability: ${score(q?.videoSuitability.score)}\nRatios apply only to VERIFIED_OBSERVED_SAMPLE. Precision@10: NOT_MEASURED. Rights: UNKNOWN. Production approval: unchanged.\n\n## Verified replies\n${c?.replies.map((r) => `${r.id} @${r.author.handle} → parent ${r.parentId}\n${r.url}\n${r.originalText}\nQuality: ${q?.replyQuality.find((x) => x.replyId === r.id)?.label}\nEvidence: ${r.evidence.kind}\n`).join("\n") || "No verified replies; not evidence of no comments."}\n\n## Observed context (explicit selection allowed; not parent-verified)\n${observed}\n\n## Persisted human review\n${JSON.stringify(view?.review, null, 2)}\n\nWarnings: ${c?.warnings.join("; ") || ""}`;
+    const counts = view?.normalized.counts;
+    return `# DATA-04 Conversation Report\n\nExecution: ${run?.execution || "UNKNOWN"}\nRun: ${run?.id || "—"}\nStatus: ${run?.status || "UNKNOWN"}\nElapsed: ${run?.elapsedMs ?? "—"} ms\nRanking: ${run?.ranking?.status || "UNKNOWN"} — ${run?.ranking?.reasons.join("; ") || ""}\n\n## Exact source\n${c?.root.url || ""}\n@${c?.root.author.handle || ""}\n${c?.root.originalText || ""}\nType: ${c?.root.itemType || "UNKNOWN"}\n\n## Exact-root attachments\n${media}\n\nCollection: ${c?.status || "UNKNOWN"}\nReported replies: ${c?.reportedReplyCount ?? "UNKNOWN"}; subject permalinks: ${counts?.subjectPermalinks ?? c?.observedReplyCount ?? 0}; materialized cards: ${counts?.materialized ?? "UNKNOWN"}; verified: ${counts?.verified ?? c?.verifiedReplyCount ?? 0}; observed conversation: ${counts?.observedConversation ?? "UNKNOWN"}; related/recommended: ${counts?.related ?? "UNKNOWN"}; unknown: ${counts?.unknown ?? "UNKNOWN"}; incomplete observations: ${counts?.incompleteObservations ?? "UNKNOWN"}; missing body: ${counts?.missingBody ?? "UNKNOWN"}\nPopularity: ${score(q?.popularity.score)}; Conversation: ${score(q?.conversation.score)}; Video suitability: ${score(q?.videoSuitability.score)}\nRatios apply only to VERIFIED_OBSERVED_SAMPLE. Precision@10: NOT_MEASURED. Rights: UNKNOWN. Production approval: unchanged.\n\n## Verified replies\n${c?.replies.map((r) => `${r.id} @${r.author.handle} → parent ${r.parentId}\n${r.url}\n${r.originalText}\nQuality: ${q?.replyQuality.find((x) => x.replyId === r.id)?.label}\nEvidence: ${r.evidence.kind}\n`).join("\n") || "No verified replies; not evidence of no comments."}\n\n## Observed context (explicit selection allowed; not parent-verified)\n${observed}\n\n## Incomplete observations\n${view?.normalized.groups.INCOMPLETE.map((x) => `${x.url}\n${x.displayText || "BODY NOT RECOVERABLE"}\n${x.evidence.join("; ")}`).join("\n\n") || "None"}\n\n## Persisted human review\n${JSON.stringify(view?.review, null, 2)}\n\nWarnings: ${c?.warnings.join("; ") || ""}`;
   }
   function fullReportMarkdown(full: any) {
     const candidates = (full.run?.candidates || [])
@@ -240,7 +290,15 @@ export function ConversationPanel({
               `- ${entry.review.selectedObservedUrls?.includes(x.url) ? "[SELECTED]" : "[NOT SELECTED]"} @${x.author}: ${x.originalText}\n  - ${x.url}\n  - relationship: ${x.relationship}; quality: ${x.quality.bucket}; reasons: ${x.reasons.join("; ")}`,
           )
           .join("\n");
-        return `## Root @${collection.root.author.handle}\n\n${collection.root.url}\n\n${collection.root.originalText}\n\nObserved ${collection.observedReplyCount}; parent-verified ${collection.verifiedReplyCount}; unverified ${collection.unverifiedCandidateCount}.\n\n### Observed context\n\n${observed || "None persisted."}`;
+        const normalized = entry.normalized;
+        const counts = normalized?.counts;
+        const incomplete = (normalized?.groups?.INCOMPLETE || [])
+          .map(
+            (x: any) =>
+              `- ${x.url}\n  - projection: ${x.displayText || "BODY NOT RECOVERABLE"}\n  - evidence: ${(x.evidence || []).join("; ")}`,
+          )
+          .join("\n");
+        return `## Root @${collection.root.author.handle}\n\n${collection.root.url}\n\n${normalized?.rootDisplayText || collection.root.originalText}\n\nImmutable original retained separately: yes.\n\nV2 subject permalinks ${counts?.subjectPermalinks ?? "UNKNOWN"}; full cards ${counts?.materialized ?? "UNKNOWN"}; parent-verified ${counts?.verified ?? collection.verifiedReplyCount}; observed conversation ${counts?.observedConversation ?? "UNKNOWN"}; related/recommended ${counts?.related ?? "UNKNOWN"}; unknown ${counts?.unknown ?? "UNKNOWN"}; incomplete ${counts?.incompleteObservations ?? "UNKNOWN"}; missing body ${counts?.missingBody ?? "UNKNOWN"}.\n\nAutomatic selection: ${normalized?.automation?.status || "UNKNOWN"}; selected verified quality replies ${(normalized?.automation?.selectedVerifiedReplyIds || []).length}.\n\n### Observed context\n\n${observed || "None persisted."}\n\n### Incomplete observations\n\n${incomplete || "None."}`;
       })
       .join("\n\n");
     return `# DATA-QUALITY-03 Full Discovery Run\n\nRun: ${full.run?.id || "UNKNOWN"}\nExecution: ${full.run?.execution || "UNKNOWN"}\nStatus: ${full.run?.status || "UNKNOWN"}\nPriority: ${full.run?.ranking?.priority || "UNKNOWN"}\nMinimum interactions: ${full.run?.ranking?.minInteractions ?? 0}\n\n## All discovered candidates\n\n${candidates || "No candidates persisted."}\n\n# Enriched roots\n\n${collections || "No roots enriched."}\n\nRights: UNKNOWN. Review decisions are independent from production approval.`;
@@ -447,7 +505,9 @@ export function ConversationPanel({
           <a href={c.root.url} target="_blank" rel="noreferrer">
             Exact source
           </a>
-          <p style={{ whiteSpace: "pre-wrap" }}>{c.root.originalText}</p>
+          <p style={{ whiteSpace: "pre-wrap" }}>
+            {view!.normalized.rootDisplayText || c.root.originalText}
+          </p>
           <p>
             Type {c.root.itemType || "UNKNOWN"} · provenance{" "}
             {c.root.provenance.method}
@@ -500,6 +560,45 @@ export function ConversationPanel({
             {c.observedReplyCount} · verified {c.verifiedReplyCount} ·
             unverified {c.unverifiedCandidateCount}
           </p>
+          <p data-testid="conversation-v2-counts">
+            V2 subjects {view!.normalized.counts.subjectPermalinks} · full cards{" "}
+            {view!.normalized.counts.materialized} · conversation region{" "}
+            {view!.normalized.counts.observedConversation} · related{" "}
+            {view!.normalized.counts.related} · unknown{" "}
+            {view!.normalized.counts.unknown} · incomplete{" "}
+            {view!.normalized.counts.incompleteObservations} · missing body{" "}
+            {view!.normalized.counts.missingBody}
+          </p>
+          <p data-testid="conversation-automation-status">
+            Automatic selection: {view!.normalized.automation.status} · verified
+            quality selections{" "}
+            {view!.normalized.automation.selectedVerifiedReplyIds.length}
+            {view!.normalized.automation.reasons.length
+              ? ` · ${view!.normalized.automation.reasons.join("; ")}`
+              : ""}
+          </p>
+          <button
+            type="button"
+            data-testid="apply-verified-quality-selection"
+            disabled={
+              busy ||
+              !view!.normalized.automation.selectedVerifiedReplyIds.length
+            }
+            title={
+              view!.normalized.automation.selectedVerifiedReplyIds.length
+                ? "Apply evidence-safe quality recommendations; this is not ACCEPT or production approval."
+                : "No parent-verified quality recommendation is available. Unresolved cards remain in exception review."
+            }
+            onClick={() => {
+              setSelected(view!.normalized.automation.selectedVerifiedReplyIds);
+              setDirty(true);
+              setNotice(
+                "Verified quality recommendations applied locally. Save review to persist; approval remains unchanged.",
+              );
+            }}
+          >
+            Apply verified quality recommendations
+          </button>
           <p>
             Popularity {score(q.popularity.score)} · Conversation{" "}
             {score(q.conversation.score)} · Video suitability{" "}
@@ -592,43 +691,86 @@ export function ConversationPanel({
               Observed context · selectable for DRAFT, never parent-verified
               automatically
             </summary>
-            {view!.observedContexts.map((x) => (
-              <article key={x.url} data-testid="observed-context-card">
-                <label>
-                  <input
-                    type="checkbox"
-                    data-testid="observed-context-selected"
-                    checked={selectedObserved.includes(x.url)}
-                    onChange={(e) => {
-                      setSelectedObserved((old) =>
-                        e.target.checked
-                          ? [...old, x.url]
-                          : old.filter((v) => v !== x.url),
-                      );
-                      setDirty(true);
-                    }}
-                  />{" "}
-                  Select for Script DRAFT
-                </label>
-                <strong> @{x.author}</strong>
-                <p>{x.displayText}</p>
+            {view!.observedContexts
+              .filter(
+                (x) => x.relationship === "OBSERVED_RELATIONSHIP_UNVERIFIED",
+              )
+              .map((x) => (
+                <article key={x.url} data-testid="observed-context-card">
+                  <label>
+                    <input
+                      type="checkbox"
+                      data-testid="observed-context-selected"
+                      checked={selectedObserved.includes(x.url)}
+                      onChange={(e) => {
+                        setSelectedObserved((old) =>
+                          e.target.checked
+                            ? [...old, x.url]
+                            : old.filter((v) => v !== x.url),
+                        );
+                        setDirty(true);
+                      }}
+                    />{" "}
+                    Select for Script DRAFT
+                  </label>
+                  <strong> @{x.author}</strong>
+                  <p>{x.displayText}</p>
+                  <a href={x.url} target="_blank" rel="noreferrer">
+                    Observed permalink
+                  </a>
+                  <p>
+                    {x.relationship} · {x.quality.bucket} · score{" "}
+                    {x.quality.score} ·{" "}
+                    {x.recommended ? "RECOMMENDED" : "HUMAN REVIEW"}
+                  </p>
+                  <details>
+                    <summary>Evidence / quality reasons</summary>
+                    <pre>{JSON.stringify(x.reasons, null, 2)}</pre>
+                  </details>
+                </article>
+              ))}
+            {!view!.observedContexts.some(
+              (x) => x.relationship === "OBSERVED_RELATIONSHIP_UNVERIFIED",
+            ) && <p>No persisted observed-card body is available.</p>}
+          </details>
+          <details>
+            <summary>
+              Related / recommended posts · never described as replies
+            </summary>
+            {view!.normalized.groups.RELATED_OR_RECOMMENDED.map((x) => (
+              <article key={x.url} data-testid="related-context-card">
+                <strong>@{x.author || "UNKNOWN"}</strong>
+                <p>{x.displayText || "Body unavailable"}</p>
+                <a href={x.url} target="_blank" rel="noreferrer">
+                  Source permalink
+                </a>
+                <p>{x.evidence.join("; ")}</p>
+              </article>
+            ))}
+            {!view!.normalized.groups.RELATED_OR_RECOMMENDED.length && (
+              <p>None classified.</p>
+            )}
+          </details>
+          <details>
+            <summary>Unknown and incomplete observations</summary>
+            {[
+              ...view!.normalized.groups.UNKNOWN,
+              ...view!.normalized.groups.INCOMPLETE,
+            ].map((x) => (
+              <article key={x.url} data-testid="incomplete-context-card">
+                <strong>@{x.author || "UNKNOWN"}</strong>
+                <p>
+                  {x.displayText ||
+                    "Body was not materialized from a subject card."}
+                </p>
                 <a href={x.url} target="_blank" rel="noreferrer">
                   Observed permalink
                 </a>
-                <p>
-                  {x.relationship} · {x.quality.bucket} · score{" "}
-                  {x.quality.score} ·{" "}
-                  {x.recommended ? "RECOMMENDED" : "HUMAN REVIEW"}
-                </p>
-                <details>
-                  <summary>Evidence / quality reasons</summary>
-                  <pre>{JSON.stringify(x.reasons, null, 2)}</pre>
-                </details>
+                <p>{x.evidence.join("; ")}</p>
               </article>
             ))}
-            {!view!.observedContexts.length && (
-              <p>No persisted observed-card body is available.</p>
-            )}
+            {!view!.normalized.groups.UNKNOWN.length &&
+              !view!.normalized.groups.INCOMPLETE.length && <p>None.</p>}
           </details>
           <p data-testid="conversation-draft-estimate">
             Selected narration estimate: {view!.draftEstimate.minimumSeconds}–

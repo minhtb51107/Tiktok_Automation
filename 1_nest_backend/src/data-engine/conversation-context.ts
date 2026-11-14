@@ -85,7 +85,10 @@ export function observedContextViews(
   if (!root) throw Error('CONVERSATION_INVALID_ROOT');
   const records = new Map<string, PublicRecord>();
   const observedOnTarget = new Set<string>();
-  for (const raw of c.sourceCapture?.contextCandidates || []) {
+  for (const raw of [
+    ...(c.sourceCapture?.contextCandidates || []),
+    ...(c.observedCards || []),
+  ]) {
     const own = canonicalPost(raw.url);
     if (own && own.url !== root.url) records.set(own.url, raw);
   }

@@ -18,11 +18,12 @@ import {
 } from '../studio/public-request-telemetry';
 import { crawlerInput } from './crawler-adapter';
 import { labelledCounts } from '../studio/metadata-fields';
+import { canonicalPost, type PublicDocument } from './conversation-evidence';
 import {
-  canonicalPost,
-  collectEvidence,
-  type PublicDocument,
-} from './conversation-evidence';
+  collectPublicCards,
+  resolveExactRoot,
+  resolveRelationships,
+} from './conversation-extraction-v2';
 import type {
   PopularityCandidate,
   PublicPost,
@@ -59,8 +60,11 @@ export function observePublicDocument() {
       return box.width > 0 && box.height > 0;
     })
     .slice(0, 80);
-  const rows = cards.map((card) => {
+  const rows = cards.map((card, cardIndex) => {
+    const owns = (element: Element) =>
+      element.closest('div[data-pressable-container="true"],article') === card;
     const links = [...card.querySelectorAll('a[href*="/post/"]')]
+      .filter(owns)
       .map((a) => {
         try {
           const u = new URL(a.getAttribute('href') || '', location.origin);
@@ -75,6 +79,7 @@ export function observePublicDocument() {
     const controls = [
       ...card.querySelectorAll('[role="button"],button,[aria-label]'),
     ]
+      .filter(owns)
       .map((x) => ({
         label:
           x.querySelector('svg title')?.textContent ||
@@ -83,15 +88,75 @@ export function observePublicDocument() {
         text: (x.textContent || '').trim(),
       }))
       .slice(0, 40);
-    const spans = [...card.querySelectorAll('span[dir="auto"]')].map(
-      (x) => x.textContent || '',
-    );
+    const times = [...card.querySelectorAll('time[datetime]')].filter(owns);
+    const timePermalinks = times
+      .map((time) => {
+        try {
+          const anchor = time.closest('a[href*="/post/"]');
+          const u = new URL(
+            anchor?.getAttribute('href') || '',
+            location.origin,
+          );
+          return /^\/@[\w.-]+\/post\/[\w-]+\/?$/.test(u.pathname)
+            ? 'https://www.threads.com' + u.pathname.replace(/\/$/, '')
+            : null;
+        } catch {
+          return null;
+        }
+      })
+      .filter((value): value is string => !!value);
+    const uniqueTimePermalinks = [...new Set(timePermalinks)];
+    const subjectUrl =
+      uniqueTimePermalinks.length === 1 ? uniqueTimePermalinks[0] : null;
+    const handle = subjectUrl?.match(/\/(@[\w.-]+)\/post\//)?.[1] ?? null;
+    const bodySpans = [...card.querySelectorAll('span[dir="auto"]')]
+      .filter(
+        (element) =>
+          owns(element) &&
+          !element.closest(
+            'header,time,button,[role="button"],[data-testid="reply-context"],[data-testid="replying-to"]',
+          ) &&
+          !element.parentElement?.closest('span[dir="auto"]'),
+      )
+      .filter((element) => {
+        const anchor = element.closest('a[href]');
+        if (!anchor) return true;
+        const href = anchor.getAttribute('href') || '';
+        return !(
+          href.startsWith('/search?') ||
+          /^\/@[\w.-]+\/?$/.test(href) ||
+          /\/post\/[\w-]+\/?$/.test(href)
+        );
+      })
+      .map((element) => (element.textContent || '').trim())
+      .filter(Boolean);
+    const media = [
+      ...[...card.querySelectorAll('img[src]')]
+        .filter(owns)
+        .filter((image) => {
+          const element = image as HTMLImageElement;
+          return element.width >= 100 && !element.closest('header');
+        })
+        .map((image) => ({
+          url: (image as HTMLImageElement).src,
+          kind: 'IMAGE' as const,
+        })),
+      ...[...card.querySelectorAll('video')]
+        .filter(owns)
+        .map((video) => (video as HTMLVideoElement).currentSrc)
+        .filter((url) => url.startsWith('https:'))
+        .map((url) => ({ url, kind: 'VIDEO' as const })),
+    ];
     return {
       urls: [...new Set(links)],
+      subjectUrl,
+      authorHandle: handle?.slice(1) ?? null,
       controls,
-      date:
-        card.querySelector('time[datetime]')?.getAttribute('datetime') || null,
-      text: spans.sort((a, b) => b.length - a.length)[0] || '',
+      date: times.length === 1 ? times[0].getAttribute('datetime') : null,
+      text: bodySpans.join('\n'),
+      rawText: (card as HTMLElement).innerText,
+      media,
+      pointer: `/dom/card/${cardIndex}`,
     };
   });
   const jsonLd: unknown[] = [];
@@ -117,9 +182,18 @@ export function observePublicDocument() {
     diagnostics: {
       cards: cards.length,
       permalinkAnchors: cards.reduce(
-        (n, c) => n + c.querySelectorAll('a[href*="/post/"]').length,
+        (n, c) =>
+          n +
+          [...c.querySelectorAll('a[href*="/post/"]')].filter(
+            (a) =>
+              a.closest('div[data-pressable-container="true"],article') === c,
+          ).length,
         0,
       ),
+      materializedCards: rows.filter(
+        (row) => row.subjectUrl && row.authorHandle && row.text.trim(),
+      ).length,
+      subjectPermalinks: rows.filter((row) => row.subjectUrl).length,
       explicitNoResults,
     },
   };
@@ -258,7 +332,7 @@ export async function discoverConversations(
         seen = new Set<string>(),
         out: PopularityCandidate[] = [];
       for (const row of observed.rows) {
-        const identities = row.urls
+        const identities = (row.subjectUrl ? [row.subjectUrl] : [])
             .map(canonicalPost)
             .filter((x): x is NonNullable<typeof x> => !!x),
           unique = [...new Set(identities.map((x) => x.url))];
@@ -346,15 +420,15 @@ export async function enrichConversation(
   });
   if (stopped) throw Error(stopped);
   const source = crawlerInput(attempt, 'DATA04');
-  if (
-    attempt.matchMethod !== 'DOM_PERMALINK' ||
-    !source ||
-    source.sourcePostId !== target.id ||
-    canonicalPost(source.sourceUrl)?.url !== target.url ||
-    source.author.handle !== target.handle ||
-    !source.originalBody
-  )
+  if (attempt.matchMethod !== 'DOM_PERMALINK' || !source)
     throw Error('CONVERSATION_EXACT_ROOT_BODY_UNVERIFIED');
+  resolveExactRoot({
+    targetUrl: target.url,
+    sourcePostId: source.sourcePostId,
+    sourceUrl: source.sourceUrl,
+    authorHandle: source.author.handle,
+    originalBody: source.originalBody,
+  });
   return visit(
     target.url,
     2,
@@ -399,7 +473,7 @@ export async function enrichConversation(
         now,
       );
       const cardObservations = observed.rows
-        .filter((r) => r.urls.length === 1)
+        .filter((r) => !!r.subjectUrl)
         .map((r) => {
           const fields = labelledCounts(r.controls, now),
             value = (k: string) =>
@@ -407,7 +481,7 @@ export async function enrichConversation(
                 ? Number(fields[k].value)
                 : null;
           return {
-            url: r.urls[0],
+            url: r.subjectUrl!,
             publishedAt: r.date,
             engagement: {
               likes: value('likeCount'),
@@ -419,24 +493,44 @@ export async function enrichConversation(
           };
         });
       const context = await page.evaluate(observePublicContext);
+      const observedCards = collectPublicCards(
+        observed,
+        context,
+        target.url,
+        now,
+      );
       await evidence?.(page, { finalUrl: page.url(), observed, context });
       const doc: PublicDocument = {
         url: target.url,
         observedAt: now,
         synthetic: false,
-        visibleUrls: observed.rows.flatMap((x) => x.urls),
+        visibleUrls: observed.rows
+          .map((x) => x.subjectUrl)
+          .filter((x): x is string => !!x),
         jsonLd: observed.jsonLd,
         cardObservations,
         domReplies: context.replies,
       };
-      const collection = collectEvidence(root, doc, 20);
+      const collection = resolveRelationships(root, doc, 20);
       collection.sourceCapture = attempt;
+      collection.observedCards = observedCards;
+      collection.observationSummary = {
+        subjectPermalinks: new Set(
+          observed.rows.map((row) => row.subjectUrl).filter(Boolean),
+        ).size,
+        materializedCards: observedCards.length,
+        missingBody: observed.rows.filter(
+          (row) => row.subjectUrl && (!row.authorHandle || !row.text.trim()),
+        ).length,
+        parentVerified: collection.verifiedReplyCount,
+      };
       const regions = context.regions;
       for (const candidate of collection.unverified) {
         const matching = observed.rows.filter(
           (r) =>
-            r.urls.length === 1 &&
-            canonicalPost(r.urls[0])?.url === canonicalPost(candidate.url)?.url,
+            !!r.subjectUrl &&
+            canonicalPost(r.subjectUrl)?.url ===
+              canonicalPost(candidate.url)?.url,
         );
         const identity = canonicalPost(candidate.url);
         if (identity && matching.length === 1 && matching[0].text.trim())
