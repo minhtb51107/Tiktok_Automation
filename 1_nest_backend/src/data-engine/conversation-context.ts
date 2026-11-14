@@ -84,6 +84,7 @@ export function observedContextViews(
   const root = canonicalPost(c.root.url);
   if (!root) throw Error('CONVERSATION_INVALID_ROOT');
   const records = new Map<string, PublicRecord>();
+  const observedOnTarget = new Set<string>();
   for (const raw of c.sourceCapture?.contextCandidates || []) {
     const own = canonicalPost(raw.url);
     if (own && own.url !== root.url) records.set(own.url, raw);
@@ -98,6 +99,7 @@ export function observedContextViews(
       canonicalPost(o.targetUrl)?.url !== root.url
     )
       continue;
+    observedOnTarget.add(own.url);
     if (!records.has(own.url))
       records.set(
         own.url,
@@ -125,7 +127,10 @@ export function observedContextViews(
       relationship:
         assessment.classification === 'PARENT_VERIFIED'
           ? 'UNKNOWN'
-          : assessment.classification,
+          : assessment.classification === 'UNKNOWN' &&
+              observedOnTarget.has(own.url)
+            ? 'OBSERVED_RELATIONSHIP_UNVERIFIED'
+            : assessment.classification,
       reasons: [...assessment.reasons, ...quality[index].reasons],
       quality: quality[index],
       selectable: true,

@@ -3,6 +3,7 @@ import type {
   AiAgentRun,
   AiAssessmentFeedback,
   AiContentAssessment,
+  AiScriptProposal,
   AiScriptSection,
   AiScriptReview,
   AiStyle,
@@ -30,6 +31,8 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
     null,
   );
   const [run, setRun] = useState<AiAgentRun | null>(null);
+  const [reviewedProposal, setReviewedProposal] =
+    useState<AiScriptProposal | null>(null);
   const [feedback, setFeedback] = useState<AiAssessmentFeedback | null>(null);
   const [decision, setDecision] = useState<
     "ACCEPT" | "REJECT" | "NEEDS_REVIEW"
@@ -46,9 +49,12 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
   const [duration, setDuration] = useState(75);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const activeProposal = reviewedProposal ?? run?.proposal ?? null;
 
   useEffect(() => {
     let mounted = true;
+    setReviewedProposal(null);
+    setScriptReview(null);
     void Promise.all([
       studioRequest<Status>("/data/ai/status"),
       studioRequest<AiContentAssessment[]>("/data/ai/assessments"),
@@ -73,10 +79,16 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
 
   useEffect(() => {
     if (!assessment) return;
-    void studioRequest<AiAssessmentFeedback | null>(
-      `/data/ai/assessments/${assessment.id}/feedback`,
-    ).then((row) => {
+    void Promise.all([
+      studioRequest<AiAssessmentFeedback | null>(
+        `/data/ai/assessments/${assessment.id}/feedback`,
+      ),
+      studioRequest<AiScriptProposal | null>(
+        `/data/ai/assessments/${assessment.id}/latest-proposal`,
+      ),
+    ]).then(([row, proposal]) => {
       setFeedback(row);
+      setReviewedProposal(proposal);
       setDecision(row?.decision ?? "NEEDS_REVIEW");
       setSelectedSourceIds(
         row?.selectedSourceIds ?? assessment.selectedSourceIds,
@@ -86,16 +98,16 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
   }, [assessment]);
 
   useEffect(() => {
-    if (!run?.proposal) return;
+    if (!activeProposal) return;
     void studioRequest<AiScriptReview | null>(
-      `/data/ai/script-proposals/${run.proposal.id}/review`,
+      `/data/ai/script-proposals/${activeProposal.id}/review`,
     ).then((row) => {
       setScriptReview(row);
-      setDraftHook(row?.hook ?? run.proposal!.hook);
-      setDraftSections(row?.sections ?? run.proposal!.sections);
+      setDraftHook(row?.hook ?? activeProposal.hook);
+      setDraftSections(row?.sections ?? activeProposal.sections);
       setScriptFeedback(row?.feedback ?? "");
     });
-  }, [run]);
+  }, [activeProposal?.id]);
 
   const action = async (work: () => Promise<void>) => {
     if (busy) return;
@@ -150,9 +162,9 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
     });
   const saveScriptReview = () =>
     action(async () => {
-      if (!run?.proposal) throw Error("Chưa có Script DRAFT.");
+      if (!activeProposal) throw Error("Chưa có Script DRAFT.");
       const row = await studioRequest<AiScriptReview>(
-        `/data/ai/script-proposals/${run.proposal.id}/review`,
+        `/data/ai/script-proposals/${activeProposal.id}/review`,
         {
           requestId: crypto.randomUUID(),
           expectedRevision: scriptReview?.revision ?? 0,
@@ -162,6 +174,22 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
         },
       );
       setScriptReview(row);
+    });
+  const createReviewedDraft = () =>
+    action(async () => {
+      if (!assessment || !feedback)
+        throw Error("Hãy lưu editorial selection trước.");
+      const proposal = await studioRequest<AiScriptProposal>(
+        `/data/ai/assessments/${assessment.id}/propose-reviewed`,
+        {
+          confirmLive: true,
+          requestId: crypto.randomUUID(),
+          expectedFeedbackRevision: feedback.revision,
+          targetDurationSeconds: duration,
+          instruction,
+        },
+      );
+      setReviewedProposal(proposal);
     });
 
   return (
@@ -253,7 +281,29 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
                   }
                 />{" "}
                 <code>{candidate.sourceId}</code> · {candidate.disposition} ·{" "}
-                {candidate.contextRelation} · {candidate.reasons.join("; ")}
+                {candidate.editorialStatus ??
+                  (candidate.disposition === "SELECT"
+                    ? "SELECT_REQUIRES_HUMAN_REVIEW"
+                    : candidate.disposition)}{" "}
+                · evidence {candidate.relationshipEvidence ?? "UNKNOWN"} · relation{" "}
+                {candidate.contextRelation}
+                <br />
+                Quality: relevance {candidate.relevance}, information{" "}
+                {candidate.quality?.informationValue ?? "UNKNOWN"}, novelty{" "}
+                {candidate.quality?.novelty ?? "UNKNOWN"}, argument{" "}
+                {candidate.quality?.argumentation ?? "UNKNOWN"}, experience{" "}
+                {candidate.quality?.experienceValue ?? "UNKNOWN"}, appeal{" "}
+                {candidate.quality?.audienceAppeal ?? "UNKNOWN"}, video{" "}
+                {candidate.quality?.videoUsefulness ?? "UNKNOWN"}
+                <br />
+                {(candidate.reasons ?? []).join("; ")}
+                {(candidate.risks?.length ?? 0) > 0 && (
+                  <> · Risks: {candidate.risks.join("; ")}</>
+                )}
+                {(candidate.requiresHumanReview ??
+                  candidate.relationshipEvidence !== "PARENT_VERIFIED") && (
+                  <strong> · Cần người dùng xác minh quan hệ nguồn</strong>
+                )}
               </li>
             ))}
           </ul>
@@ -291,6 +341,18 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
           />
           <button disabled={busy} onClick={() => void saveFeedback()}>
             Lưu AI feedback · revision {feedback?.revision ?? 0}
+          </button>
+          <button
+            data-testid="ai-create-reviewed-draft"
+            disabled={
+              busy ||
+              feedback?.decision !== "ACCEPT" ||
+              !feedback.selectedSourceIds.length
+            }
+            title="Chỉ dùng editorial selection đã lưu; không phải production approval"
+            onClick={() => void createReviewedDraft()}
+          >
+            Tạo Script DRAFT từ selection đã duyệt
           </button>
         </details>
       )}
@@ -342,48 +404,60 @@ export function AiContentPanel({ collectionId }: { collectionId?: string }) {
               </li>
             ))}
           </ol>
-          {run.proposal && (
-            <div data-testid="ai-script-draft-editor">
-              <label>
-                Hook DRAFT
-                <textarea
-                  value={draftHook}
-                  onChange={(event) => setDraftHook(event.target.value)}
-                />
-              </label>
-              {draftSections.map((section, index) => (
-                <label key={section.id || index}>
-                  {section.kind} ·{" "}
-                  {section.sourceIds.join(", ") || "original commentary"}
-                  <textarea
-                    value={section.text}
-                    onChange={(event) =>
-                      setDraftSections((current) =>
-                        current.map((row, rowIndex) =>
-                          rowIndex === index
-                            ? { ...row, text: event.target.value }
-                            : row,
-                        ),
-                      )
-                    }
-                  />
-                </label>
-              ))}
-              <textarea
-                value={scriptFeedback}
-                placeholder="Phản hồi cho Script DRAFT"
-                onChange={(event) => setScriptFeedback(event.target.value)}
-              />
-              <button disabled={busy} onClick={() => void saveScriptReview()}>
-                Lưu Script DRAFT · revision {scriptReview?.revision ?? 0}
-              </button>
-            </div>
-          )}
           <p>
             Approval: {run.approval} · production approved:{" "}
             {String(run.productionApproved)}
           </p>
         </details>
+      )}
+      {activeProposal && (
+        <div data-testid="ai-script-draft-editor">
+          <p>
+            Duration: {activeProposal.estimatedDuration.minimum}–
+            {activeProposal.estimatedDuration.maximum}s ·{" "}
+            {activeProposal.estimatedDuration.source} · gate{" "}
+            {activeProposal.durationGate ?? "LEGACY_NOT_EVALUATED"} · selection revision{" "}
+            {activeProposal.selectionRevision ?? "AI_RECOMMENDATION"}
+          </p>
+          {activeProposal.warnings.map((warning) => (
+            <p role="status" key={warning}>
+              {warning}
+            </p>
+          ))}
+          <label>
+            Hook DRAFT
+            <textarea
+              value={draftHook}
+              onChange={(event) => setDraftHook(event.target.value)}
+            />
+          </label>
+          {draftSections.map((section, index) => (
+            <label key={section.id || index}>
+              {section.kind} ·{" "}
+              {section.sourceIds.join(", ") || "original commentary"}
+              <textarea
+                value={section.text}
+                onChange={(event) =>
+                  setDraftSections((current) =>
+                    current.map((row, rowIndex) =>
+                      rowIndex === index
+                        ? { ...row, text: event.target.value }
+                        : row,
+                    ),
+                  )
+                }
+              />
+            </label>
+          ))}
+          <textarea
+            value={scriptFeedback}
+            placeholder="Phản hồi cho Script DRAFT"
+            onChange={(event) => setScriptFeedback(event.target.value)}
+          />
+          <button disabled={busy} onClick={() => void saveScriptReview()}>
+            Lưu Script DRAFT · revision {scriptReview?.revision ?? 0}
+          </button>
+        </div>
       )}
       {error && <p role="alert">{error}</p>}
     </section>

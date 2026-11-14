@@ -46,7 +46,7 @@ class FakeProvider implements ContentAiProvider {
       provider: 'auto',
       timeoutMs: 5_000,
       maxTokens: 1_000,
-      requestBudget: 4,
+      requestBudget: 8,
       tokenBudget: 4_000,
       costBudgetUsd: 0.5,
       credential: 'present',
@@ -100,6 +100,16 @@ class FakeProvider implements ContentAiProvider {
                 contextRelation: 'SAME_CONTEXT',
                 relevance: 90,
                 usefulness: 85,
+                quality: {
+                  informationValue: 88,
+                  novelty: 80,
+                  argumentation: 90,
+                  experienceValue: 70,
+                  audienceAppeal: 82,
+                  videoUsefulness: 86,
+                },
+                strengths: ['Có phản biện và thông tin mới'],
+                risks: [],
                 reasons: ['Có lập luận'],
                 missingEvidence: [],
               })),
@@ -195,6 +205,10 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
     expect(assessment.approval).toBe('PENDING');
     expect(assessment.ruleSnapshot).toBeDefined();
     expect(assessment.selectedSourceIds).toEqual(['REPLY_AI_TEST']);
+    expect(assessment.candidates[0].relationshipEvidence).toBe(
+      'PARENT_VERIFIED',
+    );
+    expect(assessment.candidates[0].editorialStatus).toBe('SELECT_VERIFIED');
     expect((await data.catalog()).rows[0].review ?? null).toBeNull();
   });
 
@@ -224,7 +238,39 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
     expect((await evaluator.evaluate(input)).id).toBe(
       (await evaluator.evaluate(input)).id,
     );
-    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls).toHaveLength(1);
+  });
+
+  test('observed target-page context may be recommended but remains human-review-required', async () => {
+    const record = await conversations.collection(collectionId),
+      reply = record.collection.replies[0];
+    record.collection.replies = [];
+    record.collection.verifiedReplyCount = 0;
+    record.collection.unverified = [
+      {
+        url: reply.url,
+        reason: 'NO_PARENT_EVIDENCE',
+        observation: {
+          level: 'OBSERVED_ON_TARGET_PAGE',
+          targetUrl: record.collection.root.url,
+          observedAt: root.provenance.observedAt,
+          author: reply.author,
+          originalText: reply.originalText,
+        },
+      },
+    ];
+    const assessment = await new AiContentEvaluator(data, provider).evaluate({
+      collectionId,
+      collection: record.collection,
+      style: 'SERIOUS',
+      heuristic: record.evaluation,
+    });
+    expect(assessment.selectedSourceIds).toEqual(['REPLY_AI_TEST']);
+    expect(assessment.candidates[0]).toMatchObject({
+      relationshipEvidence: 'OBSERVED_RELATIONSHIP_UNVERIFIED',
+      editorialStatus: 'SELECT_REQUIRES_HUMAN_REVIEW',
+      requiresHumanReview: true,
+    });
   });
 
   test('model planner invokes bounded tools and returns only a DRAFT', async () => {
@@ -250,6 +296,7 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
       'propose_script',
     ]);
     expect(run.proposal?.status).toBe('DRAFT_REQUIRES_HUMAN_REVIEW');
+    expect(run.proposal?.selectionRevision).toBeNull();
     expect(run.productionApproved).toBe(false);
     const feedback = await evaluator.saveFeedback(run.assessmentIds[0], {
       requestId: 'feedback-1',
@@ -275,6 +322,27 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
     expect((await agent.review(run.proposal!.id))?.hook).toContain(
       'người dùng',
     );
+    const accepted = await evaluator.saveFeedback(run.assessmentIds[0], {
+      requestId: 'feedback-2',
+      expectedRevision: 1,
+      decision: 'ACCEPT',
+      selectedSourceIds: ['REPLY_AI_TEST'],
+      reason: 'Chấp nhận selection cho Script DRAFT, không phải production.',
+    });
+    const reviewed = await agent.proposeReviewed(run.assessmentIds[0], {
+      requestId: 'reviewed-proposal-1',
+      expectedFeedbackRevision: accepted.revision,
+      targetDurationSeconds: 75,
+      instruction: 'Tạo Script DRAFT từ selection đã duyệt.',
+    });
+    expect(reviewed.selectionRevision).toBe(2);
+    expect(reviewed.status).toBe('DRAFT_REQUIRES_HUMAN_REVIEW');
+    expect(
+      (await agent.latestProposalForAssessment(run.assessmentIds[0]))?.id,
+    ).toBe(reviewed.id);
+    await expect(
+      agent.latestProposalForAssessment('0'.repeat(64)),
+    ).rejects.toThrow('AI_ASSESSMENT_NOT_FOUND');
     expect((await agent.run(body)).id).toBe(run.id);
     expect(provider.calls).toHaveLength(4);
   });

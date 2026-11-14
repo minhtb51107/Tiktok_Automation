@@ -1,6 +1,6 @@
 import type { Coverage, ThreadCollection } from './conversation-contracts';
 
-export const AI_CONTENT_VERSION = 'ai-content/1' as const;
+export const AI_CONTENT_VERSION = 'ai-content/2' as const;
 export type AiStyle = 'SERIOUS' | 'FUNNY';
 export type AiRunStatus =
   | 'QUEUED'
@@ -43,6 +43,17 @@ export interface AiCompletion {
 export interface AiCandidateAssessment {
   sourceId: string;
   disposition: 'SELECT' | 'REVIEW' | 'EXCLUDE';
+  relationshipEvidence:
+    | 'PARENT_VERIFIED'
+    | 'OBSERVED_RELATIONSHIP_UNVERIFIED'
+    | 'RELATED_OR_RECOMMENDED'
+    | 'UNKNOWN';
+  editorialStatus:
+    | 'SELECT_VERIFIED'
+    | 'SELECT_REQUIRES_HUMAN_REVIEW'
+    | 'REVIEW'
+    | 'EXCLUDE';
+  requiresHumanReview: boolean;
   contentRole:
     | 'SUBSTANTIVE'
     | 'COUNTERPOINT'
@@ -58,6 +69,16 @@ export interface AiCandidateAssessment {
     | 'UNCERTAIN';
   relevance: number;
   usefulness: number;
+  quality: {
+    informationValue: number | null;
+    novelty: number | null;
+    argumentation: number | null;
+    experienceValue: number | null;
+    audienceAppeal: number | null;
+    videoUsefulness: number | null;
+  };
+  strengths: string[];
+  risks: string[];
   reasons: string[];
   missingEvidence: string[];
 }
@@ -132,6 +153,8 @@ export interface AiScriptProposal {
   sections: AiScriptSection[];
   sourceIds: string[];
   warnings: string[];
+  durationGate: 'TARGET_RANGE' | 'TOO_SHORT' | 'TOO_LONG';
+  selectionRevision: number | null;
   status: 'DRAFT_REQUIRES_HUMAN_REVIEW';
   provider: {
     name: 'HUGGING_FACE';

@@ -161,6 +161,21 @@ export class AiContentController {
     this.origin(origin);
     return this.call(() => this.service.evaluator.saveFeedback(id, body));
   }
+  @Post('assessments/:id/propose-reviewed') proposeReviewed(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Headers('origin') origin?: string,
+  ) {
+    this.origin(origin);
+    if (body?.confirmLive !== true)
+      throw new BadRequestException('AI_EXPLICIT_LIVE_CONFIRMATION_REQUIRED');
+    return this.call(() => this.service.agent.proposeReviewed(id, body));
+  }
+  @Get('assessments/:id/latest-proposal') latestProposal(
+    @Param('id') id: string,
+  ) {
+    return this.call(() => this.service.agent.latestProposalForAssessment(id));
+  }
   @Post('collections/:id/evaluate') evaluate(
     @Param('id') id: string,
     @Body() body: any,
