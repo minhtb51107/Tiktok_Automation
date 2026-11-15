@@ -62,6 +62,13 @@ type View = {
         url: string;
         author: string | null;
         displayText: string | null;
+        group:
+          | "PARENT_VERIFIED"
+          | "OBSERVED_CONVERSATION"
+          | "RELATED_OR_RECOMMENDED"
+          | "UNKNOWN"
+          | "INCOMPLETE";
+        membership: "THREAD_UI_CONFIRMED" | "RECOMMENDED_POST" | "UNKNOWN";
         evidence: string[];
         mediaCount: number;
         engagement: {
@@ -74,6 +81,9 @@ type View = {
     >;
     automation: {
       selectedVerifiedReplyIds: string[];
+      selectedThreadUiIds: string[];
+      selectedConversationIds: string[];
+      selectedObservedUrls: string[];
       status: string;
       reasons: string[];
       candidateStatus: string;
@@ -175,7 +185,8 @@ export function ConversationPanel({
           root: {
             ...rawCollection.root,
             originalText:
-              view?.normalized.rootDisplayText || rawCollection.root.originalText,
+              view?.normalized.rootDisplayText ||
+              rawCollection.root.originalText,
           },
         }
       : undefined,
@@ -592,9 +603,10 @@ export function ConversationPanel({
             {view!.normalized.counts.missingBody}
           </p>
           <p data-testid="conversation-automation-status">
-            Automatic selection: {view!.normalized.automation.status} · verified
-            quality selections{" "}
-            {view!.normalized.automation.selectedVerifiedReplyIds.length}
+            Automatic selection: {view!.normalized.automation.status} · verified{" "}
+            {view!.normalized.automation.selectedVerifiedReplyIds.length} ·
+            thread UI confirmed{" "}
+            {view!.normalized.automation.selectedThreadUiIds.length}
             {view!.normalized.automation.reasons.length
               ? ` · ${view!.normalized.automation.reasons.join("; ")}`
               : ""}
@@ -618,7 +630,8 @@ export function ConversationPanel({
               ; permalink checks {c.relationshipDiagnostics?.length || 0}.
             </p>
             <p data-testid="conversation-browser-acquisition">
-              Browser actions {c.acquisition?.actions.length ?? "LEGACY_CAPTURE"}
+              Browser actions{" "}
+              {c.acquisition?.actions.length ?? "LEGACY_CAPTURE"}
               {c.acquisition
                 ? ` · ${c.acquisition.stopReason} · last state ${c.acquisition.transitions[c.acquisition.transitions.length - 1]?.state || "UNKNOWN"}`
                 : " · no browser action trace persisted"}
@@ -650,22 +663,25 @@ export function ConversationPanel({
             data-testid="apply-verified-quality-selection"
             disabled={
               busy ||
-              !view!.normalized.automation.selectedVerifiedReplyIds.length
+              !view!.normalized.automation.selectedConversationIds.length
             }
             title={
-              view!.normalized.automation.selectedVerifiedReplyIds.length
-                ? "Apply evidence-safe quality recommendations; this is not ACCEPT or production approval."
-                : "No parent-verified quality recommendation is available. Unresolved cards remain in exception review."
+              view!.normalized.automation.selectedConversationIds.length
+                ? "Apply quality recommendations backed by parent evidence or confirmed thread UI membership; this is not ACCEPT or production approval."
+                : "No evidence-safe quality recommendation is available. UNKNOWN cards remain in exception review."
             }
             onClick={() => {
               setSelected(view!.normalized.automation.selectedVerifiedReplyIds);
+              setSelectedObserved(
+                view!.normalized.automation.selectedObservedUrls,
+              );
               setDirty(true);
               setNotice(
-                "Verified quality recommendations applied locally. Save review to persist; approval remains unchanged.",
+                "Evidence-safe quality recommendations applied locally. Save review to persist; approval remains unchanged.",
               );
             }}
           >
-            Apply verified quality recommendations
+            Apply automatic quality selection
           </button>
           <p>
             Popularity {score(q.popularity.score)} · Conversation{" "}
@@ -793,8 +809,8 @@ export function ConversationPanel({
                     Observed permalink
                   </a>
                   <p>
-                    {x.relationship} · {x.quality.bucket} · score{" "}
-                    {x.quality.score} ·{" "}
+                    {x.relationship} · membership THREAD_UI_CONFIRMED ·{" "}
+                    {x.quality.bucket} · score {x.quality.score} ·{" "}
                     {x.recommended ? "RECOMMENDED" : "HUMAN REVIEW"}
                   </p>
                   <p>
@@ -825,7 +841,9 @@ export function ConversationPanel({
                 <a href={x.url} target="_blank" rel="noreferrer">
                   Source permalink
                 </a>
-                <p>{x.evidence.join("; ")}</p>
+                <p>
+                  Membership {x.membership} · {x.evidence.join("; ")}
+                </p>
                 <p>
                   Media {x.mediaCount} · Likes {x.engagement.likes ?? "UNKNOWN"}
                   {" · "}Replies {x.engagement.replies ?? "UNKNOWN"} · Reposts{" "}
@@ -844,7 +862,33 @@ export function ConversationPanel({
               ...view!.normalized.groups.UNKNOWN,
               ...view!.normalized.groups.INCOMPLETE,
             ].map((x) => (
-              <article key={x.url} data-testid="incomplete-context-card">
+              <article
+                key={x.url}
+                data-testid={
+                  x.group === "UNKNOWN"
+                    ? "unknown-context-card"
+                    : "incomplete-context-card"
+                }
+              >
+                {x.group === "UNKNOWN" && (
+                  <label>
+                    <input
+                      type="checkbox"
+                      data-testid="unknown-context-selected"
+                      checked={selectedObserved.includes(x.url)}
+                      onChange={(event) => {
+                        setSelectedObserved((old) =>
+                          event.target.checked
+                            ? [...old, x.url]
+                            : old.filter((value) => value !== x.url),
+                        );
+                        setDirty(true);
+                      }}
+                    />{" "}
+                    Exception review: select for Script DRAFT without a
+                    conversation-membership claim
+                  </label>
+                )}
                 <strong>@{x.author || "UNKNOWN"}</strong>
                 <p>
                   {x.displayText ||
@@ -853,7 +897,9 @@ export function ConversationPanel({
                 <a href={x.url} target="_blank" rel="noreferrer">
                   Observed permalink
                 </a>
-                <p>{x.evidence.join("; ")}</p>
+                <p>
+                  Membership {x.membership} · {x.evidence.join("; ")}
+                </p>
                 <p>
                   Media {x.mediaCount} · Likes {x.engagement.likes ?? "UNKNOWN"}
                   {" · "}Replies {x.engagement.replies ?? "UNKNOWN"} · Reposts{" "}
@@ -941,7 +987,9 @@ export function ConversationPanel({
               reviewLocked ||
               busy ||
               dirty ||
-              (!selected.length && !selectedObserved.length)
+              (!selected.length &&
+                !selectedObserved.length &&
+                !view!.normalized.automation.selectedConversationIds.length)
             }
             onClick={() =>
               void action(async () => {

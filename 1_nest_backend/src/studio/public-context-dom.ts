@@ -3,7 +3,11 @@ export function observePublicContext() {
   const observedAt = new Date().toISOString();
   const nodePath = (element: Element | null) => {
     const segments: string[] = [];
-    for (let node = element; node && node !== document.body; node = node.parentElement) {
+    for (
+      let node = element;
+      node && node !== document.body;
+      node = node.parentElement
+    ) {
       const testId = node.getAttribute('data-testid'),
         role = node.getAttribute('role');
       segments.unshift(
@@ -240,7 +244,11 @@ export function performPublicConversationAction(input: {
   const documentHeightBefore = document.documentElement.scrollHeight;
   const nodePath = (element: Element | null) => {
     const segments: string[] = [];
-    for (let node = element; node && node !== document.body; node = node.parentElement) {
+    for (
+      let node = element;
+      node && node !== document.body;
+      node = node.parentElement
+    ) {
       const testId = node.getAttribute('data-testid'),
         role = node.getAttribute('role');
       segments.unshift(
@@ -260,18 +268,34 @@ export function performPublicConversationAction(input: {
       style.display !== 'none'
     );
   };
+  const exactSubject = (card: Element | null) => {
+    if (!card) return null;
+    const owns = (element: Element) =>
+      element.closest('div[data-pressable-container="true"],article') === card;
+    const values = [...card.querySelectorAll('time')]
+      .filter(owns)
+      .map(
+        (time) => time.closest('a[href*="/post/"]')?.getAttribute('href') || '',
+      )
+      .map((href) => {
+        try {
+          const url = new URL(href, location.origin);
+          return /^\/@[\w.-]+\/post\/[\w-]+\/?$/.test(url.pathname)
+            ? `https://www.threads.com${url.pathname.replace(/\/$/, '')}`
+            : null;
+        } catch {
+          return null;
+        }
+      })
+      .filter((value): value is string => !!value);
+    return [...new Set(values)].length === 1 ? values[0] : null;
+  };
   if (input.allowReplyExpansion) {
-    const candidates = [
-      ...document.querySelectorAll('button,[role="button"]'),
-    ]
+    const candidates = [...document.querySelectorAll('button,[role="button"]')]
       .filter(visible)
       .map((element) => ({
         element: element as HTMLElement,
-        label: (
-          element.getAttribute('aria-label') ||
-          element.textContent ||
-          ''
-        )
+        label: (element.getAttribute('aria-label') || element.textContent || '')
           .replace(/\s+/g, ' ')
           .trim(),
       }))
@@ -296,17 +320,22 @@ export function performPublicConversationAction(input: {
         kind,
         label: selected.label,
         containerIdentity: nodePath(card || selected.element.parentElement),
+        containerSubjectUrl: exactSubject(card),
         documentHeightBefore,
       };
     }
   }
   const before = window.scrollY;
-  window.scrollBy({ top: Math.max(window.innerHeight * 0.85, 480), behavior: 'auto' });
+  window.scrollBy({
+    top: Math.max(window.innerHeight * 0.85, 480),
+    behavior: 'auto',
+  });
   return {
     actionId: input.actionId,
     kind: 'SCROLL' as const,
     label: null,
     containerIdentity: null,
+    containerSubjectUrl: null,
     documentHeightBefore,
     scrollChanged: window.scrollY !== before,
   };
@@ -322,9 +351,12 @@ export function observePermalinkParentEvidence(expectedRootUrl: string) {
         !url.port &&
         !url.username &&
         !url.password &&
-        ['threads.com', 'www.threads.com', 'threads.net', 'www.threads.net'].includes(
-          url.hostname,
-        ) &&
+        [
+          'threads.com',
+          'www.threads.com',
+          'threads.net',
+          'www.threads.net',
+        ].includes(url.hostname) &&
         match
         ? `https://www.threads.com/@${match[1]}/post/${match[2]}`
         : null;
@@ -338,7 +370,9 @@ export function observePermalinkParentEvidence(expectedRootUrl: string) {
   if (!subject || !root)
     return { status: 'INVALID_DETAIL_IDENTITY' as const, candidate: null };
   const cards = [
-    ...document.querySelectorAll('div[data-pressable-container="true"],article'),
+    ...document.querySelectorAll(
+      'div[data-pressable-container="true"],article',
+    ),
   ].filter((card) => {
     const owns = (element: Element) =>
       element.closest('div[data-pressable-container="true"],article') === card;
@@ -351,7 +385,10 @@ export function observePermalinkParentEvidence(expectedRootUrl: string) {
       );
   });
   if (cards.length !== 1)
-    return { status: 'EXACT_SUBJECT_CARD_NOT_UNIQUE' as const, candidate: null };
+    return {
+      status: 'EXACT_SUBJECT_CARD_NOT_UNIQUE' as const,
+      candidate: null,
+    };
   const card = cards[0],
     owns = (element: Element) =>
       element.closest('div[data-pressable-container="true"],article') === card,
@@ -363,7 +400,11 @@ export function observePermalinkParentEvidence(expectedRootUrl: string) {
       (anchor) =>
         owns(anchor) &&
         /^(replying to|đang trả lời)(?:\s+@[\w.-]+)?$/iu.test(
-          (anchor.getAttribute('aria-label') || anchor.textContent || '').trim(),
+          (
+            anchor.getAttribute('aria-label') ||
+            anchor.textContent ||
+            ''
+          ).trim(),
         ),
     );
   if (targets.length !== 1)
@@ -387,7 +428,10 @@ export function observePermalinkParentEvidence(expectedRootUrl: string) {
       .filter(Boolean)
       .join('\n');
   if (!parentUrl || !authorUrl || !bodyText)
-    return { status: 'INCOMPLETE_EXPLICIT_PARENT_EVIDENCE' as const, candidate: null };
+    return {
+      status: 'INCOMPLETE_EXPLICIT_PARENT_EVIDENCE' as const,
+      candidate: null,
+    };
   return {
     status: 'EXPLICIT_PARENT_OBSERVED' as const,
     candidate: {
@@ -418,9 +462,12 @@ export function observePermalinkParentEvidence(expectedRootUrl: string) {
         !url.port &&
         !url.username &&
         !url.password &&
-        ['threads.com', 'www.threads.com', 'threads.net', 'www.threads.net'].includes(
-          url.hostname,
-        ) &&
+        [
+          'threads.com',
+          'www.threads.com',
+          'threads.net',
+          'www.threads.net',
+        ].includes(url.hostname) &&
         match
         ? `https://www.threads.com/@${match[1]}`
         : null;

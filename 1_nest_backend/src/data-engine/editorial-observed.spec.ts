@@ -12,7 +12,7 @@ import { ProductionConsumer } from './production-consumer';
 import { StudioService } from '../studio/studio.service';
 import { productionSession } from './production-adapter';
 
-describe('DATA05 explicit observed-context editorial bridge', () => {
+describe('DATA05 explicit exception-review context editorial bridge', () => {
   let dir: string;
   beforeEach(async () => {
     dir = await mkdtemp(path.join(os.tmpdir(), 'editorial-observed-'));
@@ -21,7 +21,7 @@ describe('DATA05 explicit observed-context editorial bridge', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test('keeps observed evidence unverified while allowing an explicit DRAFT selection', async () => {
+  test('keeps same-page membership UNKNOWN while allowing an explicit DRAFT selection', async () => {
     const data = new DataEngine(new DataStore(path.join(dir, 'data')));
     const fixture = editorialFixture();
     const observedUrl = 'https://www.threads.com/@observer/post/OBSERVED';
@@ -71,10 +71,10 @@ describe('DATA05 explicit observed-context editorial bridge', () => {
       sourceId: 'OBSERVED',
       parentId: null,
       permalink: observedUrl,
-      sourceEvidence: 'OBSERVED_RELATIONSHIP_UNVERIFIED',
+      sourceEvidence: 'UNKNOWN_CONVERSATION_MEMBERSHIP',
     });
     expect(plan.feasibility.missingEvidence).toContain(
-      'OBSERVED_PARENT_RELATIONSHIP_UNVERIFIED',
+      'UNKNOWN_CONVERSATION_MEMBERSHIP_REQUIRES_EXCEPTION_REVIEW',
     );
     expect(plan.bundle.collection.unverified[0].observation?.originalText).toBe(
       fixture.collection.unverified[0].observation?.originalText,
@@ -103,7 +103,7 @@ describe('DATA05 explicit observed-context editorial bridge', () => {
     });
     expect(edited.feasibility.status).toBe('READY_FOR_SCRIPT');
     expect(edited.feasibility.missingEvidence).toContain(
-      'OBSERVED_PARENT_RELATIONSHIP_UNVERIFIED',
+      'UNKNOWN_CONVERSATION_MEMBERSHIP_REQUIRES_EXCEPTION_REVIEW',
     );
     const sourceLink = edited.bundle.sourceLink!;
     let detail = await data.detail(sourceLink.postId);
@@ -146,10 +146,10 @@ describe('DATA05 explicit observed-context editorial bridge', () => {
     expect(
       session.items.find((item) => item.sourceId === 'OBSERVED')?.editorial
         ?.sourceEvidence,
-    ).toBe('OBSERVED_RELATIONSHIP_UNVERIFIED');
-    expect(session.productionOrigin?.conversation?.selectedObservedUrls).toEqual([
-      observedUrl,
-    ]);
+    ).toBe('UNKNOWN_CONVERSATION_MEMBERSHIP');
+    expect(
+      session.productionOrigin?.conversation?.selectedObservedUrls,
+    ).toEqual([observedUrl]);
     expect((await studio.load(session.id)).project.editorialPlan?.id).toBe(
       edited.id,
     );
@@ -163,7 +163,11 @@ describe('DATA05 explicit observed-context editorial bridge', () => {
     revised.revision++;
     revised.sections = revised.sections.map((row) =>
       row.id === 'commentary'
-        ? { ...row, displayText: row.displayText + ' Bản sửa.', narrationText: row.narrationText + ' Bản sửa.' }
+        ? {
+            ...row,
+            displayText: row.displayText + ' Bản sửa.',
+            narrationText: row.narrationText + ' Bản sửa.',
+          }
         : row,
     );
     const reapplied = await studio.applyEditorialDraft(
@@ -173,8 +177,8 @@ describe('DATA05 explicit observed-context editorial bridge', () => {
     );
     expect(reapplied.id).toBe(session.id);
     expect(reapplied.revision).toBe(session.revision + 1);
-    expect((await studio.load(session.id)).project.editorialPlan?.revision).toBe(
-      revised.revision,
-    );
+    expect(
+      (await studio.load(session.id)).project.editorialPlan?.revision,
+    ).toBe(revised.revision);
   });
 });

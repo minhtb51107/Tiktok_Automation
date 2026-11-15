@@ -264,7 +264,7 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
     expect(provider.calls).toHaveLength(1);
   });
 
-  test('observed target-page context may be recommended but remains human-review-required', async () => {
+  test('same-page context without conversation-surface evidence remains UNKNOWN and human-review-required', async () => {
     const record = await conversations.collection(collectionId),
       reply = record.collection.replies[0];
     record.collection.replies = [];
@@ -290,7 +290,7 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
     });
     expect(assessment.selectedSourceIds).toEqual(['REPLY_AI_TEST']);
     expect(assessment.candidates[0]).toMatchObject({
-      relationshipEvidence: 'OBSERVED_RELATIONSHIP_UNVERIFIED',
+      relationshipEvidence: 'UNKNOWN',
       editorialStatus: 'SELECT_REQUIRES_HUMAN_REVIEW',
       requiresHumanReview: true,
     });

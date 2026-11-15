@@ -59,10 +59,29 @@ export class ConversationStudioService {
   }
   async draft(id: string, body: any) {
     const record = await this.engine.collection(id),
-      review = await this.engine.review(id);
+      review = await this.engine.review(id),
+      normalized = sourceQualityAdapter(record.collection),
+      hasExplicitSelection =
+        review.selectedReplyIds.length > 0 ||
+        (review.selectedObservedUrls?.length ?? 0) > 0,
+      effectiveReview = hasExplicitSelection
+        ? review
+        : {
+            ...review,
+            selectedReplyIds: normalized.automation.selectedVerifiedReplyIds,
+            selectedObservedUrls: normalized.automation.selectedObservedUrls,
+          };
     if (body?.confirmDraft !== true || body?.revision !== review.revision)
       throw Error('CONVERSATION_DRAFT_REVISION_REQUIRED');
-    return this.data.studio.createConversationDraft(record.collection, review);
+    if (
+      !effectiveReview.selectedReplyIds.length &&
+      !effectiveReview.selectedObservedUrls.length
+    )
+      throw Error('CONVERSATION_NOT_ENOUGH_CONTENT');
+    return this.data.studio.createConversationDraft(
+      record.collection,
+      effectiveReview,
+    );
   }
   async report(id: string) {
     const run = await this.engine.get(id),
@@ -150,13 +169,23 @@ export class ConversationController {
       const record = await this.service.engine.collection(id);
       const review = await this.service.engine.review(id),
         observedContexts = observedContextViews(record.collection),
+        normalized = sourceQualityAdapter(record.collection),
+        hasExplicitSelection =
+          review.selectedReplyIds.length > 0 ||
+          (review.selectedObservedUrls?.length ?? 0) > 0,
+        selectedObservedUrls = hasExplicitSelection
+          ? (review.selectedObservedUrls ?? [])
+          : normalized.automation.selectedObservedUrls,
+        selectedReplyIds = hasExplicitSelection
+          ? review.selectedReplyIds
+          : normalized.automation.selectedVerifiedReplyIds,
         narration = [
           record.collection.root.originalText,
           ...observedContexts
-            .filter((x) => review.selectedObservedUrls?.includes(x.url))
+            .filter((x) => selectedObservedUrls.includes(x.url))
             .map((x) => x.displayText),
           ...record.collection.replies
-            .filter((x) => review.selectedReplyIds.includes(x.id))
+            .filter((x) => selectedReplyIds.includes(x.id))
             .map((x) => x.originalText),
         ]
           .filter(Boolean)
@@ -165,7 +194,7 @@ export class ConversationController {
         record,
         review,
         observedContexts,
-        normalized: sourceQualityAdapter(record.collection),
+        normalized,
         draftEstimate: {
           ...estimatedDuration(narration, 1.3),
           source: 'ESTIMATED_TEXT_ONLY',

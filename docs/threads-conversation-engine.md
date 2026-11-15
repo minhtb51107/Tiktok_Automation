@@ -211,3 +211,87 @@ The next evidence-producing option is a separately authorized same-URL Parseforg
 benchmark. With 20 result items, the current public listing estimate is USD 0.068
 at USD 3.40/1,000 results; this is not a billing quote. No Actor request, credit
 purchase or provider credential use occurred in this checkpoint.
+
+## THREADS-ACQUISITION-04 conversation membership
+
+Conversation membership is now independent from an immediate parent edge. The
+persisted contract records `THREAD_UI_CONFIRMED`, `RECOMMENDED_POST`, or `UNKNOWN`
+with the exact root/subject IDs, evidence type, originating browser action,
+container reference, and observation timestamp. None of these values changes the
+existing relationship graph or creates a `parentId`.
+
+Membership confirmation is deliberately limited to explicit evidence:
+
+- an accessible discussion/recommendation region tied to the exact root;
+- a header-scoped public reply relationship; or
+- a newly observed card inside the exact root/confirmed-card container after a
+  bounded `EXPAND_NESTED` or `LOAD_MORE` action.
+
+Scroll order, author, semantic similarity, and generic same-page presence remain
+insufficient. Recommendation evidence wins a conflict to prevent contamination.
+Only quality-`RECOMMENDED` parent-verified or `THREAD_UI_CONFIRMED` cards are
+eligible for automatic editorial selection. A confirmed conversation card is
+described as an opinion in the discussion, never as a direct reply to another card
+unless the existing graph validator separately proves that edge. The automatic
+selection is ephemeral until a user saves it; it does not change review, rights,
+production, TTS, render, or publishing approval.
+
+### Saved `gnrtth` replay
+
+The acquisition-03 artifact still yields 29 full-body non-root cards, 0
+parent-verified replies, 0 `THREAD_UI_CONFIRMED`, 1 content-risk related card, and
+28 UNKNOWN cards. Its three browser actions were plain scrolls; all cards shared
+the generic `Phần thân cột` region and had no explicit relationship signal. Thus
+the new code correctly selects 0 cards automatically from this saved evidence.
+
+The `_rachel_darryl` and `h_nah254` card pairs occupy visually suggestive DOM
+clusters, but that is not a structural membership assertion and both remain
+UNKNOWN. `tuan27020` is excluded by the existing standalone-series content-risk
+classification, but its technical membership also remains UNKNOWN rather than
+being falsely labelled `RECOMMENDED_POST`.
+
+A positive LIVE acceptance therefore requires a separately authorized capture
+that records an explicit discussion surface or an expand/load action tied to the
+exact root/card container. The previous single-use LIVE authorization was already
+consumed and was not reused for this checkpoint.
+
+### Acquisition-04 offline acceptance and next LIVE plan
+
+The automatic policy is covered at both normalization and DRAFT-bridge layers:
+quality-eligible `PARENT_VERIFIED` and `THREAD_UI_CONFIRMED` sources are selected;
+`RECOMMENDED_POST` and `UNKNOWN` are not. An explicit exception-review choice may
+still use an UNKNOWN source, but its editorial section is persisted as
+`UNKNOWN_CONVERSATION_MEMBERSHIP`, with `parentId=null`; it is never presented as a
+reply and does not change the saved review decision.
+
+The isolated Studio acceptance at `127.0.0.1:3116` displayed 29/29 full cards,
+0 confirmed membership, 1 related-risk card, 28 UNKNOWN and 0 incomplete. No card
+was duplicated across the observed and UNKNOWN sections. Copy Report produced a
+16,219-byte full-run report; JSON and Markdown exports were 1,023,613 and 16,051
+bytes. Feedback save/reopen passed. A browser-triggered Source DRAFT reopened with
+one explicitly selected UNKNOWN exception source, `parentId=null`, membership
+`UNKNOWN`; this was not an automatic selection or approval.
+
+One new single-use LIVE authorization would use the same canonical `gnrtth` URL,
+one browser/tab, at most 180 seconds, four bounded UI actions, 150 admitted network
+requests, 40 subject cards, two detail validations, and no retry. The collector
+would:
+
+1. open and verify the exact canonical root;
+2. snapshot the page and locate only an explicit root-owned `view/show replies` or
+   `load more replies` control (never a composer `Reply` button);
+3. persist the control label, exact container node, container subject, and snapshot
+   before clicking;
+4. click once, persist the resulting transition/snapshot, and classify only newly
+   materialized descendants of that exact root/confirmed-card container;
+5. optionally expand one nested confirmed card within the remaining action budget;
+6. separately record explicit recommendation-region labels and reject membership
+   conflicts in favor of contamination protection.
+
+PASS requires at least one real card with explicit discussion-region evidence or
+an action/container chain rooted at the exact post, while recommendation cards stay
+separate and no direct parent is invented. If Threads exposes only generic scroll
+content, no root-owned expansion control, or no distinguishable surface, the result
+is `NO_PUBLIC_CONVERSATION_MEMBERSHIP_EVIDENCE`; the run stops without selector
+guessing. Emergency resource guards and login/CAPTCHA/access-protection stops remain
+unchanged. This LIVE run has not been authorized or performed.

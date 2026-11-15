@@ -19,6 +19,7 @@ export interface EditorialSection {
     | 'ROOT_VERIFIED'
     | 'PARENT_VERIFIED'
     | 'OBSERVED_RELATIONSHIP_UNVERIFIED'
+    | 'UNKNOWN_CONVERSATION_MEMBERSHIP'
     | 'AI_COMMENTARY';
 }
 export interface Feasibility {
@@ -50,7 +51,7 @@ export interface EditorialPlan {
   collectionId: string;
   selectionRevision: number;
   selectedReplyIds: string[];
-  /** Explicit human selection. These URLs remain unverified observations. */
+  /** Explicit exception-review selection. These URLs retain their observed or UNKNOWN membership. */
   selectedObservedUrls?: string[];
   bundle: {
     collection: ThreadCollection;

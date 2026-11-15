@@ -4,7 +4,12 @@ import {
   analyzeSourceCardsV2,
   cleanSourceProjection,
 } from '../studio/source-quality';
-import type { ThreadCollection, VerifiedReply } from './conversation-contracts';
+import type {
+  ConversationMembership,
+  MembershipEvidence,
+  ThreadCollection,
+  VerifiedReply,
+} from './conversation-contracts';
 import { canonicalPost } from './conversation-identity';
 import { estimatedDuration } from './editorial-feasibility';
 
@@ -23,6 +28,8 @@ export interface NormalizedConversationCard {
   displayText: string | null;
   group: NormalizedConversationGroup;
   parentId: string | null;
+  membership: ConversationMembership;
+  membershipEvidence: MembershipEvidence | null;
   evidence: string[];
   raw: PublicRecord | null;
   quality: ReturnType<typeof analyzeSourceCardsV2>[number] | null;
@@ -54,6 +61,9 @@ export interface NormalizedConversation {
   };
   automation: {
     selectedVerifiedReplyIds: string[];
+    selectedThreadUiIds: string[];
+    selectedConversationIds: string[];
+    selectedObservedUrls: string[];
     status: 'READY_FOR_QUALITY' | 'EXCEPTION_REVIEW' | 'NOT_ENOUGH_EVIDENCE';
     reasons: string[];
     candidateStatus:
@@ -156,6 +166,12 @@ export function normalizeConversation(
           !!row[0],
       ),
   );
+  const membershipById = new Map(
+    (collection.membershipEvidence ?? []).map((evidence) => [
+      evidence.subjectId,
+      evidence,
+    ]),
+  );
   const legacyObservationByUrl = new Map(
     [...observedByUrl]
       .filter(([, row]) => !!row.observation)
@@ -185,6 +201,7 @@ export function normalizeConversation(
     const unresolved = observedByUrl.get(url);
     const legacyObservation = legacyObservationByUrl.get(url);
     const own = canonicalPost(url)!;
+    const membershipEvidence = membershipById.get(own.id) ?? null;
     let group: NormalizedConversationGroup;
     let evidence: string[];
     if (verified) {
@@ -201,14 +218,20 @@ export function normalizeConversation(
     } else {
       const assessment = classifyContext(source, root.url);
       group =
-        assessment.classification === 'OBSERVED_RELATIONSHIP_UNVERIFIED'
+        membershipEvidence?.status === 'THREAD_UI_CONFIRMED'
           ? 'OBSERVED_CONVERSATION'
-          : assessment.classification === 'RELATED_OR_RECOMMENDED'
+          : membershipEvidence?.status === 'RECOMMENDED_POST'
             ? 'RELATED_OR_RECOMMENDED'
-            : 'UNKNOWN';
-      evidence = [unresolved?.reason, ...assessment.reasons].filter(
-        (value): value is string => !!value,
-      );
+            : assessment.classification === 'OBSERVED_RELATIONSHIP_UNVERIFIED'
+              ? 'OBSERVED_CONVERSATION'
+              : assessment.classification === 'RELATED_OR_RECOMMENDED'
+                ? 'RELATED_OR_RECOMMENDED'
+                : 'UNKNOWN';
+      evidence = [
+        membershipEvidence?.evidenceType,
+        unresolved?.reason,
+        ...assessment.reasons,
+      ].filter((value): value is string => !!value);
     }
     const projection = source ? cleanSourceProjection(source) : null;
     cards.push({
@@ -228,6 +251,8 @@ export function normalizeConversation(
         projection?.text || legacyObservation?.originalText.trim() || null,
       group,
       parentId: verified?.parentId ?? null,
+      membership: membershipEvidence?.status ?? 'UNKNOWN',
+      membershipEvidence,
       evidence,
       raw: source,
       quality: qualityByUrl.get(url) ?? null,
@@ -249,28 +274,40 @@ export function normalizeConversation(
   };
   for (const card of cards) groups[card.group].push(card);
   const selectedVerifiedReplyIds = groups.PARENT_VERIFIED.filter(
-    (card) => card.quality?.bucket === 'RECOMMENDED',
-  ).map((card) => card.id);
-  const exceptionCount =
-    groups.OBSERVED_CONVERSATION.length +
-    groups.UNKNOWN.length +
-    groups.INCOMPLETE.length;
+      (card) => card.quality?.bucket === 'RECOMMENDED',
+    ).map((card) => card.id),
+    selectedThreadUiIds = groups.OBSERVED_CONVERSATION.filter(
+      (card) =>
+        card.membership === 'THREAD_UI_CONFIRMED' &&
+        card.quality?.bucket === 'RECOMMENDED',
+    ).map((card) => card.id),
+    selectedObservedUrls = groups.OBSERVED_CONVERSATION.filter((card) =>
+      selectedThreadUiIds.includes(card.id),
+    ).map((card) => card.url),
+    selectedConversationIds = [
+      ...selectedVerifiedReplyIds,
+      ...selectedThreadUiIds,
+    ];
+  const exceptionCount = groups.UNKNOWN.length + groups.INCOMPLETE.length;
   const reasons: string[] = [];
   if (!groups.PARENT_VERIFIED.length)
     reasons.push('NO_PARENT_VERIFIED_REPLIES');
-  if (groups.OBSERVED_CONVERSATION.length)
-    reasons.push('OBSERVED_CONVERSATION_REQUIRES_RELATIONSHIP_REVIEW');
+  if (selectedThreadUiIds.length)
+    reasons.push('THREAD_UI_MEMBERSHIP_SELECTED_WITHOUT_DIRECT_PARENT_CLAIM');
   if (groups.INCOMPLETE.length) reasons.push('INCOMPLETE_CARD_OBSERVATIONS');
   const selectedNarration = [
     rootDisplayText,
     ...groups.PARENT_VERIFIED.filter((card) =>
       selectedVerifiedReplyIds.includes(card.id),
     ).map((card) => card.displayText),
+    ...groups.OBSERVED_CONVERSATION.filter((card) =>
+      selectedThreadUiIds.includes(card.id),
+    ).map((card) => card.displayText),
   ]
     .filter((value): value is string => !!value)
     .join('\n\n');
   const duration = estimatedDuration(selectedNarration, 1.3),
-    candidateStatus = selectedVerifiedReplyIds.length
+    candidateStatus = selectedConversationIds.length
       ? duration.maximumSeconds >= 65
         ? ('READY_FOR_DRAFT' as const)
         : ('NOT_ENOUGH_CONTENT' as const)
@@ -278,7 +315,7 @@ export function normalizeConversation(
         ? ('EXCEPTION_REVIEW' as const)
         : ('NOT_ENOUGH_CONTENT' as const);
   if (candidateStatus === 'NOT_ENOUGH_CONTENT')
-    reasons.push('SELECTED_VERIFIED_CONTENT_BELOW_65_SECOND_TARGET');
+    reasons.push('SELECTED_CONVERSATION_CONTENT_BELOW_65_SECOND_TARGET');
   return {
     version: 'conversation-normalized/2',
     root: collection.root,
@@ -297,7 +334,10 @@ export function normalizeConversation(
     },
     automation: {
       selectedVerifiedReplyIds,
-      status: selectedVerifiedReplyIds.length
+      selectedThreadUiIds,
+      selectedConversationIds,
+      selectedObservedUrls,
+      status: selectedConversationIds.length
         ? exceptionCount
           ? 'EXCEPTION_REVIEW'
           : 'READY_FOR_QUALITY'

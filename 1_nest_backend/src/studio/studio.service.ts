@@ -839,7 +839,9 @@ export class StudioService {
     return this.exclusive(async () => {
       const session = await this.load(id);
       if (session.revision !== revision)
-        throw new ConflictException('Session changed. Reopen before applying Script DRAFT.');
+        throw new ConflictException(
+          'Session changed. Reopen before applying Script DRAFT.',
+        );
       const priorPlan = session.project.editorialPlan;
       if (priorPlan?.id === plan.id && priorPlan.revision === plan.revision)
         return session;
@@ -1084,12 +1086,17 @@ export class StudioService {
             (selectedObserved.has(own.url) || selectedReplies.has(own.id)));
         if (item.order > 0) {
           const verified = collection.replies.find((r) => r.id === own?.id),
+            membership = collection.membershipEvidence?.find(
+              (evidence) => evidence.subjectId === own?.id,
+            ),
             comment = s.project.comments.find((c) => c.id === item.id);
           item.observationEvidence = {
             level: verified ? 'PARENT_VERIFIED' : 'OBSERVED_ON_TARGET_PAGE',
             targetUrl: root.url,
             observedAt: root.provenance.observedAt,
             parentId: verified?.parentId ?? null,
+            membership: membership?.status ?? 'UNKNOWN',
+            membershipEvidenceType: membership?.evidenceType ?? null,
           };
           if (!verified)
             item.contextAssessment = classifyContext(raw, root.url);

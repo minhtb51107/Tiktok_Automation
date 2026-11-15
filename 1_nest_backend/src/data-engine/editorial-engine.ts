@@ -6,7 +6,11 @@ import {
   type EditorialPlan,
   type EditorialSection,
 } from './editorial-contracts';
-import { feasibility, selectedObservedContexts, selectedReplies } from './editorial-feasibility';
+import {
+  feasibility,
+  selectedObservedContexts,
+  selectedReplies,
+} from './editorial-feasibility';
 const key = (id: string) => {
   if (!/^[a-f0-9]{64}$/.test(id)) throw Error('EDITORIAL_INVALID_ID');
   return 'editorial-plans/' + id + '.json';
@@ -148,7 +152,10 @@ export class EditorialEngine {
           ),
           displayText: row.displayText,
           narrationText: row.displayText,
-          sourceEvidence: 'OBSERVED_RELATIONSHIP_UNVERIFIED' as const,
+          sourceEvidence:
+            row.relationship === 'OBSERVED_RELATIONSHIP_UNVERIFIED'
+              ? ('OBSERVED_RELATIONSHIP_UNVERIFIED' as const)
+              : ('UNKNOWN_CONVERSATION_MEMBERSHIP' as const),
         })),
         commentary('COMMENTARY'),
         commentary('RESOLUTION'),
@@ -287,7 +294,8 @@ export class EditorialEngine {
       if (
         review.revision !== plan.selectionRevision ||
         hash(review.selectedReplyIds) !== hash(plan.selectedReplyIds) ||
-        hash(review.selectedObservedUrls || []) !== hash(plan.selectedObservedUrls || [])
+        hash(review.selectedObservedUrls || []) !==
+          hash(plan.selectedObservedUrls || [])
       )
         throw Error('EDITORIAL_SELECTION_CHANGED');
       const f = feasibility(

@@ -10,10 +10,13 @@ import type {
   DurationAssessment,
 } from './editorial-contracts';
 import type { VideoTimeline, AudioAsset } from '../video-pipeline/contracts';
-import { observedContextViews, type ObservedContextView } from './conversation-context';
+import {
+  observedContextViews,
+  type ObservedContextView,
+} from './conversation-context';
 export const EDITORIAL_CONFIG = Object.freeze({
   version: 'feasibility/1',
-  defaultReadingSpeed:1.2,
+  defaultReadingSpeed: 1.2,
   tokensPerMinute: { slow: 160, fast: 220 },
   minimumSourceTokens: 65,
   minimumNarrationRatio: 0.75,
@@ -21,7 +24,10 @@ export const EDITORIAL_CONFIG = Object.freeze({
   targetSeconds: [70, 100] as [70, 100],
 });
 const words = (s: string) => (s.match(/[\p{L}\p{N}]+/gu) || []).length;
-export function estimatedDuration(text: string, readingSpeed: number = EDITORIAL_CONFIG.defaultReadingSpeed) {
+export function estimatedDuration(
+  text: string,
+  readingSpeed: number = EDITORIAL_CONFIG.defaultReadingSpeed,
+) {
   if (!Number.isFinite(readingSpeed) || readingSpeed < 0.5 || readingSpeed > 3)
     throw Error('EDITORIAL_INVALID_READING_SPEED');
   const tokens = words(text);
@@ -53,21 +59,20 @@ export function selectedReplies(c: ThreadCollection, ids: string[]) {
     while (true) {
       const own = canonicalPost(child.url),
         parent = canonicalPost(child.evidence.parentUrl),
-        documentVerified =
-          ['JSON_LD_COMMENT', 'JSON_LD_PARENT_ITEM', 'DOM_EXPLICIT_REPLY_TARGET'].includes(
-            child.evidence.kind,
-          )
-            ? canonicalPost(child.evidence.documentUrl)?.url === root.url
-            : child.evidence.kind === 'PERMALINK_DETAIL_PARENT'
-              ? canonicalPost(child.evidence.documentUrl)?.url === own?.url
-              : child.evidence.kind === 'EXTERNAL_PROVIDER_PARENT' &&
-                child.evidence.documentUrl ===
-                  'https://apify.com/parseforge/threads-replies-scraper' &&
-                child.evidence.provider?.actorId ===
-                  'parseforge/threads-replies-scraper' &&
-                /^[a-f0-9]{64}$/.test(
-                  child.evidence.provider?.rowHash || '',
-                );
+        documentVerified = [
+          'JSON_LD_COMMENT',
+          'JSON_LD_PARENT_ITEM',
+          'DOM_EXPLICIT_REPLY_TARGET',
+        ].includes(child.evidence.kind)
+          ? canonicalPost(child.evidence.documentUrl)?.url === root.url
+          : child.evidence.kind === 'PERMALINK_DETAIL_PARENT'
+            ? canonicalPost(child.evidence.documentUrl)?.url === own?.url
+            : child.evidence.kind === 'EXTERNAL_PROVIDER_PARENT' &&
+              child.evidence.documentUrl ===
+                'https://apify.com/parseforge/threads-replies-scraper' &&
+              child.evidence.provider?.actorId ===
+                'parseforge/threads-replies-scraper' &&
+              /^[a-f0-9]{64}$/.test(child.evidence.provider?.rowHash || '');
       if (
         visited.has(child.id) ||
         child.extractionStatus !== 'VERIFIED' ||
@@ -101,14 +106,19 @@ export function selectedReplies(c: ThreadCollection, ids: string[]) {
     return r;
   });
 }
-/** Resolves only exact observations persisted for this target page. It never upgrades relationship evidence. */
-export function selectedObservedContexts(c: ThreadCollection, urls: string[]): ObservedContextView[] {
+/** Resolves exact persisted observations selected in exception review. It never upgrades membership or parent evidence. */
+export function selectedObservedContexts(
+  c: ThreadCollection,
+  urls: string[],
+): ObservedContextView[] {
   if (new Set(urls).size !== urls.length)
     throw Error('EDITORIAL_DUPLICATE_OBSERVED_SELECTION');
-  const available = new Map(observedContextViews(c).map((row) => [row.url, row]));
+  const available = new Map(
+    observedContextViews(c).map((row) => [row.url, row]),
+  );
   return urls.map((url) => {
     const row = available.get(canonicalPost(url)?.url || '');
-    if (!row || row.relationship !== 'OBSERVED_RELATIONSHIP_UNVERIFIED')
+    if (!row || row.relationship === 'RELATED_OR_RECOMMENDED')
       throw Error('EDITORIAL_OBSERVED_SELECTION_UNAVAILABLE');
     return row;
   });
@@ -145,11 +155,22 @@ export function feasibility(
       ) || [];
   const missing: string[] = [],
     reasons: string[] = [];
-  if (!replies.length && !observed.length) missing.push('SELECT_CONVERSATION_MATERIAL');
-  if (!substantive.length && !observed.length) missing.push('SUBSTANTIVE_CONVERSATION_MATERIAL');
+  if (!replies.length && !observed.length)
+    missing.push('SELECT_CONVERSATION_MATERIAL');
+  if (!substantive.length && !observed.length)
+    missing.push('SUBSTANTIVE_CONVERSATION_MATERIAL');
   if (observed.length) {
-    missing.push('OBSERVED_PARENT_RELATIONSHIP_UNVERIFIED');
-    reasons.push('Human-selected target-page observations remain unverified and require editorial review.');
+    if (observed.some((row) => row.relationship === 'UNKNOWN'))
+      missing.push('UNKNOWN_CONVERSATION_MEMBERSHIP_REQUIRES_EXCEPTION_REVIEW');
+    if (
+      observed.some(
+        (row) => row.relationship === 'OBSERVED_RELATIONSHIP_UNVERIFIED',
+      )
+    )
+      missing.push('OBSERVED_PARENT_RELATIONSHIP_UNVERIFIED');
+    reasons.push(
+      'Explicitly selected observations keep their original membership and parent evidence and require editorial review.',
+    );
   }
   if (!personal) missing.push('CLEAR_SITUATION_OR_ARGUMENT');
   if (!commentary.some((s) => s.stage === 'HOOK'))
@@ -183,7 +204,11 @@ export function feasibility(
     status = 'NEEDS_EDITORIAL_ENRICHMENT';
     missing.push('HUMAN_REPLY_QUALITY_REVIEW');
     reasons.push('Uncertain lexical classification needs human review.');
-  } else if ((!replies.length && !observed.length) || (!substantive.length && !observed.length) || sourceTokens < 25) {
+  } else if (
+    (!replies.length && !observed.length) ||
+    (!substantive.length && !observed.length) ||
+    sourceTokens < 25
+  ) {
     status = 'INSUFFICIENT_CONTENT';
     reasons.push(
       'Popularity cannot replace substantive discussion; do not manufacture length.',
@@ -194,7 +219,11 @@ export function feasibility(
       'Source context is limited; editor must determine whether meaningful analysis is possible.',
     );
   } else if (
-    missing.some((code) => code !== 'OBSERVED_PARENT_RELATIONSHIP_UNVERIFIED') ||
+    missing.some(
+      (code) =>
+        code !== 'OBSERVED_PARENT_RELATIONSHIP_UNVERIFIED' &&
+        code !== 'UNKNOWN_CONVERSATION_MEMBERSHIP_REQUIRES_EXCEPTION_REVIEW',
+    ) ||
     estimate.minimumSeconds <= EDITORIAL_CONFIG.minReleaseSeconds
   ) {
     status = 'NEEDS_EDITORIAL_ENRICHMENT';
@@ -211,15 +240,21 @@ export function feasibility(
     new Set((sections || []).map((s) => s.narrationText.trim()).filter(Boolean))
       .size < (sections || []).filter((s) => s.narrationText.trim()).length
   ) {
-    if(status!=='INSUFFICIENT_CONTENT'&&status!=='UNKNOWN')status = 'NEEDS_EDITORIAL_ENRICHMENT';
+    if (status !== 'INSUFFICIENT_CONTENT' && status !== 'UNKNOWN')
+      status = 'NEEDS_EDITORIAL_ENRICHMENT';
     missing.push('REPEATED_NARRATION');
   }
-  for(const section of commentary){
-    const tokens=section.narrationText.toLocaleLowerCase('vi').match(/[\p{L}\p{N}]+/gu)||[];
-    if(tokens.length>=30&&new Set(tokens).size/tokens.length<0.25){
-      if(status!=='INSUFFICIENT_CONTENT'&&status!=='UNKNOWN')status='NEEDS_EDITORIAL_ENRICHMENT';
+  for (const section of commentary) {
+    const tokens =
+      section.narrationText.toLocaleLowerCase('vi').match(/[\p{L}\p{N}]+/gu) ||
+      [];
+    if (tokens.length >= 30 && new Set(tokens).size / tokens.length < 0.25) {
+      if (status !== 'INSUFFICIENT_CONTENT' && status !== 'UNKNOWN')
+        status = 'NEEDS_EDITORIAL_ENRICHMENT';
       missing.push('REPETITIVE_COMMENTARY');
-      reasons.push('Repeated words cannot manufacture meaningful duration; human editorial review required.');
+      reasons.push(
+        'Repeated words cannot manufacture meaningful duration; human editorial review required.',
+      );
     }
   }
   return {
@@ -239,7 +274,8 @@ export function feasibility(
       },
       selectedObservedContexts: {
         value: observed.length,
-        reason: 'Explicitly selected target-page observations; not parent verification',
+        reason:
+          'Explicitly selected target-page observations; not parent verification',
       },
       originalSections: {
         value: commentary.length,
@@ -307,7 +343,10 @@ export function measuredDuration(
     timelineSeconds: seconds,
     narrationSeconds: narration,
   };
-  if (seconds <= EDITORIAL_CONFIG.minReleaseSeconds || narration <= EDITORIAL_CONFIG.minReleaseSeconds)
+  if (
+    seconds <= EDITORIAL_CONFIG.minReleaseSeconds ||
+    narration <= EDITORIAL_CONFIG.minReleaseSeconds
+  )
     return { ...result, status: 'DURATION_TOO_SHORT' };
   if (
     timeline.scenes.some(

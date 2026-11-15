@@ -27,6 +27,7 @@ import {
   collectPublicCards,
   planPermalinkDetailValidation,
   resolveExactRoot,
+  resolveConversationMembership,
   resolveRelationships,
 } from './conversation-extraction-v2';
 import type {
@@ -64,7 +65,10 @@ import { cacheConversationImages } from './conversation-media';
  * Removes only timestamp chrome that the DOM observer accidentally surfaced as a
  * body fragment. The unmodified card innerText remains in rawText evidence.
  */
-export function stripObservedTimestampChrome(text: string, publishedAt: string | null) {
+export function stripObservedTimestampChrome(
+  text: string,
+  publishedAt: string | null,
+) {
   if (!text.trim() || !publishedAt || !Number.isFinite(Date.parse(publishedAt)))
     return text;
   const dateOnly = /^\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s*$/u;
@@ -80,13 +84,22 @@ export function observePublicDocument() {
   const capturedAt = new Date().toISOString();
   const nodePath = (element: Element | null) => {
     const segments: string[] = [];
-    for (let node = element; node && node !== document.body; node = node.parentElement) {
+    for (
+      let node = element;
+      node && node !== document.body;
+      node = node.parentElement
+    ) {
       const testId = node.getAttribute('data-testid'),
         role = node.getAttribute('role'),
         siblings = node.parentElement
-          ? [...node.parentElement.children].filter((x) => x.tagName === node.tagName)
+          ? [...node.parentElement.children].filter(
+              (x) => x.tagName === node.tagName,
+            )
           : [],
-        position = siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(node) + 1})` : '';
+        position =
+          siblings.length > 1
+            ? `:nth-of-type(${siblings.indexOf(node) + 1})`
+            : '';
       segments.unshift(
         `${node.tagName.toLowerCase()}${testId ? `[data-testid="${testId}"]` : ''}${role ? `[role="${role}"]` : ''}${position}`,
       );
@@ -370,7 +383,12 @@ export async function drivePublicConversation(
       page.evaluate(observePublicDocument),
       page.evaluate(observePublicContext),
     ]);
-    snapshots.push({ actionId, at: new Date().toISOString(), observed, context });
+    snapshots.push({
+      actionId,
+      at: new Date().toISOString(),
+      observed,
+      context,
+    });
     return { observed, context };
   };
 
@@ -378,7 +396,12 @@ export async function drivePublicConversation(
   if (canonicalPost(page.url())?.url !== canonicalPost(targetUrl)?.url)
     throw Error('CONVERSATION_ROOT_IDENTITY_MISMATCH');
   let latest = await capture('initial');
-  transition('ROOT_RESOLVED', 'EXACT_CANONICAL_ROOT_MATCHED', null, latest.observed);
+  transition(
+    'ROOT_RESOLVED',
+    'EXACT_CANONICAL_ROOT_MATCHED',
+    null,
+    latest.observed,
+  );
   if (latest.context.regions.some((row) => row.kind === 'DISCUSSION_REGION'))
     transition(
       'CONVERSATION_VISIBLE',
@@ -433,6 +456,7 @@ export async function drivePublicConversation(
       kind: action.kind,
       label: action.label,
       containerIdentity: action.containerIdentity,
+      containerSubjectUrl: action.containerSubjectUrl,
       beforeSubjects,
       afterSubjects,
       changed,
@@ -582,8 +606,12 @@ async function visit<T>(
       ?.acquisition;
     if (trace) {
       interactionActions = trace.actions.length;
-      actualScrolls = trace.actions.filter((row) => row.kind === 'SCROLL').length;
-      loadMoreActions = trace.actions.filter((row) => row.kind === 'LOAD_MORE').length;
+      actualScrolls = trace.actions.filter(
+        (row) => row.kind === 'SCROLL',
+      ).length;
+      loadMoreActions = trace.actions.filter(
+        (row) => row.kind === 'LOAD_MORE',
+      ).length;
       nestedExpandActions = trace.actions.filter(
         (row) => row.kind === 'EXPAND_NESTED',
       ).length;
@@ -923,6 +951,13 @@ export async function enrichConversation(
       collection.sourceCapture = attempt;
       collection.observedCards = observedCards;
       collection.acquisition = driven.trace;
+      collection.membershipEvidence = resolveConversationMembership({
+        rootUrl: target.url,
+        observed,
+        context,
+        snapshots: driven.snapshots,
+        acquisition: driven.trace,
+      });
       collection.relationshipDiagnostics = relationshipDiagnostics;
       collection.observationSummary = {
         subjectPermalinks: new Set(

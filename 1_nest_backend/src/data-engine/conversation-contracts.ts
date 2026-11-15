@@ -120,6 +120,19 @@ export interface ConversationObservationSummary {
   missingBody: number;
   parentVerified: number;
 }
+export type ConversationMembership =
+  | 'THREAD_UI_CONFIRMED'
+  | 'RECOMMENDED_POST'
+  | 'UNKNOWN';
+export interface MembershipEvidence {
+  rootId: string;
+  subjectId: string;
+  status: ConversationMembership;
+  evidenceType: string;
+  sourceActionId: string | null;
+  containerReference: string | null;
+  observedAt: string;
+}
 export type ConversationAcquisitionState =
   | 'OPEN_TARGET'
   | 'ROOT_RESOLVED'
@@ -147,6 +160,7 @@ export interface ConversationAcquisitionTrace {
     kind: 'SCROLL' | 'LOAD_MORE' | 'EXPAND_NESTED';
     label: string | null;
     containerIdentity: string | null;
+    containerSubjectUrl: string | null;
     beforeSubjects: number;
     afterSubjects: number;
     changed: boolean;
@@ -170,6 +184,8 @@ export interface ThreadCollection {
   observedCards?: import('../studio/public-types').PublicRecord[];
   observationSummary?: ConversationObservationSummary;
   acquisition?: ConversationAcquisitionTrace;
+  /** Conversation membership is independent from the direct parent graph. */
+  membershipEvidence?: MembershipEvidence[];
   /** Auditable relationship candidates; graph verdict remains collectEvidence(). */
   relationshipObservations?: RelationshipObservation[];
   relationshipDiagnostics?: Array<{

@@ -4,23 +4,45 @@ import type {
   ContentAuthor,
 } from '../video-pipeline/contracts';
 export interface StudioItem {
-  contextAssessment?:import('./context-classification').ContextAssessment;
-  mediaOcr?:Record<string,import('./media-ocr').MediaOcr>;
-  mediaNarrationBaseText?:string;
-  mediaNarrationAppliedHash?:string;
-  mediaNarrationApplied?:import('../video-pipeline/contracts').StoryboardScene['imageNarration'];
-  pronunciationOverrides?: Record<string,string>;
-  localSourceMedia?: NonNullable<import('../data-engine/conversation-contracts').PublicPost['attachments']>;
+  contextAssessment?: import('./context-classification').ContextAssessment;
+  mediaOcr?: Record<string, import('./media-ocr').MediaOcr>;
+  mediaNarrationBaseText?: string;
+  mediaNarrationAppliedHash?: string;
+  mediaNarrationApplied?: import('../video-pipeline/contracts').StoryboardScene['imageNarration'];
+  pronunciationOverrides?: Record<string, string>;
+  localSourceMedia?: NonNullable<
+    import('../data-engine/conversation-contracts').PublicPost['attachments']
+  >;
   observationEvidence?: {
     level: 'PARENT_VERIFIED' | 'OBSERVED_ON_TARGET_PAGE' | 'UNKNOWN';
     targetUrl: string;
     observedAt: string;
     parentId: string | null;
+    membership?: import('../data-engine/conversation-contracts').ConversationMembership;
+    membershipEvidenceType?: string | null;
   };
-  editorial?:{planId:string;sectionId:string;kind:import('../data-engine/editorial-contracts').EditorialKind;stage:string;parentId:string|null;permalink:string|null;sourceEvidence?:import('../data-engine/editorial-contracts').EditorialSection['sourceEvidence']};
-  contentMapping?:{topic:string|null;bodyText:string;status:'VERIFIED'|'REVIEW_REQUIRED';evidence:{type:'DOM'|'USER_CONFIRMED';detail:string;sourceUrl:string};includeTopicInTts:boolean};
-  spokenApproval?:import('./voice.types').SpokenApproval;
-  voiceSettings?:import('./voice.types').VoiceSettings;
+  editorial?: {
+    planId: string;
+    sectionId: string;
+    kind: import('../data-engine/editorial-contracts').EditorialKind;
+    stage: string;
+    parentId: string | null;
+    permalink: string | null;
+    sourceEvidence?: import('../data-engine/editorial-contracts').EditorialSection['sourceEvidence'];
+  };
+  contentMapping?: {
+    topic: string | null;
+    bodyText: string;
+    status: 'VERIFIED' | 'REVIEW_REQUIRED';
+    evidence: {
+      type: 'DOM' | 'USER_CONFIRMED';
+      detail: string;
+      sourceUrl: string;
+    };
+    includeTopicInTts: boolean;
+  };
+  spokenApproval?: import('./voice.types').SpokenApproval;
+  voiceSettings?: import('./voice.types').VoiceSettings;
   metadataObservations?: {
     observedAt: string;
     record: import('./public-types').PublicRecord;
@@ -44,17 +66,24 @@ export interface StudioItem {
 }
 export interface StudioSession {
   voiceDefaults?: import('./voice.types').VoiceSettings;
-  voicePresets?: Record<string,{speed:number}>;
+  voicePresets?: Record<string, { speed: number }>;
   productionOrigin?: import('../video-pipeline/contracts').ProductionOrigin;
-  sourceImages?: Record<string,import('./source-images').LocalSourceImage>;
-  mediaRights?: Record<string,{status:'UNKNOWN'|'OWNED'|'LICENSED'|'PERMISSION';evidence:string;at:string}>;
+  sourceImages?: Record<string, import('./source-images').LocalSourceImage>;
+  mediaRights?: Record<
+    string,
+    {
+      status: 'UNKNOWN' | 'OWNED' | 'LICENSED' | 'PERMISSION';
+      evidence: string;
+      at: string;
+    }
+  >;
   editor?: import('./editor.types').EditorSettings;
   studioMedia?: import('./editor.types').StudioMediaAsset[];
-  aiBillingBlocked?:boolean;
-  voiceRuntime?:import('./voice.types').VoiceRuntime;
-  voiceAssets?:import('./voice.types').VoiceAsset[];
-  voiceJobs?:import('./voice.types').VoiceJob[];
-  voiceBatch?:import('./voice.types').VoiceBatch;
+  aiBillingBlocked?: boolean;
+  voiceRuntime?: import('./voice.types').VoiceRuntime;
+  voiceAssets?: import('./voice.types').VoiceAsset[];
+  voiceJobs?: import('./voice.types').VoiceJob[];
+  voiceBatch?: import('./voice.types').VoiceBatch;
   scriptProposals?: import('./normalization.types').TextProposal[];
   scope?: 'TARGET_ONLY' | 'WITH_CONTEXT';
   derivedFrom?: string;

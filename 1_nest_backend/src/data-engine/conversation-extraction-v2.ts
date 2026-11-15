@@ -1,14 +1,22 @@
 import type { PublicRecord } from '../studio/public-types';
 import type { observePublicContext } from '../studio/public-context-dom';
 import { labelledCounts } from '../studio/metadata-fields';
-import type { observePublicDocument } from './conversation-public';
+import type {
+  observePublicDocument,
+  PublicConversationSnapshot,
+} from './conversation-public';
 import {
   canonicalPost,
   collectEvidence,
   type PublicDocument,
   type RelationshipCandidate,
 } from './conversation-evidence';
-import type { PublicPost, ThreadCollection } from './conversation-contracts';
+import type {
+  ConversationAcquisitionTrace,
+  MembershipEvidence,
+  PublicPost,
+  ThreadCollection,
+} from './conversation-contracts';
 import { normalizeConversation } from './conversation-normalizer';
 import {
   projectParseforgeRows,
@@ -102,6 +110,135 @@ export function collectPublicCards(
         ),
       };
     });
+}
+
+/**
+ * Resolves conversation membership independently from direct parent edges.
+ * Same-page presence, DOM order, author and semantic similarity are never enough.
+ */
+export function resolveConversationMembership(input: {
+  rootUrl: string;
+  observed: ReturnType<typeof observePublicDocument>;
+  context: ReturnType<typeof observePublicContext>;
+  snapshots: PublicConversationSnapshot[];
+  acquisition: ConversationAcquisitionTrace;
+}): MembershipEvidence[] {
+  const root = canonicalPost(input.rootUrl);
+  if (!root) throw Error('CONVERSATION_INVALID_ROOT');
+  const byId = new Map<string, MembershipEvidence>();
+  const put = (
+    subjectUrl: string,
+    status: MembershipEvidence['status'],
+    evidenceType: string,
+    sourceActionId: string | null,
+    containerReference: string | null,
+    observedAt: string,
+  ) => {
+    const subject = canonicalPost(subjectUrl);
+    if (!subject || subject.url === root.url) return;
+    const previous = byId.get(subject.id);
+    // Recommendation evidence is contamination protection and wins conflicts.
+    if (previous?.status === 'RECOMMENDED_POST') return;
+    if (previous?.status === 'THREAD_UI_CONFIRMED' && status === 'UNKNOWN')
+      return;
+    byId.set(subject.id, {
+      rootId: root.id,
+      subjectId: subject.id,
+      status,
+      evidenceType,
+      sourceActionId,
+      containerReference,
+      observedAt,
+    });
+  };
+
+  for (const row of input.observed.rows) {
+    if (!row.subjectUrl) continue;
+    const region = input.context.regions.find(
+      (candidate) =>
+        canonicalPost(candidate.subjectUrl)?.url ===
+        canonicalPost(row.subjectUrl)?.url,
+    );
+    const explicitReply = input.context.replies.find(
+      (candidate) =>
+        canonicalPost(candidate.subjectUrl)?.url ===
+        canonicalPost(row.subjectUrl)?.url,
+    );
+    if (region?.kind === 'RECOMMENDATION_REGION')
+      put(
+        row.subjectUrl,
+        'RECOMMENDED_POST',
+        'EXPLICIT_RECOMMENDATION_REGION',
+        row.observedActionId,
+        region.conversationContainerPointer ?? region.pointer,
+        row.capturedAt,
+      );
+    else if (region?.kind === 'DISCUSSION_REGION' || explicitReply)
+      put(
+        row.subjectUrl,
+        'THREAD_UI_CONFIRMED',
+        explicitReply
+          ? 'EXPLICIT_PUBLIC_REPLY_RELATIONSHIP'
+          : 'EXPLICIT_DISCUSSION_REGION',
+        row.observedActionId,
+        explicitReply?.conversationContainerPointer ??
+          region?.conversationContainerPointer ??
+          region?.pointer ??
+          null,
+        row.capturedAt,
+      );
+    else
+      put(
+        row.subjectUrl,
+        'UNKNOWN',
+        'NO_EXPLICIT_CONVERSATION_SURFACE_EVIDENCE',
+        row.observedActionId,
+        row.conversationContainer?.pointer ?? null,
+        row.capturedAt,
+      );
+  }
+
+  const seen = new Set<string>();
+  for (const snapshot of input.snapshots) {
+    const action = input.acquisition.actions.find(
+      (candidate) => candidate.id === snapshot.actionId,
+    );
+    for (const row of snapshot.observed.rows) {
+      const subject = canonicalPost(row.subjectUrl);
+      if (!subject || subject.url === root.url || seen.has(subject.url))
+        continue;
+      seen.add(subject.url);
+      if (
+        !action ||
+        !['EXPAND_NESTED', 'LOAD_MORE'].includes(action.kind) ||
+        !action.containerIdentity ||
+        !action.containerSubjectUrl
+      )
+        continue;
+      const containerSubject = canonicalPost(action.containerSubjectUrl),
+        containerMembership = containerSubject
+          ? byId.get(containerSubject.id)?.status
+          : null,
+        trustedContainer =
+          containerSubject?.url === root.url ||
+          containerMembership === 'THREAD_UI_CONFIRMED',
+        insideContainer =
+          row.nodeIdentity === action.containerIdentity ||
+          row.nodeIdentity.startsWith(`${action.containerIdentity}/`) ||
+          row.parentContainerPath === action.containerIdentity ||
+          row.parentContainerPath.startsWith(`${action.containerIdentity}/`);
+      if (trustedContainer && insideContainer)
+        put(
+          subject.url,
+          'THREAD_UI_CONFIRMED',
+          'EXPANDED_FROM_CONFIRMED_CONVERSATION_CONTAINER',
+          action.id,
+          action.containerIdentity,
+          row.capturedAt,
+        );
+    }
+  }
+  return [...byId.values()];
 }
 
 export function resolveRelationships(

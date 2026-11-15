@@ -84,7 +84,12 @@ export function observedContextViews(
   const root = canonicalPost(c.root.url);
   if (!root) throw Error('CONVERSATION_INVALID_ROOT');
   const records = new Map<string, PublicRecord>();
-  const observedOnTarget = new Set<string>();
+  const membershipById = new Map(
+    (c.membershipEvidence ?? []).map((evidence) => [
+      evidence.subjectId,
+      evidence,
+    ]),
+  );
   for (const raw of [
     ...(c.sourceCapture?.contextCandidates || []),
     ...(c.observedCards || []),
@@ -102,7 +107,6 @@ export function observedContextViews(
       canonicalPost(o.targetUrl)?.url !== root.url
     )
       continue;
-    observedOnTarget.add(own.url);
     if (!records.has(own.url))
       records.set(
         own.url,
@@ -119,6 +123,7 @@ export function observedContextViews(
   return rows.map((raw, index) => {
     const own = canonicalPost(raw.url)!;
     const assessment = classifyContext(raw, root.url),
+      membership = membershipById.get(own.id),
       displayText = cleanSourceProjection(raw).text;
     return {
       id: own.id,
@@ -128,17 +133,23 @@ export function observedContextViews(
       displayText,
       raw,
       relationship:
-        assessment.classification === 'PARENT_VERIFIED'
-          ? 'UNKNOWN'
-          : assessment.classification === 'UNKNOWN' &&
-              observedOnTarget.has(own.url)
-            ? 'OBSERVED_RELATIONSHIP_UNVERIFIED'
-            : assessment.classification,
-      reasons: [...assessment.reasons, ...quality[index].reasons],
+        membership?.status === 'THREAD_UI_CONFIRMED'
+          ? 'OBSERVED_RELATIONSHIP_UNVERIFIED'
+          : membership?.status === 'RECOMMENDED_POST'
+            ? 'RELATED_OR_RECOMMENDED'
+            : assessment.classification === 'PARENT_VERIFIED'
+              ? 'UNKNOWN'
+              : assessment.classification,
+      reasons: [
+        ...(membership ? [membership.evidenceType] : []),
+        ...assessment.reasons,
+        ...quality[index].reasons,
+      ],
       quality: quality[index],
       selectable: true,
       recommended:
-        assessment.classification !== 'RELATED_OR_RECOMMENDED' &&
+        (membership?.status === 'THREAD_UI_CONFIRMED' ||
+          assessment.classification === 'OBSERVED_RELATIONSHIP_UNVERIFIED') &&
         quality[index].bucket === 'RECOMMENDED',
     };
   });
