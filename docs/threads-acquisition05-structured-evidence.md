@@ -65,20 +65,61 @@ References:
 - Full backend Jest: 60 suites / 402 tests passed.
 - Backend build, frontend strict TypeScript and Studio bundle passed.
 
-## One-use LIVE diagnostic plan (not authorized or executed)
+## LIVE acceptance 01
 
 Target: `https://www.threads.com/@gnrtth/post/DeI-TuzEc_9`
 
-- One browser and one tab; 180 seconds; at most four bounded browser actions.
-- At most 150 admitted requests, 40 subject cards and two existing permalink-detail
-  validations; no retry.
-- Existing resource-policy-v2 advisory/emergency guards remain unchanged.
-- No API replay, Threads API, Apify, Qwen, TTS, render or publishing.
-- Persist the sanitized SSR/network diagnostics, DOM/action snapshots, screenshot,
-  graph verdict and resource/cleanup telemetry in a new isolated sandbox.
+The explicitly authorized single attempt completed without retry. It used one
+browser worker at a time, three bounded conversation actions, 54 admitted requests
+across the exact-root and enrichment visits, and no API replay, Threads API, Apify,
+Qwen, TTS, render or publishing.
 
-PASS requires positive structured parent/root evidence that validates to the exact
-canonical root and matches real card identities. If payloads exist but contain no
-usable relationship fields, the result is `NO_STRUCTURED_PARENT_EVIDENCE`. If no
-payload is exposed, the result is `STRUCTURED_SOURCE_UNAVAILABLE`; DOM/membership
-fallback remains unchanged. Neither outcome authorizes selector guessing.
+Result: **PARTIAL_NO_STRUCTURED_PARENT_EVIDENCE**.
+
+| Measurement | LIVE result |
+| --- | ---: |
+| `data-sjs` SSR payloads parsed | 30 |
+| Relay payloads with a post node | 1 |
+| Observed Relay query | `BarcelonaPostPageTargetQuery` |
+| Network JSON payloads | 1 (`/data/manifest.json`) |
+| Structured post nodes | 1 (the exact root) |
+| Structured-to-DOM identity matches | 1 (the exact root) |
+| Full-body DOM context cards | 29 |
+| Structured parent/root relationship fields | 0 |
+| Graph-validated replies | 0 |
+| Related/recommended cards separated by existing engine | 1 |
+| Quality `RECOMMENDED` cards | 9 |
+| Eligible automatic selections | 0 |
+
+No observed payload contained `BarcelonaPostPageDownwardQuery`,
+`BarcelonaPostPageUpwardQuery`, `direct_replies`, `containing_thread`,
+`reply_threads`, `thread_items`, `reply_to_post_id`, `parent_post_id` or
+`root_post_id`. The target payload did expose root-oriented fields such as
+`direct_reply_count`, `is_reply`, `reply_to_author` and `root_post_author`, but none
+provided an edge for the 29 DOM context identities. The network JSON response was a
+web manifest, not conversation data.
+
+Therefore the existing DOM fallback retained all 29 full-body cards, but 28 remain
+UNKNOWN and one is related/recommended. The quality engine still identifies nine
+textually promising cards, yet none may be auto-selected as a direct conversation
+source without membership/relationship evidence. The authoritative editorial
+outcome remains `EXCEPTION_REVIEW`; root-only material estimates 7–9 seconds, not a
+video over 60 seconds.
+
+The collector portion took 18.445 seconds. Production preservation manifests made
+the complete command longer; both browser visits reported cleanup success. Minimum
+available RAM observed by the browser guard was 1,972.6 MiB. The production
+933-file manifest remained unchanged.
+
+Artifacts are under ignored runtime storage:
+
+- `.studio-data/reports/threads-acquisition05-live01/report.json`
+- `.studio-data/reports/threads-acquisition05-live01/collection.json`
+- `.studio-data/reports/threads-acquisition05-live01/normalized.json`
+- `.studio-data/reports/threads-acquisition05-live01/browser-evidence.json`
+- `.studio-data/reports/threads-acquisition05-live01/conversation-surface.png`
+- `.studio-data/reports/threads-acquisition05-live01/studio-acceptance.png`
+
+The isolated collection reopens in Studio and Copy Report plus JSON/Markdown export
+passed without mutation or background collection. This LIVE result does not justify
+another speculative DOM selector or a claim of reply-association PASS.

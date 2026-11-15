@@ -78,6 +78,10 @@ const relationKeys = new Set([
   'parent_post',
   'root_post',
 ]);
+const usefulDiagnosticField = (field: string) =>
+  /^(?:id|pk|code|user|username|author|caption|text|body|articleBody|permalink|url|media|thread_items|direct_replies|reply_threads|containing_thread|pinned_replies|self_thread|reply_to_post_id|parent_post_id|parent_id|root_post_id|root_id|reply_to_post|parent_post|root_post|is_reply|reply_to_author|root_post_author|direct_reply_count|reply_count|like_count|repost_count|reshare_count|share_count|taken_at|created_at|published_at)$/u.test(
+    field,
+  );
 
 function postFromObject(
   row: Record<string, unknown>,
@@ -178,7 +182,10 @@ export function extractStructuredEvidence(
       topLevelFields: Object.keys(object(input.payload) ?? {})
         .sort()
         .slice(0, 100),
-      observedFieldNames: [...fields].sort().slice(0, 200),
+      observedFieldNames: [...fields]
+        .filter(usefulDiagnosticField)
+        .sort()
+        .slice(0, 200),
       postNodes: posts.length,
       relationshipFields: [...relationships].sort(),
       observedAt: input.observedAt,

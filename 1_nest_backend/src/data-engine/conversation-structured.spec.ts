@@ -94,6 +94,9 @@ describe('passive Threads structured response extraction', () => {
       responseType: 'SSR_RELAY',
       postNodes: 2,
     });
+    expect(extracted.diagnostics[0].observedFieldNames).toEqual(
+      expect.arrayContaining(['pk', 'code', 'direct_replies', 'thread_items']),
+    );
     expect(extracted.relationshipCandidates).toEqual([
       expect.objectContaining({
         kind: 'STRUCTURED_PUBLIC_PARENT',
