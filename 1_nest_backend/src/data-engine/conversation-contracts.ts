@@ -64,6 +64,7 @@ export interface RelationshipEvidence {
     | 'JSON_LD_COMMENT'
     | 'DOM_EXPLICIT_REPLY_TARGET'
     | 'PERMALINK_DETAIL_PARENT'
+    | 'STRUCTURED_PUBLIC_PARENT'
     | 'EXTERNAL_PROVIDER_PARENT';
   documentUrl: string;
   documentHash: string;
@@ -75,10 +76,17 @@ export interface RelationshipEvidence {
     rowHash: string;
     depth: number | null;
   };
+  structured?: {
+    source: 'SSR' | 'NETWORK';
+    payloadHash: string;
+    responseType: 'SSR_RELAY' | 'SSR_JSON' | 'NETWORK_JSON';
+    queryName: string | null;
+  };
 }
 export type RelationshipEvidenceSource =
   | 'EXPLICIT_PUBLIC_REPLY'
   | 'PERMALINK_DETAIL'
+  | 'STRUCTURED_PUBLIC_RESPONSE'
   | 'EXTERNAL_PROVIDER';
 export interface RelationshipObservation {
   source: RelationshipEvidenceSource;
@@ -92,6 +100,7 @@ export interface RelationshipObservation {
   reasons: string[];
   rawEvidenceHash: string;
   provider?: RelationshipEvidence['provider'];
+  structured?: RelationshipEvidence['structured'];
 }
 export interface VerifiedReply extends PublicPost {
   parentId: string;
@@ -177,6 +186,39 @@ export interface ConversationAcquisitionTrace {
   }>;
   stopReason: string;
 }
+export type StructuredPayloadSource = 'SSR' | 'NETWORK';
+export type StructuredResponseType = 'SSR_RELAY' | 'SSR_JSON' | 'NETWORK_JSON';
+export interface StructuredPayloadDiagnostic {
+  source: StructuredPayloadSource;
+  endpointPath: string;
+  responseType: StructuredResponseType;
+  queryName: string | null;
+  payloadHash: string;
+  topLevelFields: string[];
+  observedFieldNames: string[];
+  postNodes: number;
+  relationshipFields: string[];
+  observedAt: string;
+}
+export interface StructuredPostObservation {
+  id: string;
+  code: string;
+  url: string;
+  authorHandle: string;
+  originalText: string | null;
+  publishedAt: string | null;
+  parentPostId: string | null;
+  rootPostId: string | null;
+  collectionKind: 'CONVERSATION' | 'RELATED' | 'UNKNOWN';
+  containerReference: string | null;
+  source: StructuredPayloadSource;
+  endpointPath: string;
+  responseType: StructuredResponseType;
+  queryName: string | null;
+  payloadHash: string;
+  pointer: string;
+  fieldNames: string[];
+}
 export interface ThreadCollection {
   /** Immutable exact-target capture, including separately labelled observed context. */
   sourceCapture?: import('../studio/public-types').SourceAttempt;
@@ -186,6 +228,14 @@ export interface ThreadCollection {
   acquisition?: ConversationAcquisitionTrace;
   /** Conversation membership is independent from the direct parent graph. */
   membershipEvidence?: MembershipEvidence[];
+  /** Sanitized passive SSR/network observations; no headers, cookies, query strings, or raw payloads. */
+  structuredEvidence?: {
+    version: 'conversation-structured-observation/1';
+    diagnostics: StructuredPayloadDiagnostic[];
+    posts: StructuredPostObservation[];
+    domMatches: number;
+    conflicts: string[];
+  };
   /** Auditable relationship candidates; graph verdict remains collectEvidence(). */
   relationshipObservations?: RelationshipObservation[];
   relationshipDiagnostics?: Array<{

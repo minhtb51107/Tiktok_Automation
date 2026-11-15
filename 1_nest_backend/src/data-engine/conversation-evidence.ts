@@ -15,6 +15,7 @@ export interface PublicDocument {
   /** Public DOM permalink observations. Structured records must also have their own visible permalink. */
   visibleUrls: string[];
   jsonLd: unknown[];
+  structuredVisibleUrls?: string[];
   relationshipCandidates?: RelationshipCandidate[];
   cardObservations?: Array<{
     url: string;
@@ -24,7 +25,10 @@ export interface PublicDocument {
   }>;
 }
 export interface RelationshipCandidate {
-  kind: 'PERMALINK_DETAIL_PARENT' | 'EXTERNAL_PROVIDER_PARENT';
+  kind:
+    | 'PERMALINK_DETAIL_PARENT'
+    | 'STRUCTURED_PUBLIC_PARENT'
+    | 'EXTERNAL_PROVIDER_PARENT';
   rootUrl: string;
   subjectUrl: string;
   parentUrl: string;
@@ -37,6 +41,7 @@ export interface RelationshipCandidate {
   subjectPermalink: string;
   publishedAt?: string | null;
   provider?: RelationshipEvidence['provider'];
+  structured?: RelationshipEvidence['structured'];
 }
 const text = (x: unknown): string | null =>
   typeof x === 'string' && x.trim() ? x : null;
@@ -68,7 +73,9 @@ export function collectEvidence(
   if (!Number.isInteger(maxReplies) || maxReplies < 1 || maxReplies > 20)
     throw Error('CONVERSATION_INVALID_LIMIT');
   const visible = new Set(
-    doc.visibleUrls.map((x) => canonicalPost(x)?.url).filter(Boolean),
+    [...doc.visibleUrls, ...(doc.structuredVisibleUrls ?? [])]
+      .map((x) => canonicalPost(x)?.url)
+      .filter(Boolean),
   );
   const nodes = new Map<
     string,
@@ -78,6 +85,7 @@ export function collectEvidence(
       parent: any;
       kind: RelationshipEvidence['kind'];
       provider?: RelationshipEvidence['provider'];
+      structured?: RelationshipEvidence['structured'];
       documentUrl?: string;
     }>
   >();
@@ -165,6 +173,15 @@ export function collectEvidence(
         )
       )
         continue;
+    } else if (candidate.kind === 'STRUCTURED_PUBLIC_PARENT') {
+      if (
+        canonicalPost(candidate.documentUrl)?.url !== identity.url ||
+        !candidate.structured ||
+        !/^[a-f0-9]{64}$/u.test(candidate.structured.payloadHash) ||
+        !['SSR', 'NETWORK'].includes(candidate.structured.source) ||
+        !/^STRUCTURED_/u.test(candidate.label)
+      )
+        continue;
     } else if (
       candidate.provider?.actorId !== 'parseforge/threads-replies-scraper' ||
       !/^[a-f0-9]{64}$/.test(candidate.provider.rowHash) ||
@@ -187,6 +204,7 @@ export function collectEvidence(
         parent: parent.url,
         kind: candidate.kind,
         provider: candidate.provider,
+        structured: candidate.structured,
         documentUrl: candidate.documentUrl,
       },
     ]);
@@ -203,6 +221,7 @@ export function collectEvidence(
     jsonLd: doc.jsonLd,
     domReplies: doc.domReplies ?? [],
     relationshipCandidates: doc.relationshipCandidates ?? [],
+    structuredVisibleUrls: doc.structuredVisibleUrls ?? [],
   });
   for (let pass = 0; pass < 21 && pending.size; pass++) {
     let progressed = false;
@@ -259,9 +278,11 @@ export function collectEvidence(
               ? 'PUBLIC_HEADER_REPLY_LINK_AND_DOM_PERMALINK'
               : observation.kind === 'PERMALINK_DETAIL_PARENT'
                 ? 'PUBLIC_PERMALINK_DETAIL_EXPLICIT_PARENT'
-                : observation.kind === 'EXTERNAL_PROVIDER_PARENT'
-                  ? 'EXTERNAL_PROVIDER_ROW_GRAPH_VALIDATED'
-                  : 'PUBLIC_JSON_LD_AND_DOM_PERMALINK',
+                : observation.kind === 'STRUCTURED_PUBLIC_PARENT'
+                  ? 'PASSIVE_PUBLIC_STRUCTURED_RESPONSE_GRAPH_VALIDATED'
+                  : observation.kind === 'EXTERNAL_PROVIDER_PARENT'
+                    ? 'EXTERNAL_PROVIDER_ROW_GRAPH_VALIDATED'
+                    : 'PUBLIC_JSON_LD_AND_DOM_PERMALINK',
         },
         parentId: parent!.id,
         rootId: root.id,
@@ -274,6 +295,9 @@ export function collectEvidence(
           subjectUrl: url,
           parentUrl: parent!.url,
           ...(observation.provider ? { provider: observation.provider } : {}),
+          ...(observation.structured
+            ? { structured: observation.structured }
+            : {}),
         },
       });
       const matching =
@@ -324,7 +348,9 @@ export function collectEvidence(
       source:
         row.kind === 'PERMALINK_DETAIL_PARENT'
           ? ('PERMALINK_DETAIL' as const)
-          : ('EXTERNAL_PROVIDER' as const),
+          : row.kind === 'STRUCTURED_PUBLIC_PARENT'
+            ? ('STRUCTURED_PUBLIC_RESPONSE' as const)
+            : ('EXTERNAL_PROVIDER' as const),
       subjectUrl: row.subjectUrl,
       parentUrl: row.parentUrl,
       rootUrl: row.rootUrl,
@@ -333,21 +359,26 @@ export function collectEvidence(
       observedAt: row.observedAt,
       rawEvidenceHash: hash(row),
       provider: row.provider,
+      structured: row.structured,
     })),
   ].map((row) => {
     const subject = canonicalPost(row.subjectUrl)?.url,
-      reason = subject ? rejectedByUrl.get(subject) : 'INVALID_SUBJECT_IDENTITY';
+      reason = subject
+        ? rejectedByUrl.get(subject)
+        : 'INVALID_SUBJECT_IDENTITY';
     return {
       ...row,
       parentUrl: canonicalPost(row.parentUrl)?.url ?? null,
-      status: subject && accepted.has(subject)
-        ? ('VERIFIED' as const)
-        : reason
-          ? ('REJECTED' as const)
-          : ('UNRESOLVED' as const),
-      reasons: subject && accepted.has(subject)
-        ? ['GRAPH_VALIDATED_TO_CANONICAL_ROOT']
-        : [reason ?? 'PARENT_CHAIN_NOT_VERIFIED_TO_EXACT_ROOT'],
+      status:
+        subject && accepted.has(subject)
+          ? ('VERIFIED' as const)
+          : reason
+            ? ('REJECTED' as const)
+            : ('UNRESOLVED' as const),
+      reasons:
+        subject && accepted.has(subject)
+          ? ['GRAPH_VALIDATED_TO_CANONICAL_ROOT']
+          : [reason ?? 'PARENT_CHAIN_NOT_VERIFIED_TO_EXACT_ROOT'],
     };
   });
   return {

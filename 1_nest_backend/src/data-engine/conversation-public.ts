@@ -34,8 +34,16 @@ import type {
   PopularityCandidate,
   PublicPost,
   ConversationAcquisitionTrace,
+  MembershipEvidence,
   ThreadCollection,
 } from './conversation-contracts';
+import {
+  extractStructuredEvidence,
+  observeStructuredSsrScripts,
+  parseSsrRelayScripts,
+  PassiveStructuredResponseObserver,
+  type StructuredExtraction,
+} from './conversation-structured';
 export interface PublicAccessAudit {
   url: string;
   requests: number | null;
@@ -58,6 +66,7 @@ export interface PublicDomEvidenceSnapshot {
   context: ReturnType<typeof observePublicContext>;
   acquisition?: ConversationAcquisitionTrace;
   snapshots?: PublicConversationSnapshot[];
+  structured?: Omit<StructuredExtraction, 'relationshipCandidates' | 'cards'>;
 }
 import { cacheConversationImages } from './conversation-media';
 
@@ -519,7 +528,10 @@ export async function drivePublicConversation(
 async function visit<T>(
   url: string,
   scrolls: number,
-  read: (page: Page) => Promise<T>,
+  read: (
+    page: Page,
+    structured: PassiveStructuredResponseObserver,
+  ) => Promise<T>,
   audit?: (event: PublicAccessAudit) => void,
   timeoutMs = 30000,
 ): Promise<T> {
@@ -557,6 +569,8 @@ async function visit<T>(
     await page.setBypassServiceWorker(true);
     await page.setViewport({ width: 1280, height: 800 });
     await page.setRequestInterception(true);
+    const structured = new PassiveStructuredResponseObserver();
+    page.on('response', (response) => structured.observe(response));
     page.on('request', (r) => {
       requests++;
       if (r.isNavigationRequest() && r.frame() === page.mainFrame())
@@ -601,7 +615,7 @@ async function visit<T>(
       await new Promise((r) => setTimeout(r, 500));
       if (await gate()) throw Error('CONVERSATION_ACCESS_BLOCKED');
     }
-    const result = await read(page);
+    const result = await read(page, structured);
     const trace = (result as { acquisition?: ConversationAcquisitionTrace })
       ?.acquisition;
     if (trace) {
@@ -780,7 +794,7 @@ export async function enrichConversation(
   return visit(
     target.url,
     0,
-    async (page) => {
+    async (page, networkObserver) => {
       const final = canonicalPost(page.url());
       if (final?.url !== target.url)
         throw Error('CONVERSATION_ROOT_IDENTITY_MISMATCH');
@@ -788,6 +802,22 @@ export async function enrichConversation(
         observed = driven.observed,
         context = driven.context,
         now = new Date().toISOString();
+      const ssrScripts = await page.evaluate(observeStructuredSsrScripts),
+        networkPayloads = await networkObserver.settle(),
+        structured = extractStructuredEvidence(
+          [
+            ...parseSsrRelayScripts(
+              ssrScripts,
+              new URL(page.url()).pathname,
+              now,
+            ),
+            ...networkPayloads,
+          ],
+          target.url,
+          observed.rows
+            .map((row) => row.subjectUrl)
+            .filter((value): value is string => !!value),
+        );
       const fields = attempt.records[0]?.fields;
       const exact = (key: string, value: number | null) =>
         fields?.[key]?.status === 'AVAILABLE' ? value : null;
@@ -848,16 +878,31 @@ export async function enrichConversation(
         target.url,
         now,
       );
+      const observedIdentities = new Set(
+        observedCards.map((card) => canonicalPost(card.url)?.url),
+      );
+      for (const card of structured.cards)
+        if (!observedIdentities.has(canonicalPost(card.url)?.url))
+          observedCards.push(card);
       await evidence?.(page, {
-        finalUrl: page.url(),
+        finalUrl: target.url,
         observed,
         context,
         acquisition: driven.trace,
         snapshots: driven.snapshots,
+        structured: {
+          version: structured.version,
+          diagnostics: structured.diagnostics,
+          posts: structured.posts,
+          membershipEvidence: structured.membershipEvidence,
+          structuredVisibleUrls: structured.structuredVisibleUrls,
+          domMatches: structured.domMatches,
+          conflicts: structured.conflicts,
+        },
       });
       const relationshipCandidates: NonNullable<
           PublicDocument['relationshipCandidates']
-        > = [],
+        > = [...structured.relationshipCandidates],
         relationshipDiagnostics: NonNullable<
           ThreadCollection['relationshipDiagnostics']
         > = [];
@@ -932,6 +977,7 @@ export async function enrichConversation(
           .map((x) => x.subjectUrl)
           .filter((x): x is string => !!x),
         jsonLd: observed.jsonLd,
+        structuredVisibleUrls: structured.structuredVisibleUrls,
         cardObservations,
         domReplies: context.replies,
         relationshipCandidates,
@@ -951,22 +997,62 @@ export async function enrichConversation(
       collection.sourceCapture = attempt;
       collection.observedCards = observedCards;
       collection.acquisition = driven.trace;
-      collection.membershipEvidence = resolveConversationMembership({
+      const domMembership = resolveConversationMembership({
         rootUrl: target.url,
         observed,
         context,
         snapshots: driven.snapshots,
         acquisition: driven.trace,
       });
+      const memberships = new Map<string, MembershipEvidence>();
+      const membershipPriority: Record<MembershipEvidence['status'], number> = {
+        UNKNOWN: 0,
+        THREAD_UI_CONFIRMED: 1,
+        RECOMMENDED_POST: 2,
+      };
+      for (const row of [...domMembership, ...structured.membershipEvidence]) {
+        const previous = memberships.get(row.subjectId);
+        if (
+          !previous ||
+          membershipPriority[row.status] > membershipPriority[previous.status]
+        )
+          memberships.set(row.subjectId, row);
+      }
+      collection.membershipEvidence = [...memberships.values()];
+      collection.structuredEvidence = {
+        version: structured.version,
+        diagnostics: structured.diagnostics,
+        posts: structured.posts,
+        domMatches: structured.domMatches,
+        conflicts: structured.conflicts,
+      };
       collection.relationshipDiagnostics = relationshipDiagnostics;
+      const allObservedIdentities = new Set([
+          ...observed.rows
+            .map((row) => canonicalPost(row.subjectUrl ?? '')?.url)
+            .filter((url): url is string => !!url),
+          ...structured.posts.map((post) => post.url),
+        ]),
+        allMaterializedIdentities = new Set(
+          observedCards
+            .map((row) => canonicalPost(row.url)?.url)
+            .filter((url): url is string => !!url),
+        );
       collection.observationSummary = {
-        subjectPermalinks: new Set(
-          observed.rows.map((row) => row.subjectUrl).filter(Boolean),
-        ).size,
-        materializedCards: observedCards.length,
-        missingBody: observed.rows.filter(
-          (row) => row.subjectUrl && (!row.authorHandle || !row.text.trim()),
-        ).length,
+        subjectPermalinks: allObservedIdentities.size,
+        materializedCards: allMaterializedIdentities.size,
+        missingBody: observed.rows
+          .filter(
+            (row) => row.subjectUrl && (!row.authorHandle || !row.text.trim()),
+          )
+          .filter(
+            (row) =>
+              !structured.posts.some(
+                (post) =>
+                  post.url === canonicalPost(row.subjectUrl ?? '')?.url &&
+                  !!post.originalText,
+              ),
+          ).length,
         parentVerified: collection.verifiedReplyCount,
       };
       const regions = context.regions;

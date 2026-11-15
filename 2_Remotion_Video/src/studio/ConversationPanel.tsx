@@ -636,12 +636,30 @@ export function ConversationPanel({
                 ? ` · ${c.acquisition.stopReason} · last state ${c.acquisition.transitions[c.acquisition.transitions.length - 1]?.state || "UNKNOWN"}`
                 : " · no browser action trace persisted"}
             </p>
+            <p data-testid="conversation-structured-evidence">
+              Passive structured payloads{" "}
+              {c.structuredEvidence?.diagnostics.length ?? 0}
+              {" · "}post nodes {c.structuredEvidence?.posts.length ?? 0}
+              {" · "}DOM identity matches{" "}
+              {c.structuredEvidence?.domMatches ?? 0}
+              {c.structuredEvidence?.diagnostics.some(
+                (row) => row.source === "SSR",
+              )
+                ? " · SSR observed"
+                : " · SSR unavailable"}
+              {c.structuredEvidence?.diagnostics.some(
+                (row) => row.source === "NETWORK",
+              )
+                ? " · network JSON observed"
+                : " · network JSON unavailable"}
+            </p>
             <pre style={{ maxHeight: 280, overflow: "auto" }}>
               {JSON.stringify(
                 {
                   observations: c.relationshipObservations || [],
                   diagnostics: c.relationshipDiagnostics || [],
                   browserAcquisition: c.acquisition || null,
+                  structuredEvidence: c.structuredEvidence || null,
                   externalProvider: c.externalEvidence
                     ? {
                         provider: c.externalEvidence.provider,
