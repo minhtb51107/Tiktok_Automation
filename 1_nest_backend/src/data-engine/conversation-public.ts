@@ -13,6 +13,7 @@ import { extractPublicThreads } from '../studio/public-threads';
 import {
   observePermalinkParentEvidence,
   observePublicContext,
+  performPublicConversationAction,
 } from '../studio/public-context-dom';
 import {
   newRequestTelemetry,
@@ -31,6 +32,7 @@ import {
 import type {
   PopularityCandidate,
   PublicPost,
+  ConversationAcquisitionTrace,
   ThreadCollection,
 } from './conversation-contracts';
 export interface PublicAccessAudit {
@@ -38,6 +40,9 @@ export interface PublicAccessAudit {
   requests: number | null;
   navigations: number | null;
   scrolls: number | null;
+  interactionActions?: number;
+  loadMoreActions?: number;
+  nestedExpandActions?: number;
   elapsedMs: number;
   minimumAvailableMiB: number | null;
   outcome: string;
@@ -50,8 +55,26 @@ export interface PublicDomEvidenceSnapshot {
   finalUrl: string;
   observed: ReturnType<typeof observePublicDocument>;
   context: ReturnType<typeof observePublicContext>;
+  acquisition?: ConversationAcquisitionTrace;
+  snapshots?: PublicConversationSnapshot[];
 }
 import { cacheConversationImages } from './conversation-media';
+
+/**
+ * Removes only timestamp chrome that the DOM observer accidentally surfaced as a
+ * body fragment. The unmodified card innerText remains in rawText evidence.
+ */
+export function stripObservedTimestampChrome(text: string, publishedAt: string | null) {
+  if (!text.trim() || !publishedAt || !Number.isFinite(Date.parse(publishedAt)))
+    return text;
+  const dateOnly = /^\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s*$/u;
+  return text
+    .split(/\r?\n/u)
+    .filter((line) => !dateOnly.test(line))
+    .join('\n')
+    .trim();
+}
+
 /** Function deliberately self-contained: executed in public DOM, no credential/session access. */
 export function observePublicDocument() {
   const capturedAt = new Date().toISOString();
@@ -213,6 +236,7 @@ export function observePublicDocument() {
           }
         : null,
       relationshipSignals,
+      observedActionId: null as string | null,
       capturedAt,
     };
   });
@@ -255,22 +279,238 @@ export function observePublicDocument() {
     },
   };
 }
+
+export interface PublicConversationSnapshot {
+  actionId: string;
+  at: string;
+  observed: ReturnType<typeof observePublicDocument>;
+  context: ReturnType<typeof observePublicContext>;
+}
+
+/** Merge bounded snapshots by exact subject identity; never merges unidentified cards. */
+export function mergeConversationSnapshots(
+  snapshots: PublicConversationSnapshot[],
+) {
+  const rows = new Map<
+    string,
+    ReturnType<typeof observePublicDocument>['rows'][number]
+  >();
+  const jsonLd = new Map<string, unknown>();
+  let explicitNoResults = false,
+    permalinkAnchors = 0;
+  for (const snapshot of snapshots) {
+    explicitNoResults ||= snapshot.observed.diagnostics.explicitNoResults;
+    permalinkAnchors = Math.max(
+      permalinkAnchors,
+      snapshot.observed.diagnostics.permalinkAnchors,
+    );
+    for (const value of snapshot.observed.jsonLd)
+      jsonLd.set(JSON.stringify(value), value);
+    snapshot.observed.rows.forEach((raw, index) => {
+      const row = {
+          ...raw,
+          text: stripObservedTimestampChrome(raw.text, raw.date),
+          observedActionId: snapshot.actionId,
+        },
+        key = row.subjectUrl
+          ? `subject:${row.subjectUrl}`
+          : `unidentified:${snapshot.actionId}:${row.nodeIdentity}:${index}`,
+        prior = rows.get(key),
+        score = (candidate: typeof row) =>
+          (candidate.subjectUrl ? 100000 : 0) +
+          (candidate.authorHandle ? 10000 : 0) +
+          candidate.text.length * 10 +
+          candidate.media.length;
+      if (!prior || score(row) > score(prior)) rows.set(key, row);
+    });
+  }
+  const mergedRows = [...rows.values()].slice(0, 40);
+  return {
+    rows: mergedRows,
+    jsonLd: [...jsonLd.values()],
+    diagnostics: {
+      cards: mergedRows.length,
+      permalinkAnchors,
+      materializedCards: mergedRows.filter(
+        (row) => row.subjectUrl && row.authorHandle && row.text.trim(),
+      ).length,
+      subjectPermalinks: mergedRows.filter((row) => row.subjectUrl).length,
+      explicitNoResults,
+    },
+  };
+}
+
+/** Browser-driven bounded exploration. All relationship claims still go through collectEvidence(). */
+export async function drivePublicConversation(
+  page: Page,
+  targetUrl: string,
+  maxActions = 4,
+) {
+  if (!Number.isInteger(maxActions) || maxActions < 0 || maxActions > 4)
+    throw Error('CONVERSATION_INVALID_ACTION_BUDGET');
+  const transitions: ConversationAcquisitionTrace['transitions'] = [],
+    actions: ConversationAcquisitionTrace['actions'] = [],
+    snapshots: PublicConversationSnapshot[] = [];
+  const transition = (
+    state: ConversationAcquisitionTrace['transitions'][number]['state'],
+    reason: string,
+    actionId: string | null,
+    observed?: ReturnType<typeof observePublicDocument>,
+  ) =>
+    transitions.push({
+      state,
+      at: new Date().toISOString(),
+      reason,
+      actionId,
+      subjectCards: observed?.diagnostics.subjectPermalinks ?? 0,
+      fullBodyCards: observed?.diagnostics.materializedCards ?? 0,
+    });
+  const capture = async (actionId: string) => {
+    const [observed, context] = await Promise.all([
+      page.evaluate(observePublicDocument),
+      page.evaluate(observePublicContext),
+    ]);
+    snapshots.push({ actionId, at: new Date().toISOString(), observed, context });
+    return { observed, context };
+  };
+
+  transition('OPEN_TARGET', 'CANONICAL_TARGET_NAVIGATION_COMPLETED', null);
+  if (canonicalPost(page.url())?.url !== canonicalPost(targetUrl)?.url)
+    throw Error('CONVERSATION_ROOT_IDENTITY_MISMATCH');
+  let latest = await capture('initial');
+  transition('ROOT_RESOLVED', 'EXACT_CANONICAL_ROOT_MATCHED', null, latest.observed);
+  if (latest.context.regions.some((row) => row.kind === 'DISCUSSION_REGION'))
+    transition(
+      'CONVERSATION_VISIBLE',
+      'EXPLICIT_PUBLIC_CONVERSATION_REGION_OBSERVED',
+      null,
+      latest.observed,
+    );
+  transition(
+    'COLLECTING',
+    'INITIAL_VISIBLE_CARD_SNAPSHOT',
+    'initial',
+    latest.observed,
+  );
+
+  let unchanged = 0;
+  for (let index = 0; index < maxActions; index++) {
+    const id = `action-${index + 1}`,
+      beforeSubjects = new Set(
+        latest.observed.rows.map((row) => row.subjectUrl).filter(Boolean),
+      ).size,
+      beforeCards = latest.observed.diagnostics.cards,
+      action = await page.evaluate(performPublicConversationAction, {
+        actionId: id,
+        allowReplyExpansion: true,
+      });
+    transition(
+      action.kind === 'EXPAND_NESTED' ? 'EXPANDING_NESTED' : 'LOADING_MORE',
+      action.kind === 'SCROLL'
+        ? 'BOUNDED_SCROLL_FOR_MORE_PUBLIC_CARDS'
+        : 'EXPLICIT_PUBLIC_REPLY_CONTROL_ACTIVATED',
+      id,
+      latest.observed,
+    );
+    await page
+      .waitForFunction(
+        (cards: number, height: number) =>
+          document.querySelectorAll(
+            'div[data-pressable-container="true"],article',
+          ).length > cards || document.documentElement.scrollHeight > height,
+        { timeout: 3500, polling: 100 },
+        beforeCards,
+        action.documentHeightBefore,
+      )
+      .catch(() => {});
+    latest = await capture(id);
+    const afterSubjects = new Set(
+        latest.observed.rows.map((row) => row.subjectUrl).filter(Boolean),
+      ).size,
+      changed = afterSubjects > beforeSubjects;
+    actions.push({
+      id,
+      kind: action.kind,
+      label: action.label,
+      containerIdentity: action.containerIdentity,
+      beforeSubjects,
+      afterSubjects,
+      changed,
+      at: new Date().toISOString(),
+    });
+    transition(
+      'COLLECTING',
+      changed ? 'NEW_SUBJECT_CARD_OBSERVED' : 'NO_NEW_SUBJECT_CARD',
+      id,
+      latest.observed,
+    );
+    unchanged = changed ? 0 : unchanged + 1;
+    if (unchanged >= 2) break;
+  }
+  const merged = mergeConversationSnapshots(snapshots),
+    contexts = snapshots.flatMap((snapshot) => snapshot.context.regions),
+    replies = snapshots.flatMap((snapshot) => snapshot.context.replies),
+    context = {
+      regions: contexts.filter(
+        (row, index) =>
+          contexts.findIndex(
+            (other) =>
+              other.kind === row.kind && other.subjectUrl === row.subjectUrl,
+          ) === index,
+      ),
+      replies: replies.filter(
+        (row, index) =>
+          replies.findIndex(
+            (other) =>
+              other.subjectUrl === row.subjectUrl &&
+              other.parentUrl === row.parentUrl,
+          ) === index,
+      ),
+    };
+  const trace: ConversationAcquisitionTrace = {
+    version: 'conversation-browser-acquisition/1',
+    transitions,
+    actions,
+    snapshots: snapshots.map((snapshot) => ({
+      actionId: snapshot.actionId,
+      at: snapshot.at,
+      subjectCards: snapshot.observed.diagnostics.subjectPermalinks,
+      fullBodyCards: snapshot.observed.diagnostics.materializedCards,
+      explicitReplies: snapshot.context.replies.length,
+      discussionCards: snapshot.context.regions.filter(
+        (row) => row.kind === 'DISCUSSION_REGION',
+      ).length,
+      recommendedCards: snapshot.context.regions.filter(
+        (row) => row.kind === 'RECOMMENDATION_REGION',
+      ).length,
+    })),
+    stopReason:
+      actions.length < maxActions
+        ? 'NO_ADDITIONAL_PUBLIC_SUBJECTS_AFTER_TWO_ACTIONS'
+        : 'ACTION_BUDGET_REACHED',
+  };
+  return { observed: merged, context, trace, snapshots };
+}
 /** A bounded disposable browser, no user profile, no stealth, installed executable only. */
 async function visit<T>(
   url: string,
   scrolls: number,
   read: (page: Page) => Promise<T>,
   audit?: (event: PublicAccessAudit) => void,
+  timeoutMs = 30000,
 ): Promise<T> {
   const started = Date.now();
   let requests = 0,
     navigations = 0,
     actualScrolls = 0,
+    interactionActions = 0,
+    loadMoreActions = 0,
+    nestedExpandActions = 0,
     outcome = 'COMPLETED';
   const telemetry = newRequestTelemetry();
   const executablePath = existingPublicBrowser();
   if (!executablePath) throw Error('CONVERSATION_BROWSER_MISSING');
-  const guard = new BrowserResourceGuard(30000);
+  const guard = new BrowserResourceGuard(timeoutMs);
   try {
     await guard.start();
     const browser = await guard.launch((signal) =>
@@ -338,6 +578,16 @@ async function visit<T>(
       if (await gate()) throw Error('CONVERSATION_ACCESS_BLOCKED');
     }
     const result = await read(page);
+    const trace = (result as { acquisition?: ConversationAcquisitionTrace })
+      ?.acquisition;
+    if (trace) {
+      interactionActions = trace.actions.length;
+      actualScrolls = trace.actions.filter((row) => row.kind === 'SCROLL').length;
+      loadMoreActions = trace.actions.filter((row) => row.kind === 'LOAD_MORE').length;
+      nestedExpandActions = trace.actions.filter(
+        (row) => row.kind === 'EXPAND_NESTED',
+      ).length;
+    }
     guard.check();
     return result;
   } catch (e: any) {
@@ -361,6 +611,9 @@ async function visit<T>(
         requests,
         navigations,
         scrolls: actualScrolls,
+        interactionActions,
+        loadMoreActions,
+        nestedExpandActions,
         elapsedMs: Date.now() - started,
         minimumAvailableMiB: guard.report.minimumAvailableMiB,
         outcome: guard.report.cleanupVerified
@@ -453,7 +706,15 @@ export async function enrichConversation(
   url: string,
   audit?: (event: PublicAccessAudit) => void,
   evidence?: (page: Page, snapshot: PublicDomEvidenceSnapshot) => Promise<void>,
+  totalBudgetMs = 180000,
 ): Promise<ThreadCollection> {
+  if (
+    !Number.isInteger(totalBudgetMs) ||
+    totalBudgetMs < 30000 ||
+    totalBudgetMs > 180000
+  )
+    throw Error('CONVERSATION_INVALID_TIME_BUDGET');
+  const acquisitionStarted = Date.now();
   const target = canonicalPost(url);
   if (!target) throw Error('CONVERSATION_INVALID_URL');
   const attempt = await extractPublicThreads(target.url, 'TARGET_ONLY', true);
@@ -476,6 +737,8 @@ export async function enrichConversation(
       'Interception decisions only when telemetry exists; null is not zero.',
   });
   if (stopped) throw Error(stopped);
+  const remainingBudgetMs = totalBudgetMs - (Date.now() - acquisitionStarted);
+  if (remainingBudgetMs < 1000) throw Error('CONVERSATION_TIME_BUDGET');
   const source = crawlerInput(attempt, 'DATA04');
   if (attempt.matchMethod !== 'DOM_PERMALINK' || !source)
     throw Error('CONVERSATION_EXACT_ROOT_BODY_UNVERIFIED');
@@ -488,12 +751,14 @@ export async function enrichConversation(
   });
   return visit(
     target.url,
-    2,
+    0,
     async (page) => {
       const final = canonicalPost(page.url());
       if (final?.url !== target.url)
         throw Error('CONVERSATION_ROOT_IDENTITY_MISMATCH');
-      const observed = await page.evaluate(observePublicDocument),
+      const driven = await drivePublicConversation(page, target.url, 4),
+        observed = driven.observed,
+        context = driven.context,
         now = new Date().toISOString();
       const fields = attempt.records[0]?.fields;
       const exact = (key: string, value: number | null) =>
@@ -549,20 +814,33 @@ export async function enrichConversation(
             engagementFields: fields as PublicPost['engagementFields'],
           };
         });
-      const context = await page.evaluate(observePublicContext);
       const observedCards = collectPublicCards(
         observed,
         context,
         target.url,
         now,
       );
-      await evidence?.(page, { finalUrl: page.url(), observed, context });
+      await evidence?.(page, {
+        finalUrl: page.url(),
+        observed,
+        context,
+        acquisition: driven.trace,
+        snapshots: driven.snapshots,
+      });
       const relationshipCandidates: NonNullable<
           PublicDocument['relationshipCandidates']
         > = [],
         relationshipDiagnostics: NonNullable<
           ThreadCollection['relationshipDiagnostics']
         > = [];
+      driven.trace.transitions.push({
+        state: 'RESOLVING_RELATIONSHIPS',
+        at: new Date().toISOString(),
+        reason: 'BOUNDED_EVIDENCE_RESOLUTION_STARTED',
+        actionId: null,
+        subjectCards: observed.diagnostics.subjectPermalinks,
+        fullBodyCards: observed.diagnostics.materializedCards,
+      });
       for (const detailUrl of planPermalinkDetailValidation(
         target.url,
         observedCards,
@@ -631,8 +909,20 @@ export async function enrichConversation(
         relationshipCandidates,
       };
       const collection = resolveRelationships(root, doc, 20);
+      driven.trace.transitions.push({
+        state: collection.verifiedReplyCount > 0 ? 'COMPLETE' : 'PARTIAL',
+        at: new Date().toISOString(),
+        reason:
+          collection.verifiedReplyCount > 0
+            ? 'GRAPH_VALIDATION_COMPLETED_WITH_VERIFIED_RELATIONSHIPS'
+            : 'NO_PUBLIC_PARENT_EVIDENCE',
+        actionId: null,
+        subjectCards: observed.diagnostics.subjectPermalinks,
+        fullBodyCards: observed.diagnostics.materializedCards,
+      });
       collection.sourceCapture = attempt;
       collection.observedCards = observedCards;
+      collection.acquisition = driven.trace;
       collection.relationshipDiagnostics = relationshipDiagnostics;
       collection.observationSummary = {
         subjectPermalinks: new Set(
@@ -668,5 +958,6 @@ export async function enrichConversation(
       return collection;
     },
     audit,
+    Math.min(150000, remainingBudgetMs),
   );
 }

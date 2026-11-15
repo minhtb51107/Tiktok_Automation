@@ -22,6 +22,7 @@ import { conversationMediaFile } from './conversation-media';
 import { observedContextViews } from './conversation-context';
 import { sourceQualityAdapter } from './conversation-extraction-v2';
 import { estimatedDuration } from './editorial-feasibility';
+import { parseforgeProviderStatus } from './conversation-provider-client';
 @Injectable()
 export class ConversationStudioService {
   readonly engine: ConversationEngine;
@@ -121,6 +122,7 @@ export class ConversationController {
       collectionCompleteness: 'PARTIAL_OR_UNKNOWN',
       approval:
         'Explicit LIVE pilot approval required before enabling runtime flag',
+      providerFallback: parseforgeProviderStatus(),
     };
   }
   @Get('runs') list() {

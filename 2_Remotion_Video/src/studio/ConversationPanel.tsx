@@ -292,7 +292,7 @@ export function ConversationPanel({
         )
         .join("\n\n") || "No persisted observed context is available.";
     const counts = view?.normalized.counts;
-    return `# DATA-04 Conversation Report\n\nExecution: ${run?.execution || "UNKNOWN"}\nRun: ${run?.id || "—"}\nStatus: ${run?.status || "UNKNOWN"}\nElapsed: ${run?.elapsedMs ?? "—"} ms\nRanking: ${run?.ranking?.status || "UNKNOWN"} — ${run?.ranking?.reasons.join("; ") || ""}\n\n## Exact source\n${c?.root.url || ""}\n@${c?.root.author.handle || ""}\n${c?.root.originalText || ""}\nType: ${c?.root.itemType || "UNKNOWN"}\n\n## Exact-root attachments\n${media}\n\nCollection: ${c?.status || "UNKNOWN"}\nReported replies: ${c?.reportedReplyCount ?? "UNKNOWN"}; subject permalinks: ${counts?.subjectPermalinks ?? c?.observedReplyCount ?? 0}; materialized cards: ${counts?.materialized ?? "UNKNOWN"}; verified: ${counts?.verified ?? c?.verifiedReplyCount ?? 0}; observed conversation: ${counts?.observedConversation ?? "UNKNOWN"}; related/recommended: ${counts?.related ?? "UNKNOWN"}; unknown: ${counts?.unknown ?? "UNKNOWN"}; incomplete observations: ${counts?.incompleteObservations ?? "UNKNOWN"}; missing body: ${counts?.missingBody ?? "UNKNOWN"}\nPopularity: ${score(q?.popularity.score)}; Conversation: ${score(q?.conversation.score)}; Video suitability: ${score(q?.videoSuitability.score)}\nRatios apply only to VERIFIED_OBSERVED_SAMPLE. Precision@10: NOT_MEASURED. Rights: UNKNOWN. Production approval: unchanged.\n\n## Verified replies\n${c?.replies.map((r) => `${r.id} @${r.author.handle} → parent ${r.parentId}\n${r.url}\n${r.originalText}\nQuality: ${q?.replyQuality.find((x) => x.replyId === r.id)?.label}\nEvidence: ${r.evidence.kind}\n`).join("\n") || "No verified replies; not evidence of no comments."}\n\n## Observed context (explicit selection allowed; not parent-verified)\n${observed}\n\n## Incomplete observations\n${view?.normalized.groups.INCOMPLETE.map((x) => `${x.url}\n${x.displayText || "BODY NOT RECOVERABLE"}\n${x.evidence.join("; ")}`).join("\n\n") || "None"}\n\n## Persisted human review\n${JSON.stringify(view?.review, null, 2)}\n\nWarnings: ${c?.warnings.join("; ") || ""}`;
+    return `# DATA-04 Conversation Report\n\nExecution: ${run?.execution || "UNKNOWN"}\nRun: ${run?.id || "—"}\nStatus: ${run?.status || "UNKNOWN"}\nElapsed: ${run?.elapsedMs ?? "—"} ms\nRanking: ${run?.ranking?.status || "UNKNOWN"} — ${run?.ranking?.reasons.join("; ") || ""}\n\n## Exact source\n${c?.root.url || ""}\n@${c?.root.author.handle || ""}\n${c?.root.originalText || ""}\nType: ${c?.root.itemType || "UNKNOWN"}\n\n## Exact-root attachments\n${media}\n\nCollection: ${c?.status || "UNKNOWN"}\nReported replies: ${c?.reportedReplyCount ?? "UNKNOWN"}; subject permalinks: ${counts?.subjectPermalinks ?? c?.observedReplyCount ?? 0}; materialized cards: ${counts?.materialized ?? "UNKNOWN"}; verified: ${counts?.verified ?? c?.verifiedReplyCount ?? 0}; observed conversation: ${counts?.observedConversation ?? "UNKNOWN"}; related/recommended: ${counts?.related ?? "UNKNOWN"}; unknown: ${counts?.unknown ?? "UNKNOWN"}; incomplete observations: ${counts?.incompleteObservations ?? "UNKNOWN"}; missing body: ${counts?.missingBody ?? "UNKNOWN"}\nBrowser acquisition: ${c?.acquisition ? `${c.acquisition.actions.length} actions; ${c.acquisition.stopReason}` : "LEGACY_CAPTURE"}\nPopularity: ${score(q?.popularity.score)}; Conversation: ${score(q?.conversation.score)}; Video suitability: ${score(q?.videoSuitability.score)}\nRatios apply only to VERIFIED_OBSERVED_SAMPLE. Precision@10: NOT_MEASURED. Rights: UNKNOWN. Production approval: unchanged.\n\n## Verified replies\n${c?.replies.map((r) => `${r.id} @${r.author.handle} → parent ${r.parentId}\n${r.url}\n${r.originalText}\nQuality: ${q?.replyQuality.find((x) => x.replyId === r.id)?.label}\nEvidence: ${r.evidence.kind}\n`).join("\n") || "No verified replies; not evidence of no comments."}\n\n## Observed context (explicit selection allowed; not parent-verified)\n${observed}\n\n## Incomplete observations\n${view?.normalized.groups.INCOMPLETE.map((x) => `${x.url}\n${x.displayText || "BODY NOT RECOVERABLE"}\n${x.evidence.join("; ")}`).join("\n\n") || "None"}\n\n## Persisted human review\n${JSON.stringify(view?.review, null, 2)}\n\nWarnings: ${c?.warnings.join("; ") || ""}`;
   }
   function fullReportMarkdown(full: any) {
     const candidates = (full.run?.candidates || [])
@@ -617,15 +617,25 @@ export function ConversationPanel({
               ).length || 0}
               ; permalink checks {c.relationshipDiagnostics?.length || 0}.
             </p>
+            <p data-testid="conversation-browser-acquisition">
+              Browser actions {c.acquisition?.actions.length ?? "LEGACY_CAPTURE"}
+              {c.acquisition
+                ? ` · ${c.acquisition.stopReason} · last state ${c.acquisition.transitions[c.acquisition.transitions.length - 1]?.state || "UNKNOWN"}`
+                : " · no browser action trace persisted"}
+            </p>
             <pre style={{ maxHeight: 280, overflow: "auto" }}>
               {JSON.stringify(
                 {
                   observations: c.relationshipObservations || [],
                   diagnostics: c.relationshipDiagnostics || [],
+                  browserAcquisition: c.acquisition || null,
                   externalProvider: c.externalEvidence
                     ? {
                         provider: c.externalEvidence.provider,
                         actorId: c.externalEvidence.actorId,
+                        runId: c.externalEvidence.runId || null,
+                        datasetId: c.externalEvidence.datasetId || null,
+                        approvalId: c.externalEvidence.approvalId || null,
                         rows: c.externalEvidence.rows.length,
                       }
                     : null,

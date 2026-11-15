@@ -410,7 +410,18 @@ export class ConversationEngine {
       for (const r of [...pending]) {
         if (!verified.has(r.parentId)) continue;
         const identity = canonicalPost(r.url),
-          parent = canonicalPost(r.evidence.parentUrl);
+          parent = canonicalPost(r.evidence.parentUrl),
+          evidenceDocument = canonicalPost(r.evidence.documentUrl),
+          validEvidenceDocument =
+            r.evidence.kind === 'PERMALINK_DETAIL_PARENT'
+              ? evidenceDocument?.url === identity?.url
+              : r.evidence.kind === 'EXTERNAL_PROVIDER_PARENT'
+                ? r.evidence.documentUrl ===
+                    'https://apify.com/parseforge/threads-replies-scraper' &&
+                  r.evidence.provider?.actorId ===
+                    'parseforge/threads-replies-scraper' &&
+                  /^[a-f0-9]{64}$/.test(r.evidence.provider?.rowHash || '')
+                : evidenceDocument?.url === url;
         if (
           r.id === c.root.id ||
           !identity ||
@@ -425,7 +436,7 @@ export class ConversationEngine {
               ? c.root.url
               : c.replies.find((p) => p.id === r.parentId)?.url) ||
           canonicalPost(r.evidence.subjectUrl)?.url !== identity.url ||
-          canonicalPost(r.evidence.documentUrl)?.url !== url ||
+          !validEvidenceDocument ||
           !r.evidence.documentHash ||
           !r.originalText.trim()
         )

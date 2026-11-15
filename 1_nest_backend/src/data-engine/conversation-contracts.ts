@@ -120,12 +120,56 @@ export interface ConversationObservationSummary {
   missingBody: number;
   parentVerified: number;
 }
+export type ConversationAcquisitionState =
+  | 'OPEN_TARGET'
+  | 'ROOT_RESOLVED'
+  | 'CONVERSATION_VISIBLE'
+  | 'COLLECTING'
+  | 'LOADING_MORE'
+  | 'EXPANDING_NESTED'
+  | 'RESOLVING_RELATIONSHIPS'
+  | 'COMPLETE'
+  | 'PARTIAL'
+  | 'BLOCKED'
+  | 'FAILED';
+export interface ConversationAcquisitionTrace {
+  version: 'conversation-browser-acquisition/1';
+  transitions: Array<{
+    state: ConversationAcquisitionState;
+    at: string;
+    reason: string;
+    actionId: string | null;
+    subjectCards: number;
+    fullBodyCards: number;
+  }>;
+  actions: Array<{
+    id: string;
+    kind: 'SCROLL' | 'LOAD_MORE' | 'EXPAND_NESTED';
+    label: string | null;
+    containerIdentity: string | null;
+    beforeSubjects: number;
+    afterSubjects: number;
+    changed: boolean;
+    at: string;
+  }>;
+  snapshots: Array<{
+    actionId: string;
+    at: string;
+    subjectCards: number;
+    fullBodyCards: number;
+    explicitReplies: number;
+    discussionCards: number;
+    recommendedCards: number;
+  }>;
+  stopReason: string;
+}
 export interface ThreadCollection {
   /** Immutable exact-target capture, including separately labelled observed context. */
   sourceCapture?: import('../studio/public-types').SourceAttempt;
   /** V2 card observations from the bounded conversation page visit. Raw source capture remains immutable. */
   observedCards?: import('../studio/public-types').PublicRecord[];
   observationSummary?: ConversationObservationSummary;
+  acquisition?: ConversationAcquisitionTrace;
   /** Auditable relationship candidates; graph verdict remains collectEvidence(). */
   relationshipObservations?: RelationshipObservation[];
   relationshipDiagnostics?: Array<{
@@ -138,6 +182,9 @@ export interface ThreadCollection {
   externalEvidence?: {
     provider: 'APIFY_PARSEFORGE';
     actorId: 'parseforge/threads-replies-scraper';
+    runId?: string;
+    datasetId?: string;
+    approvalId?: string;
     observedAt: string;
     rows: Array<{
       index: number;

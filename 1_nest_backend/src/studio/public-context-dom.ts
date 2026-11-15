@@ -232,6 +232,86 @@ export function observePublicContext() {
   return { regions, replies };
 }
 
+/** One bounded, non-mutating discovery action. It never clicks engagement/composer controls. */
+export function performPublicConversationAction(input: {
+  actionId: string;
+  allowReplyExpansion: boolean;
+}) {
+  const documentHeightBefore = document.documentElement.scrollHeight;
+  const nodePath = (element: Element | null) => {
+    const segments: string[] = [];
+    for (let node = element; node && node !== document.body; node = node.parentElement) {
+      const testId = node.getAttribute('data-testid'),
+        role = node.getAttribute('role');
+      segments.unshift(
+        `${node.tagName.toLowerCase()}${testId ? `[data-testid="${testId}"]` : ''}${role ? `[role="${role}"]` : ''}`,
+      );
+      if (segments.length === 8) break;
+    }
+    return '/' + segments.join('/');
+  };
+  const visible = (element: Element) => {
+    const box = element.getBoundingClientRect(),
+      style = getComputedStyle(element);
+    return (
+      box.width > 0 &&
+      box.height > 0 &&
+      style.visibility !== 'hidden' &&
+      style.display !== 'none'
+    );
+  };
+  if (input.allowReplyExpansion) {
+    const candidates = [
+      ...document.querySelectorAll('button,[role="button"]'),
+    ]
+      .filter(visible)
+      .map((element) => ({
+        element: element as HTMLElement,
+        label: (
+          element.getAttribute('aria-label') ||
+          element.textContent ||
+          ''
+        )
+          .replace(/\s+/g, ' ')
+          .trim(),
+      }))
+      .filter(({ label }) => {
+        if (/^(reply|trả lời)$/iu.test(label)) return false;
+        return (
+          /\b(view|show|see|load)\b.*\b(repl(?:y|ies))\b/iu.test(label) ||
+          /\b(xem|hiển thị|tải)\b.*\b(trả lời)\b/iu.test(label)
+        );
+      });
+    if (candidates.length) {
+      const selected = candidates[0],
+        card = selected.element.closest(
+          'div[data-pressable-container="true"],article',
+        ),
+        kind = /\b(more|all|load|thêm|tất cả)\b/iu.test(selected.label)
+          ? ('LOAD_MORE' as const)
+          : ('EXPAND_NESTED' as const);
+      selected.element.click();
+      return {
+        actionId: input.actionId,
+        kind,
+        label: selected.label,
+        containerIdentity: nodePath(card || selected.element.parentElement),
+        documentHeightBefore,
+      };
+    }
+  }
+  const before = window.scrollY;
+  window.scrollBy({ top: Math.max(window.innerHeight * 0.85, 480), behavior: 'auto' });
+  return {
+    actionId: input.actionId,
+    kind: 'SCROLL' as const,
+    label: null,
+    containerIdentity: null,
+    documentHeightBefore,
+    scrollChanged: window.scrollY !== before,
+  };
+}
+
 /** Exact-permalink fallback. It records only an explicit public reply target on the subject card. */
 export function observePermalinkParentEvidence(expectedRootUrl: string) {
   const canonical = (value: string) => {

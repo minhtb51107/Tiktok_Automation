@@ -148,8 +148,10 @@ No provider was activated and no credential or dependency was added.
 Any future Apify invocation must accept only an explicitly configured actor ID,
 maximum cost and result budget. It must store the provider row unchanged, map it
 through the same canonical/graph validator, and never trust `parentId` in isolation.
-Network invocation remains `NOT_IMPLEMENTED` until the user authorizes a paid
-benchmark and confirms its budget.
+The thin client is implemented but disabled by default. Estimate/status performs no
+network request. A paid run additionally requires an ignored backend token, an
+explicit single-run approval ID, actor match and a maximum-cost ceiling; returned
+rows still pass the existing adapter and `collectEvidence()`.
 
 V2.1 now implements the pure Parseforge schema adapter but still performs no Actor
 request. It maps `postUrl`, `parentPostUrl`, `rootPostUrl`, `depth`, author, body,
@@ -159,14 +161,44 @@ duplicate rows; and sends accepted candidates through `collectEvidence()`. Exact
 provider duplicates are deduplicated. Activation, credentials and billing remain
 absent by design.
 
-## LIVE acceptance still required
+## THREADS-ACQUISITION-03 LIVE acceptance
 
-The new DOM projection must be checked against one separately approved visit to
-`https://www.threads.com/@gnrtth/post/DeI-TuzEc_9`: one browser, no retry, at most
-four root-page scroll/load-more actions, 150 intercepted requests, 40 subject
-cards, two exact permalink-detail validations and 180 seconds. Existing resource
-policy V2 remains in force. Login, CAPTCHA, access protection or emergency resource
-pressure stops the run.
+The single approved attempt was consumed on 2026-11-15 against
+`https://www.threads.com/@gnrtth/post/DeI-TuzEc_9`. It used one browser worker at a
+time, no retry, three bounded scroll actions, two permalink detail validations and
+finished in 18.7 seconds. The exact-root and conversation visits admitted 23 and
+31 requests respectively (155/279 interception decisions); blocked subresources
+are not server requests. Minimum available physical memory was 583.22 MiB and
+minimum commit reserve 7,514.59 MiB. Peak sampled browser RSS was 707.88 MiB and
+cleanup reported no remaining owned process. Production manifest hashes before and
+after are identical.
+
+The browser state machine observed 25 exact subjects initially and 30 after the
+first action; the next two actions found no new subjects and stopped deterministically.
+After excluding the root, 29/29 persisted context cards have authored body text
+(30 subjects / 29 non-root full cards; 96.67% when the metric includes all subjects
+and the separately sourced root). This improves the legacy baseline of 10 complete
+cards and 16 incomplete URL observations. Snapshot merging recorded 85 duplicate
+observations without duplicating canonical subjects. No body hyperlink was
+materialized as a separate subject.
+
+The public page visually showed the exact root and cards beneath it, but its saved
+DOM exposed only the generic `Phần thân cột` region. It exposed no structured
+parent reference, explicit `Replying to` relationship, labelled discussion region
+or validated permalink parent. Both bounded permalink-detail checks returned
+`DETAIL_VALIDATION_FAILED`. Consequently the auditable result is
+`PARTIAL_NO_PUBLIC_PARENT_EVIDENCE`: 0 verified replies, 0 explicit observed-
+conversation cards, 1 related/recommended classification and 28 UNKNOWN complete
+cards. The reported 127 replies is metadata, not a collected count. Deterministic
+quality does not auto-select UNKNOWN cards; the resulting 7–9 second root-only
+estimate is not enough for a 65–90 second video.
+
+Artifacts are isolated under the ignored
+`1_nest_backend/.studio-data/reports/threads-acquisition03-live01` directory. They
+include the raw collection, four snapshots, action log, browser evidence,
+screenshot, resource telemetry and before/after production manifests. Persistence
+save/reopen passed. Raw evidence remains unchanged; timestamp chrome is removed
+only from the clean card projection for future captures.
 
 The acceptance artifact must retain root/card metadata, exact subjects, body/media,
 DOM node/container paths, raw relationship signals, permalink diagnostics,
@@ -175,7 +207,7 @@ detail evidence yields a positive parent edge, the result is
 `NO_PUBLIC_PARENT_EVIDENCE`; selector experimentation stops and the optional
 provider benchmark becomes the next separately authorized decision.
 
-Acceptance measurements are: exact root match, subject cards, materialized body and
-media rate, parent-verified chains, related-post exclusion, missing-body count,
-wrong-root contamination and cleanup/resource telemetry. Reported reply count is
-never substituted for collected replies.
+The next evidence-producing option is a separately authorized same-URL Parseforge
+benchmark. With 20 result items, the current public listing estimate is USD 0.068
+at USD 3.40/1,000 results; this is not a billing quote. No Actor request, credit
+purchase or provider credential use occurred in this checkpoint.

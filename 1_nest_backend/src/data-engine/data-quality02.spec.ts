@@ -23,6 +23,8 @@ describe('DATA-QUALITY-02 — SYNTHETIC offline contracts',()=>{
    expect(cleanSourceProjection(r).text).toContain('06/10/2026');
    const clean={...raw('Nội dung thật'),bodyText:'06/10/2026\n·\nTác giả\nNội dung thật',createdAt:r.createdAt,provenance:r.provenance},before=JSON.stringify(clean);
    expect(cleanSourceProjection(clean).text).toBe('Nội dung thật');expect(JSON.stringify(clean)).toBe(before);
+   const structural={...raw('06/10/2026\n·\nTác giả\nNội dung thật'),createdAt:r.createdAt,provenance:{text:'bounded public card subject and structural body projection',createdAt:'owned DOM card time[datetime]',rawEvidence:'{"rawText":"author\\n06/10/2026\\nNội dung thật"}'}};
+   expect(cleanSourceProjection(structural).text).toBe('Nội dung thật');
    expect(cleanSourceProjection({...raw('Tác giả\n06/10/2026\nLời tựa'),createdAt:r.createdAt,provenance:r.provenance}).text).toBe('Tác giả\n06/10/2026\nLời tựa');
    expect(()=>cleanSourceProjection({...raw(),createdAt:'bad',provenance:r.provenance})).not.toThrow();
  });

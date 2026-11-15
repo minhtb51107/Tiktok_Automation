@@ -91,6 +91,7 @@ export function collectPublicCards(
             parentContainerPath: row.parentContainerPath,
             conversationContainer: row.conversationContainer,
             relationshipSignals: row.relationshipSignals,
+            observedActionId: row.observedActionId,
             capturedAt: row.capturedAt,
             rawText: row.rawText,
             linkedPostUrls: row.urls,
@@ -170,6 +171,7 @@ export function adaptParseforgeCollection(
   rows: ParseforgeReplyRow[],
   observedAt: string,
   maxReplies = 20,
+  providerRun?: { runId: string; datasetId: string; approvalId: string },
 ) {
   const projected = projectParseforgeRows(root, rows, observedAt),
     collection = resolveRelationships(
@@ -198,6 +200,12 @@ export function adaptParseforgeCollection(
     );
   collection.observedCards = projected.cards;
   collection.externalEvidence = projected.externalEvidence;
+  if (providerRun)
+    Object.assign(collection.externalEvidence, {
+      runId: providerRun.runId,
+      datasetId: providerRun.datasetId,
+      approvalId: providerRun.approvalId,
+    });
   collection.observationSummary = {
     subjectPermalinks: new Set(projected.cards.map((card) => card.url)).size,
     materializedCards: projected.cards.length,
