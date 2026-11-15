@@ -6,6 +6,7 @@ import {
 } from '../studio/source-quality';
 import type { ThreadCollection, VerifiedReply } from './conversation-contracts';
 import { canonicalPost } from './conversation-identity';
+import { estimatedDuration } from './editorial-feasibility';
 
 export type NormalizedConversationGroup =
   | 'PARENT_VERIFIED'
@@ -55,6 +56,18 @@ export interface NormalizedConversation {
     selectedVerifiedReplyIds: string[];
     status: 'READY_FOR_QUALITY' | 'EXCEPTION_REVIEW' | 'NOT_ENOUGH_EVIDENCE';
     reasons: string[];
+    candidateStatus:
+      | 'READY_FOR_DRAFT'
+      | 'NOT_ENOUGH_CONTENT'
+      | 'EXCEPTION_REVIEW';
+    durationEstimate: Omit<
+      ReturnType<typeof estimatedDuration>,
+      'source' | 'targetSeconds'
+    > & {
+      source: 'ESTIMATED_TEXT_ONLY';
+      targetSeconds: [65, 90];
+    };
+    continueDiscovery: boolean;
   };
 }
 
@@ -248,6 +261,24 @@ export function normalizeConversation(
   if (groups.OBSERVED_CONVERSATION.length)
     reasons.push('OBSERVED_CONVERSATION_REQUIRES_RELATIONSHIP_REVIEW');
   if (groups.INCOMPLETE.length) reasons.push('INCOMPLETE_CARD_OBSERVATIONS');
+  const selectedNarration = [
+    rootDisplayText,
+    ...groups.PARENT_VERIFIED.filter((card) =>
+      selectedVerifiedReplyIds.includes(card.id),
+    ).map((card) => card.displayText),
+  ]
+    .filter((value): value is string => !!value)
+    .join('\n\n');
+  const duration = estimatedDuration(selectedNarration, 1.3),
+    candidateStatus = selectedVerifiedReplyIds.length
+      ? duration.maximumSeconds >= 65
+        ? ('READY_FOR_DRAFT' as const)
+        : ('NOT_ENOUGH_CONTENT' as const)
+      : exceptionCount
+        ? ('EXCEPTION_REVIEW' as const)
+        : ('NOT_ENOUGH_CONTENT' as const);
+  if (candidateStatus === 'NOT_ENOUGH_CONTENT')
+    reasons.push('SELECTED_VERIFIED_CONTENT_BELOW_65_SECOND_TARGET');
   return {
     version: 'conversation-normalized/2',
     root: collection.root,
@@ -272,6 +303,13 @@ export function normalizeConversation(
           : 'READY_FOR_QUALITY'
         : 'NOT_ENOUGH_EVIDENCE',
       reasons,
+      candidateStatus,
+      durationEstimate: {
+        ...duration,
+        source: 'ESTIMATED_TEXT_ONLY',
+        targetSeconds: [65, 90],
+      },
+      continueDiscovery: candidateStatus !== 'READY_FOR_DRAFT',
     },
   };
 }

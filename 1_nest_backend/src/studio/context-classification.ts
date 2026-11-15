@@ -4,11 +4,15 @@ export type ContextClass='PARENT_VERIFIED'|'OBSERVED_RELATIONSHIP_UNVERIFIED'|'R
 export interface ContextRegionEvidence {
   kind:'DISCUSSION_REGION'|'RECOMMENDATION_REGION';
   documentUrl:string;targetUrl:string;subjectUrl:string;label:string;pointer:string;
+  observedAt?:string;cardNodeIdentity?:string;parentContainerPath?:string;
+  conversationContainerPointer?:string;
 }
 export interface DomReplyEvidence {
   subjectUrl:string;parentUrl:string;documentUrl:string;authorUrl:string;
   bodyText:string;pointer:string;label:string;
   subjectTimePermalink:string;headerScoped:boolean;
+  observedAt?:string;cardNodeIdentity?:string;parentContainerPath?:string;
+  conversationContainerPointer?:string;rawSignal?:{label:string;href:string};
 }
 export interface ContextAssessment {
   version:'context-classification/1';classification:ContextClass;

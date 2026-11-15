@@ -28,6 +28,13 @@ type View = {
     relationship: string;
     reasons: string[];
     quality: any;
+    raw: {
+      media?: unknown[];
+      likeCount?: number | null;
+      replyCount?: number | null;
+      repostCount?: number | null;
+      shareCount?: number | null;
+    };
     selectable: true;
     recommended: boolean;
   }>;
@@ -56,12 +63,27 @@ type View = {
         author: string | null;
         displayText: string | null;
         evidence: string[];
+        mediaCount: number;
+        engagement: {
+          likes: number | null;
+          replies: number | null;
+          reposts: number | null;
+          shares: number | null;
+        };
       }>
     >;
     automation: {
       selectedVerifiedReplyIds: string[];
       status: string;
       reasons: string[];
+      candidateStatus: string;
+      durationEstimate: {
+        minimumSeconds: number;
+        maximumSeconds: number;
+        source: "ESTIMATED_TEXT_ONLY";
+        targetSeconds: [65, 90];
+      };
+      continueDiscovery: boolean;
     };
   };
   draftEstimate: {
@@ -577,6 +599,42 @@ export function ConversationPanel({
               ? ` · ${view!.normalized.automation.reasons.join("; ")}`
               : ""}
           </p>
+          <p data-testid="conversation-candidate-status">
+            Candidate: {view!.normalized.automation.candidateStatus} · estimated{" "}
+            {view!.normalized.automation.durationEstimate.minimumSeconds}–
+            {view!.normalized.automation.durationEstimate.maximumSeconds}s ·{" "}
+            ESTIMATED_TEXT_ONLY · target 65–90s
+            {view!.normalized.automation.continueDiscovery
+              ? " · continue to next discovery source"
+              : ""}
+          </p>
+          <details data-testid="relationship-acquisition">
+            <summary>Relationship acquisition evidence</summary>
+            <p>
+              Verified evidence observations{" "}
+              {c.relationshipObservations?.filter(
+                (row) => row.status === "VERIFIED",
+              ).length || 0}
+              ; permalink checks {c.relationshipDiagnostics?.length || 0}.
+            </p>
+            <pre style={{ maxHeight: 280, overflow: "auto" }}>
+              {JSON.stringify(
+                {
+                  observations: c.relationshipObservations || [],
+                  diagnostics: c.relationshipDiagnostics || [],
+                  externalProvider: c.externalEvidence
+                    ? {
+                        provider: c.externalEvidence.provider,
+                        actorId: c.externalEvidence.actorId,
+                        rows: c.externalEvidence.rows.length,
+                      }
+                    : null,
+                },
+                null,
+                2,
+              )}
+            </pre>
+          </details>
           <button
             type="button"
             data-testid="apply-verified-quality-selection"
@@ -648,6 +706,12 @@ export function ConversationPanel({
                 </a>
                 <p>
                   Parent {r.parentId} · {r.evidence.kind} · {quality?.label}
+                </p>
+                <p>
+                  Likes {r.engagement.likes ?? "UNKNOWN"} · Replies{" "}
+                  {r.engagement.replies ?? "UNKNOWN"} · Reposts{" "}
+                  {r.engagement.reposts ?? "UNKNOWN"} · Shares{" "}
+                  {r.engagement.shares ?? "UNKNOWN"}
                 </p>
                 <select
                   aria-label={"Human quality " + r.id}
@@ -723,6 +787,13 @@ export function ConversationPanel({
                     {x.quality.score} ·{" "}
                     {x.recommended ? "RECOMMENDED" : "HUMAN REVIEW"}
                   </p>
+                  <p>
+                    Media {x.raw.media?.length || 0} · Likes{" "}
+                    {x.raw.likeCount ?? "UNKNOWN"} · Replies{" "}
+                    {x.raw.replyCount ?? "UNKNOWN"} · Reposts{" "}
+                    {x.raw.repostCount ?? "UNKNOWN"} · Shares{" "}
+                    {x.raw.shareCount ?? "UNKNOWN"}
+                  </p>
                   <details>
                     <summary>Evidence / quality reasons</summary>
                     <pre>{JSON.stringify(x.reasons, null, 2)}</pre>
@@ -745,6 +816,12 @@ export function ConversationPanel({
                   Source permalink
                 </a>
                 <p>{x.evidence.join("; ")}</p>
+                <p>
+                  Media {x.mediaCount} · Likes {x.engagement.likes ?? "UNKNOWN"}
+                  {" · "}Replies {x.engagement.replies ?? "UNKNOWN"} · Reposts{" "}
+                  {x.engagement.reposts ?? "UNKNOWN"} · Shares{" "}
+                  {x.engagement.shares ?? "UNKNOWN"}
+                </p>
               </article>
             ))}
             {!view!.normalized.groups.RELATED_OR_RECOMMENDED.length && (
@@ -767,6 +844,12 @@ export function ConversationPanel({
                   Observed permalink
                 </a>
                 <p>{x.evidence.join("; ")}</p>
+                <p>
+                  Media {x.mediaCount} · Likes {x.engagement.likes ?? "UNKNOWN"}
+                  {" · "}Replies {x.engagement.replies ?? "UNKNOWN"} · Reposts{" "}
+                  {x.engagement.reposts ?? "UNKNOWN"} · Shares{" "}
+                  {x.engagement.shares ?? "UNKNOWN"}
+                </p>
               </article>
             ))}
             {!view!.normalized.groups.UNKNOWN.length &&

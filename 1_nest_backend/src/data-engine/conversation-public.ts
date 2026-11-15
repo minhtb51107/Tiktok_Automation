@@ -10,7 +10,10 @@ import {
   discoveryUrl,
 } from '../modules/core/scraper/public-discovery';
 import { extractPublicThreads } from '../studio/public-threads';
-import { observePublicContext } from '../studio/public-context-dom';
+import {
+  observePermalinkParentEvidence,
+  observePublicContext,
+} from '../studio/public-context-dom';
 import {
   newRequestTelemetry,
   decidePublicRequest,
@@ -21,6 +24,7 @@ import { labelledCounts } from '../studio/metadata-fields';
 import { canonicalPost, type PublicDocument } from './conversation-evidence';
 import {
   collectPublicCards,
+  planPermalinkDetailValidation,
   resolveExactRoot,
   resolveRelationships,
 } from './conversation-extraction-v2';
@@ -50,6 +54,23 @@ export interface PublicDomEvidenceSnapshot {
 import { cacheConversationImages } from './conversation-media';
 /** Function deliberately self-contained: executed in public DOM, no credential/session access. */
 export function observePublicDocument() {
+  const capturedAt = new Date().toISOString();
+  const nodePath = (element: Element | null) => {
+    const segments: string[] = [];
+    for (let node = element; node && node !== document.body; node = node.parentElement) {
+      const testId = node.getAttribute('data-testid'),
+        role = node.getAttribute('role'),
+        siblings = node.parentElement
+          ? [...node.parentElement.children].filter((x) => x.tagName === node.tagName)
+          : [],
+        position = siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(node) + 1})` : '';
+      segments.unshift(
+        `${node.tagName.toLowerCase()}${testId ? `[data-testid="${testId}"]` : ''}${role ? `[role="${role}"]` : ''}${position}`,
+      );
+      if (segments.length === 8) break;
+    }
+    return '/' + segments.join('/');
+  };
   const cards = [
     ...document.querySelectorAll(
       'div[data-pressable-container="true"],article',
@@ -147,6 +168,30 @@ export function observePublicDocument() {
         .filter((url) => url.startsWith('https:'))
         .map((url) => ({ url, kind: 'VIDEO' as const })),
     ];
+    const relationshipSignals = [
+      ...card.querySelectorAll(
+        'header a[href],[data-testid="reply-context"] a[href],[data-testid="replying-to"] a[href]',
+      ),
+    ]
+      .filter(owns)
+      .map((anchor) => ({
+        label: (
+          anchor.getAttribute('aria-label') ||
+          anchor.textContent ||
+          ''
+        ).trim(),
+        href: anchor.getAttribute('href') || '',
+        pointer: nodePath(anchor),
+      }))
+      .filter((signal) => signal.label || signal.href)
+      .slice(0, 10);
+    let container = card.parentElement;
+    while (
+      container &&
+      container !== document.body &&
+      !container.matches('section,[role="region"],[data-testid]')
+    )
+      container = container.parentElement;
     return {
       urls: [...new Set(links)],
       subjectUrl,
@@ -157,6 +202,18 @@ export function observePublicDocument() {
       rawText: (card as HTMLElement).innerText,
       media,
       pointer: `/dom/card/${cardIndex}`,
+      nodeIdentity: nodePath(card),
+      parentContainerPath: nodePath(card.parentElement),
+      conversationContainer: container
+        ? {
+            pointer: nodePath(container),
+            ariaLabel: container.getAttribute('aria-label'),
+            testId: container.getAttribute('data-testid'),
+            role: container.getAttribute('role'),
+          }
+        : null,
+      relationshipSignals,
+      capturedAt,
     };
   });
   const jsonLd: unknown[] = [];
@@ -500,6 +557,67 @@ export async function enrichConversation(
         now,
       );
       await evidence?.(page, { finalUrl: page.url(), observed, context });
+      const relationshipCandidates: NonNullable<
+          PublicDocument['relationshipCandidates']
+        > = [],
+        relationshipDiagnostics: NonNullable<
+          ThreadCollection['relationshipDiagnostics']
+        > = [];
+      for (const detailUrl of planPermalinkDetailValidation(
+        target.url,
+        observedCards,
+        context,
+        2,
+      )) {
+        const checkedAt = new Date().toISOString();
+        try {
+          const response = await page.goto(detailUrl, {
+            waitUntil: 'domcontentloaded',
+            timeout: 12000,
+          });
+          if (response && response.status() >= 400) {
+            relationshipDiagnostics.push({
+              source: 'PERMALINK_DETAIL',
+              url: detailUrl,
+              status: `HTTP_${response.status()}`,
+              observedAt: checkedAt,
+            });
+            continue;
+          }
+          if (
+            /\/(?:login|accounts|challenge|checkpoint)(?:\/|\?|$)/i.test(
+              page.url(),
+            ) ||
+            canonicalPost(page.url())?.url !== detailUrl
+          )
+            throw Error('CONVERSATION_ACCESS_BLOCKED');
+          await page
+            .waitForSelector(
+              'div[data-pressable-container="true"],article,script[type="application/ld+json"]',
+              { timeout: 4000 },
+            )
+            .catch(() => {});
+          const detail = await page.evaluate(
+            observePermalinkParentEvidence,
+            target.url,
+          );
+          relationshipDiagnostics.push({
+            source: 'PERMALINK_DETAIL',
+            url: detailUrl,
+            status: detail.status,
+            observedAt: checkedAt,
+          });
+          if (detail.candidate) relationshipCandidates.push(detail.candidate);
+        } catch (error: any) {
+          if (error?.message === 'CONVERSATION_ACCESS_BLOCKED') throw error;
+          relationshipDiagnostics.push({
+            source: 'PERMALINK_DETAIL',
+            url: detailUrl,
+            status: 'DETAIL_VALIDATION_FAILED',
+            observedAt: checkedAt,
+          });
+        }
+      }
       const doc: PublicDocument = {
         url: target.url,
         observedAt: now,
@@ -510,10 +628,12 @@ export async function enrichConversation(
         jsonLd: observed.jsonLd,
         cardObservations,
         domReplies: context.replies,
+        relationshipCandidates,
       };
       const collection = resolveRelationships(root, doc, 20);
       collection.sourceCapture = attempt;
       collection.observedCards = observedCards;
+      collection.relationshipDiagnostics = relationshipDiagnostics;
       collection.observationSummary = {
         subjectPermalinks: new Set(
           observed.rows.map((row) => row.subjectUrl).filter(Boolean),

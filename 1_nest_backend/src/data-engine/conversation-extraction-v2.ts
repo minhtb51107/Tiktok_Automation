@@ -6,9 +6,14 @@ import {
   canonicalPost,
   collectEvidence,
   type PublicDocument,
+  type RelationshipCandidate,
 } from './conversation-evidence';
 import type { PublicPost, ThreadCollection } from './conversation-contracts';
 import { normalizeConversation } from './conversation-normalizer';
+import {
+  projectParseforgeRows,
+  type ParseforgeReplyRow,
+} from './conversation-provider-parseforge';
 
 export function resolveExactRoot(input: {
   targetUrl: string;
@@ -82,6 +87,11 @@ export function collectPublicCards(
           type: 'relationship resolved separately',
           rawEvidence: JSON.stringify({
             pointer: row.pointer,
+            nodeIdentity: row.nodeIdentity,
+            parentContainerPath: row.parentContainerPath,
+            conversationContainer: row.conversationContainer,
+            relationshipSignals: row.relationshipSignals,
+            capturedAt: row.capturedAt,
             rawText: row.rawText,
             linkedPostUrls: row.urls,
           }),
@@ -97,8 +107,54 @@ export function resolveRelationships(
   root: PublicPost,
   document: PublicDocument,
   maxReplies = 20,
+  candidates: RelationshipCandidate[] = [],
 ): ThreadCollection {
-  return collectEvidence(root, document, maxReplies);
+  return collectEvidence(
+    root,
+    {
+      ...document,
+      relationshipCandidates: [
+        ...(document.relationshipCandidates ?? []),
+        ...candidates,
+      ],
+    },
+    maxReplies,
+  );
+}
+
+/** Deterministic UNKNOWN fallback plan; execution stays bounded by the caller. */
+export function planPermalinkDetailValidation(
+  rootUrl: string,
+  cards: PublicRecord[],
+  context: ReturnType<typeof observePublicContext>,
+  budget = 2,
+) {
+  if (!Number.isInteger(budget) || budget < 0 || budget > 2)
+    throw Error('CONVERSATION_INVALID_DETAIL_BUDGET');
+  const root = canonicalPost(rootUrl);
+  if (!root || budget === 0) return [];
+  const alreadyExplicit = new Set(
+      context.replies
+        .map((row) => canonicalPost(row.subjectUrl)?.url)
+        .filter((url): url is string => !!url),
+    ),
+    recommended = new Set(
+      context.regions
+        .filter((row) => row.kind === 'RECOMMENDATION_REGION')
+        .map((row) => canonicalPost(row.subjectUrl)?.url)
+        .filter((url): url is string => !!url),
+    );
+  return cards
+    .map((card) => canonicalPost(card.url)?.url)
+    .filter(
+      (url): url is string =>
+        !!url &&
+        url !== root.url &&
+        !alreadyExplicit.has(url) &&
+        !recommended.has(url),
+    )
+    .filter((url, index, rows) => rows.indexOf(url) === index)
+    .slice(0, budget);
 }
 
 export function sourceQualityAdapter(
@@ -106,4 +162,50 @@ export function sourceQualityAdapter(
   style: 'SERIOUS' | 'FUNNY' = 'SERIOUS',
 ) {
   return normalizeConversation(collection, style);
+}
+
+/** Optional paid-provider import. It never invokes Apify and still uses collectEvidence(). */
+export function adaptParseforgeCollection(
+  root: PublicPost,
+  rows: ParseforgeReplyRow[],
+  observedAt: string,
+  maxReplies = 20,
+) {
+  const projected = projectParseforgeRows(root, rows, observedAt),
+    collection = resolveRelationships(
+      root,
+      {
+        url: root.url,
+        observedAt,
+        synthetic: false,
+        visibleUrls: projected.cards
+          .map((card) => canonicalPost(card.url)?.url)
+          .filter((url): url is string => !!url),
+        jsonLd: [],
+        relationshipCandidates: projected.candidates,
+        cardObservations: projected.cards.map((card) => ({
+          url: canonicalPost(card.url)!.url,
+          publishedAt: card.createdAt,
+          engagement: {
+            likes: card.likeCount,
+            replies: card.replyCount,
+            reposts: card.repostCount,
+            shares: card.shareCount ?? null,
+          },
+        })),
+      },
+      maxReplies,
+    );
+  collection.observedCards = projected.cards;
+  collection.externalEvidence = projected.externalEvidence;
+  collection.observationSummary = {
+    subjectPermalinks: new Set(projected.cards.map((card) => card.url)).size,
+    materializedCards: projected.cards.length,
+    missingBody: 0,
+    parentVerified: collection.verifiedReplyCount,
+  };
+  collection.warnings.push(
+    'EXTERNAL_PROVIDER_EVIDENCE_REQUIRES_EXPLICIT_AUTHORIZATION_AND_INDEPENDENT_GRAPH_VALIDATION',
+  );
+  return collection;
 }

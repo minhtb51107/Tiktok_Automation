@@ -59,12 +59,39 @@ export interface PublicPost {
   };
 }
 export interface RelationshipEvidence {
-  kind: 'JSON_LD_PARENT_ITEM' | 'JSON_LD_COMMENT' | 'DOM_EXPLICIT_REPLY_TARGET';
+  kind:
+    | 'JSON_LD_PARENT_ITEM'
+    | 'JSON_LD_COMMENT'
+    | 'DOM_EXPLICIT_REPLY_TARGET'
+    | 'PERMALINK_DETAIL_PARENT'
+    | 'EXTERNAL_PROVIDER_PARENT';
   documentUrl: string;
   documentHash: string;
   pointer: string;
   subjectUrl: string;
   parentUrl: string;
+  provider?: {
+    actorId: string;
+    rowHash: string;
+    depth: number | null;
+  };
+}
+export type RelationshipEvidenceSource =
+  | 'EXPLICIT_PUBLIC_REPLY'
+  | 'PERMALINK_DETAIL'
+  | 'EXTERNAL_PROVIDER';
+export interface RelationshipObservation {
+  source: RelationshipEvidenceSource;
+  subjectUrl: string;
+  parentUrl: string | null;
+  rootUrl: string;
+  documentUrl: string;
+  pointer: string;
+  observedAt: string;
+  status: 'VERIFIED' | 'REJECTED' | 'UNRESOLVED';
+  reasons: string[];
+  rawEvidenceHash: string;
+  provider?: RelationshipEvidence['provider'];
 }
 export interface VerifiedReply extends PublicPost {
   parentId: string;
@@ -99,6 +126,30 @@ export interface ThreadCollection {
   /** V2 card observations from the bounded conversation page visit. Raw source capture remains immutable. */
   observedCards?: import('../studio/public-types').PublicRecord[];
   observationSummary?: ConversationObservationSummary;
+  /** Auditable relationship candidates; graph verdict remains collectEvidence(). */
+  relationshipObservations?: RelationshipObservation[];
+  relationshipDiagnostics?: Array<{
+    source: 'PERMALINK_DETAIL';
+    url: string;
+    status: string;
+    observedAt: string;
+  }>;
+  /** Optional paid-provider rows are preserved separately and never trusted implicitly. */
+  externalEvidence?: {
+    provider: 'APIFY_PARSEFORGE';
+    actorId: 'parseforge/threads-replies-scraper';
+    observedAt: string;
+    rows: Array<{
+      index: number;
+      rowHash: string;
+      rootUrl: string | null;
+      subjectUrl: string | null;
+      parentUrl: string | null;
+      acceptedForGraph: boolean;
+      reasons: string[];
+      raw: unknown;
+    }>;
+  };
   version: typeof CONVERSATION_VERSION;
   root: PublicPost;
   replies: VerifiedReply[];

@@ -15,12 +15,28 @@ export interface PublicDocument {
   /** Public DOM permalink observations. Structured records must also have their own visible permalink. */
   visibleUrls: string[];
   jsonLd: unknown[];
+  relationshipCandidates?: RelationshipCandidate[];
   cardObservations?: Array<{
     url: string;
     publishedAt: string | null;
     engagement: PublicPost['engagement'];
     engagementFields?: PublicPost['engagementFields'];
   }>;
+}
+export interface RelationshipCandidate {
+  kind: 'PERMALINK_DETAIL_PARENT' | 'EXTERNAL_PROVIDER_PARENT';
+  rootUrl: string;
+  subjectUrl: string;
+  parentUrl: string;
+  documentUrl: string;
+  authorUrl: string;
+  bodyText: string;
+  pointer: string;
+  observedAt: string;
+  label: string;
+  subjectPermalink: string;
+  publishedAt?: string | null;
+  provider?: RelationshipEvidence['provider'];
 }
 const text = (x: unknown): string | null =>
   typeof x === 'string' && x.trim() ? x : null;
@@ -61,6 +77,8 @@ export function collectEvidence(
       pointer: string;
       parent: any;
       kind: RelationshipEvidence['kind'];
+      provider?: RelationshipEvidence['provider'];
+      documentUrl?: string;
     }>
   >();
   const unverified: ThreadCollection['unverified'] = [];
@@ -121,6 +139,58 @@ export function collectEvidence(
       },
     ]);
   }
+  const acquisitionCandidates = (doc.relationshipCandidates ?? []).slice(0, 40);
+  for (const candidate of acquisitionCandidates) {
+    const own = canonicalPost(candidate.subjectUrl),
+      parent = canonicalPost(candidate.parentUrl),
+      rootReference = canonicalPost(candidate.rootUrl),
+      author = ownAuthor(candidate.authorUrl),
+      subjectPermalink = canonicalPost(candidate.subjectPermalink);
+    if (
+      !own ||
+      !parent ||
+      rootReference?.url !== identity.url ||
+      author !== own.handle ||
+      subjectPermalink?.url !== own.url ||
+      !candidate.bodyText.trim() ||
+      !candidate.pointer ||
+      !candidate.observedAt
+    )
+      continue;
+    if (candidate.kind === 'PERMALINK_DETAIL_PARENT') {
+      if (
+        canonicalPost(candidate.documentUrl)?.url !== own.url ||
+        !/^(replying to|đang trả lời)(?:\s+@[\w.-]+)?$/iu.test(
+          candidate.label.trim(),
+        )
+      )
+        continue;
+    } else if (
+      candidate.provider?.actorId !== 'parseforge/threads-replies-scraper' ||
+      !/^[a-f0-9]{64}$/.test(candidate.provider.rowHash) ||
+      candidate.provider.depth === null ||
+      candidate.provider.depth < 1
+    )
+      continue;
+    const previous = nodes.get(own.url) || [];
+    nodes.set(own.url, [
+      ...previous,
+      {
+        node: {
+          '@type': 'Comment',
+          url: own.url,
+          text: candidate.bodyText,
+          datePublished: candidate.publishedAt ?? null,
+          author: { url: candidate.authorUrl },
+        },
+        pointer: candidate.pointer,
+        parent: parent.url,
+        kind: candidate.kind,
+        provider: candidate.provider,
+        documentUrl: candidate.documentUrl,
+      },
+    ]);
+  }
   // Conflicting handles for one stable post ID are not separate verified identities.
   const identityCounts = new Map<string, number>();
   for (const url of nodes.keys()) {
@@ -132,6 +202,7 @@ export function collectEvidence(
   const documentHash = hash({
     jsonLd: doc.jsonLd,
     domReplies: doc.domReplies ?? [],
+    relationshipCandidates: doc.relationshipCandidates ?? [],
   });
   for (let pass = 0; pass < 21 && pending.size; pass++) {
     let progressed = false;
@@ -180,24 +251,29 @@ export function collectEvidence(
         publishedAt: date(node.datePublished),
         engagement: { likes: null, replies: null, reposts: null, shares: null },
         provenance: {
-          documentUrl: identity!.url,
+          documentUrl: observation.documentUrl ?? identity!.url,
           observedAt: doc.observedAt,
           synthetic: doc.synthetic,
           method:
             observation.kind === 'DOM_EXPLICIT_REPLY_TARGET'
               ? 'PUBLIC_HEADER_REPLY_LINK_AND_DOM_PERMALINK'
-              : 'PUBLIC_JSON_LD_AND_DOM_PERMALINK',
+              : observation.kind === 'PERMALINK_DETAIL_PARENT'
+                ? 'PUBLIC_PERMALINK_DETAIL_EXPLICIT_PARENT'
+                : observation.kind === 'EXTERNAL_PROVIDER_PARENT'
+                  ? 'EXTERNAL_PROVIDER_ROW_GRAPH_VALIDATED'
+                  : 'PUBLIC_JSON_LD_AND_DOM_PERMALINK',
         },
         parentId: parent!.id,
         rootId: root.id,
         extractionStatus: 'VERIFIED',
         evidence: {
           kind: observation.kind,
-          documentUrl: identity!.url,
+          documentUrl: observation.documentUrl ?? identity!.url,
           documentHash,
           pointer: observation.pointer,
           subjectUrl: url,
           parentUrl: parent!.url,
+          ...(observation.provider ? { provider: observation.provider } : {}),
         },
       });
       const matching =
@@ -226,6 +302,54 @@ export function collectEvidence(
         reason: 'DOM_CONTEXT_WITHOUT_RELATIONSHIP_EVIDENCE',
       });
   const replies = [...accepted.values()];
+  const rejectedByUrl = new Map(
+    unverified
+      .filter((row) => row.url)
+      .map((row) => [canonicalPost(row.url)?.url, row.reason] as const)
+      .filter((row): row is [string, string] => !!row[0]),
+  );
+  const relationshipObservations = [
+    ...(doc.domReplies ?? []).map((row) => ({
+      source: 'EXPLICIT_PUBLIC_REPLY' as const,
+      subjectUrl: row.subjectUrl,
+      parentUrl: row.parentUrl,
+      rootUrl: doc.url,
+      documentUrl: row.documentUrl,
+      pointer: row.pointer,
+      observedAt: doc.observedAt,
+      rawEvidenceHash: hash(row),
+      provider: undefined,
+    })),
+    ...acquisitionCandidates.map((row) => ({
+      source:
+        row.kind === 'PERMALINK_DETAIL_PARENT'
+          ? ('PERMALINK_DETAIL' as const)
+          : ('EXTERNAL_PROVIDER' as const),
+      subjectUrl: row.subjectUrl,
+      parentUrl: row.parentUrl,
+      rootUrl: row.rootUrl,
+      documentUrl: row.documentUrl,
+      pointer: row.pointer,
+      observedAt: row.observedAt,
+      rawEvidenceHash: hash(row),
+      provider: row.provider,
+    })),
+  ].map((row) => {
+    const subject = canonicalPost(row.subjectUrl)?.url,
+      reason = subject ? rejectedByUrl.get(subject) : 'INVALID_SUBJECT_IDENTITY';
+    return {
+      ...row,
+      parentUrl: canonicalPost(row.parentUrl)?.url ?? null,
+      status: subject && accepted.has(subject)
+        ? ('VERIFIED' as const)
+        : reason
+          ? ('REJECTED' as const)
+          : ('UNRESOLVED' as const),
+      reasons: subject && accepted.has(subject)
+        ? ['GRAPH_VALIDATED_TO_CANONICAL_ROOT']
+        : [reason ?? 'PARENT_CHAIN_NOT_VERIFIED_TO_EXACT_ROOT'],
+    };
+  });
   return {
     version: CONVERSATION_VERSION,
     root,
@@ -235,6 +359,7 @@ export function collectEvidence(
     observedReplyCount: replies.length + unverified.length,
     verifiedReplyCount: replies.length,
     unverifiedCandidateCount: unverified.length,
+    relationshipObservations,
     startedAt: doc.observedAt,
     completedAt: doc.observedAt,
     status: replies.length ? 'PARTIAL' : 'UNKNOWN',

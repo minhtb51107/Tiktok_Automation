@@ -1,5 +1,18 @@
 /** Self-contained public DOM observation. No order/author/topic/distance parent heuristic. */
 export function observePublicContext() {
+  const observedAt = new Date().toISOString();
+  const nodePath = (element: Element | null) => {
+    const segments: string[] = [];
+    for (let node = element; node && node !== document.body; node = node.parentElement) {
+      const testId = node.getAttribute('data-testid'),
+        role = node.getAttribute('role');
+      segments.unshift(
+        `${node.tagName.toLowerCase()}${testId ? `[data-testid="${testId}"]` : ''}${role ? `[role="${role}"]` : ''}`,
+      );
+      if (segments.length === 8) break;
+    }
+    return '/' + segments.join('/');
+  };
   const canonical = (value: string) => {
     try {
       const u = new URL(value, location.origin);
@@ -28,6 +41,10 @@ export function observePublicContext() {
       subjectUrl: string;
       label: string;
       pointer: string;
+      observedAt?: string;
+      cardNodeIdentity?: string;
+      parentContainerPath?: string;
+      conversationContainerPointer?: string;
     }> = [],
     replies: Array<{
       subjectUrl: string;
@@ -39,6 +56,11 @@ export function observePublicContext() {
       label: string;
       subjectTimePermalink: string;
       headerScoped: true;
+      observedAt?: string;
+      cardNodeIdentity?: string;
+      parentContainerPath?: string;
+      conversationContainerPointer?: string;
+      rawSignal?: { label: string; href: string };
     }> = [];
   if (!target) return { regions, replies };
   const cards = [
@@ -115,6 +137,10 @@ export function observePublicContext() {
           subjectUrl: subject,
           label,
           pointer: `/dom/card/${index}/explicit-region`,
+          observedAt,
+          cardNodeIdentity: nodePath(card),
+          parentContainerPath: nodePath(card.parentElement),
+          conversationContainerPointer: nodePath(region),
         });
         break;
       }
@@ -187,7 +213,139 @@ export function observePublicContext() {
         ).trim(),
         subjectTimePermalink: subject,
         headerScoped: true,
+        observedAt,
+        cardNodeIdentity: nodePath(card),
+        parentContainerPath: nodePath(card.parentElement),
+        conversationContainerPointer: nodePath(
+          card.closest('section,[role="region"],[data-testid]'),
+        ),
+        rawSignal: {
+          label: (
+            targets[0].getAttribute('aria-label') ||
+            targets[0].textContent ||
+            ''
+          ).trim(),
+          href: targets[0].getAttribute('href') || '',
+        },
       });
   });
   return { regions, replies };
+}
+
+/** Exact-permalink fallback. It records only an explicit public reply target on the subject card. */
+export function observePermalinkParentEvidence(expectedRootUrl: string) {
+  const canonical = (value: string) => {
+    try {
+      const url = new URL(value, location.origin),
+        match = url.pathname.match(/^\/@([\w.-]+)\/post\/([\w-]+)\/?$/);
+      return url.protocol === 'https:' &&
+        !url.port &&
+        !url.username &&
+        !url.password &&
+        ['threads.com', 'www.threads.com', 'threads.net', 'www.threads.net'].includes(
+          url.hostname,
+        ) &&
+        match
+        ? `https://www.threads.com/@${match[1]}/post/${match[2]}`
+        : null;
+    } catch {
+      return null;
+    }
+  };
+  const subject = canonical(location.href),
+    root = canonical(expectedRootUrl),
+    observedAt = new Date().toISOString();
+  if (!subject || !root)
+    return { status: 'INVALID_DETAIL_IDENTITY' as const, candidate: null };
+  const cards = [
+    ...document.querySelectorAll('div[data-pressable-container="true"],article'),
+  ].filter((card) => {
+    const owns = (element: Element) =>
+      element.closest('div[data-pressable-container="true"],article') === card;
+    return [...card.querySelectorAll('time')]
+      .filter(owns)
+      .some(
+        (time) =>
+          canonical(time.closest('a[href]')?.getAttribute('href') || '') ===
+          subject,
+      );
+  });
+  if (cards.length !== 1)
+    return { status: 'EXACT_SUBJECT_CARD_NOT_UNIQUE' as const, candidate: null };
+  const card = cards[0],
+    owns = (element: Element) =>
+      element.closest('div[data-pressable-container="true"],article') === card,
+    targets = [
+      ...card.querySelectorAll(
+        'header a[href],[data-testid="reply-context"] a[href],[data-testid="replying-to"] a[href]',
+      ),
+    ].filter(
+      (anchor) =>
+        owns(anchor) &&
+        /^(replying to|đang trả lời)(?:\s+@[\w.-]+)?$/iu.test(
+          (anchor.getAttribute('aria-label') || anchor.textContent || '').trim(),
+        ),
+    );
+  if (targets.length !== 1)
+    return { status: 'NO_PUBLIC_PARENT_EVIDENCE' as const, candidate: null };
+  const parentUrl = canonical(targets[0].getAttribute('href') || ''),
+    handle = subject.split('/')[3],
+    authorUrl = [...card.querySelectorAll('header a[href],a[rel="author"]')]
+      .filter(owns)
+      .map((anchor) => canonicalProfile(anchor.getAttribute('href') || ''))
+      .find((url) => url === `https://www.threads.com/${handle}`),
+    bodyText = [...card.querySelectorAll('span[dir="auto"]')]
+      .filter(
+        (span) =>
+          owns(span) &&
+          !span.closest(
+            'header,time,button,[role="button"],[data-testid="reply-context"],[data-testid="replying-to"]',
+          ) &&
+          !span.parentElement?.closest('span[dir="auto"]'),
+      )
+      .map((span) => (span.textContent || '').trim())
+      .filter(Boolean)
+      .join('\n');
+  if (!parentUrl || !authorUrl || !bodyText)
+    return { status: 'INCOMPLETE_EXPLICIT_PARENT_EVIDENCE' as const, candidate: null };
+  return {
+    status: 'EXPLICIT_PARENT_OBSERVED' as const,
+    candidate: {
+      kind: 'PERMALINK_DETAIL_PARENT' as const,
+      rootUrl: root,
+      subjectUrl: subject,
+      parentUrl,
+      documentUrl: subject,
+      authorUrl,
+      bodyText,
+      pointer: '/dom/exact-subject/header/reply-target',
+      observedAt,
+      label: (
+        targets[0].getAttribute('aria-label') ||
+        targets[0].textContent ||
+        ''
+      ).trim(),
+      subjectPermalink: subject,
+      publishedAt:
+        card.querySelector('time[datetime]')?.getAttribute('datetime') || null,
+    },
+  };
+  function canonicalProfile(value: string) {
+    try {
+      const url = new URL(value, location.origin),
+        match = url.pathname.match(/^\/@([\w.-]+)\/?$/);
+      return url.protocol === 'https:' &&
+        !url.port &&
+        !url.username &&
+        !url.password &&
+        ['threads.com', 'www.threads.com', 'threads.net', 'www.threads.net'].includes(
+          url.hostname,
+        ) &&
+        match
+        ? `https://www.threads.com/@${match[1]}`
+        : null;
+    } catch {
+      return null;
+    }
+  }
 }

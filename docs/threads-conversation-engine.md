@@ -1,7 +1,34 @@
-# Threads Conversation Engine V2
+# Threads Conversation Engine V2.1
 
 Status: offline implementation and saved-capture replay. No new LIVE collection or
 paid provider run was performed for this checkpoint.
+
+## V2.1 engineering decision
+
+The only acquisition path remains:
+
+`Public DOM → Card Observations → Relationship Evidence → collectEvidence graph validation → normalizeConversation → existing quality engine`.
+
+Card observation now persists exact subject identity, full authored spans, owned
+media/counters, DOM node identity, parent-container path, conversation-container
+reference, raw relationship signals, raw card text and capture time. These are
+observations, not parent assertions.
+
+The relationship resolver accepts four evidence sources without adding another
+graph algorithm: structured JSON-LD, explicit public reply UI, bounded exact
+permalink-detail validation and optional provider rows. `collectEvidence()` remains
+the sole authority for canonical identity, parent chains, cycle/conflict detection
+and wrong-root rejection. An UNKNOWN card does not abort a collection: at most two
+non-recommended UNKNOWN subjects are planned for permalink validation; unresolved
+items stay UNKNOWN and discovery can continue.
+
+Automatic quality selection remains limited to parent-verified replies. The V2.1
+projection also reports `READY_FOR_DRAFT`, `NOT_ENOUGH_CONTENT`, or
+`EXCEPTION_REVIEW`, with a 65–90 second text-only estimate clearly marked
+non-authoritative. Both `NOT_ENOUGH_CONTENT` and `EXCEPTION_REVIEW` tell
+discovery to continue to another source within its configured budget. Unresolved
+evidence remains available in the exception queue; narration is never padded or
+invented.
 
 ## Root cause audit
 
@@ -75,7 +102,7 @@ automatic direct-reply narration because their relationship evidence is UNKNOWN.
 
 ### Isolated Studio acceptance
 
-The current backend/frontend bundle was run at `127.0.0.1:3111` against a copied
+The earlier V2 backend/frontend bundle was run at `127.0.0.1:3111` against a copied
 store with LIVE collection disabled and credentials omitted. The Studio displayed
 the V2 counts above, retained the 26 canonical subjects in full-run exports,
 removed the legacy leading date only from the root display/report projection, and
@@ -86,10 +113,18 @@ rights, production or publishing approval. The created session contained the roo
 plus all 26 persisted context rows, with only the two explicitly persisted
 editorial selections enabled.
 
-Validation completed sequentially: targeted conversation/data-quality Jest 24/24,
-pipeline regressions 39/39, full Jest 56 suites / 380 tests, backend and frontend
-TypeScript, Nest build, and Studio bundle. These are offline/saved-capture results,
-not a new LIVE collection claim.
+V2.1 was then smoke-tested at `127.0.0.1:3113` with a fresh copied store, LIVE
+flags disabled and credential variables omitted. It displayed the saved `gnrtth`
+collection as 26 subjects / 10 full cards / 16 incomplete observations / 0
+verified replies, showed `EXCEPTION_REVIEW` with the non-authoritative 7–9 second
+estimate, and did not auto-select UNKNOWN content. Copy Report contained the exact
+root and V2 counts; JSON export downloaded the full 788,461-byte persisted run.
+The smoke runtime was stopped after verification.
+
+Current validation completed sequentially: targeted conversation/data-quality
+Jest 6 suites / 41 tests, full Jest 57 suites / 387 tests, backend and frontend
+TypeScript, Nest build, Studio bundle, and browser Copy/Export smoke. These are
+offline/saved-capture results, not a new LIVE collection claim.
 
 ## Optional provider comparison
 
@@ -97,7 +132,7 @@ No provider was activated and no credential or dependency was added.
 
 - `parseforge/threads-replies-scraper` advertises `rootPostUrl`, `parentPostId`,
   `parentPostUrl`, depth up to 10, engagement and media. Its Apify listing showed
-  pricing from USD 1.70/1,000 results when audited. It is a hosted Actor, not code
+  pricing from USD 3.40/1,000 results when re-audited on 2026-11-15. It is a hosted Actor, not code
   licensed for copying into this repository. Provider parent fields would still be
   checked for canonical root, unique IDs, acyclic graph and internal consistency.
 - `automation_craft/threads-replies-scraper` advertises text, author, time, likes,
@@ -110,15 +145,36 @@ No provider was activated and no credential or dependency was added.
   immediate `parentPostId` remains null because it is not reliably established.
   It cannot benchmark nested relationship accuracy.
 
-An optional Apify adapter should accept only an explicitly configured actor ID,
+Any future Apify invocation must accept only an explicitly configured actor ID,
 maximum cost and result budget. It must store the provider row unchanged, map it
 through the same canonical/graph validator, and never trust `parentId` in isolation.
-It remains `NOT_IMPLEMENTED` until the user authorizes a paid benchmark and chooses
-a provider.
+Network invocation remains `NOT_IMPLEMENTED` until the user authorizes a paid
+benchmark and confirms its budget.
+
+V2.1 now implements the pure Parseforge schema adapter but still performs no Actor
+request. It maps `postUrl`, `parentPostUrl`, `rootPostUrl`, `depth`, author, body,
+timestamps, engagement and media into the existing contracts; preserves each raw
+row/hash separately; rejects wrong-root, invalid-code, missing-body and conflicting
+duplicate rows; and sends accepted candidates through `collectEvidence()`. Exact
+provider duplicates are deduplicated. Activation, credentials and billing remain
+absent by design.
 
 ## LIVE acceptance still required
 
-The new DOM projection must be checked against one separately approved public URL.
+The new DOM projection must be checked against one separately approved visit to
+`https://www.threads.com/@gnrtth/post/DeI-TuzEc_9`: one browser, no retry, at most
+four root-page scroll/load-more actions, 150 intercepted requests, 40 subject
+cards, two exact permalink-detail validations and 180 seconds. Existing resource
+policy V2 remains in force. Login, CAPTCHA, access protection or emergency resource
+pressure stops the run.
+
+The acceptance artifact must retain root/card metadata, exact subjects, body/media,
+DOM node/container paths, raw relationship signals, permalink diagnostics,
+screenshot and resource/request telemetry. If neither structured, explicit UI nor
+detail evidence yields a positive parent edge, the result is
+`NO_PUBLIC_PARENT_EVIDENCE`; selector experimentation stops and the optional
+provider benchmark becomes the next separately authorized decision.
+
 Acceptance measurements are: exact root match, subject cards, materialized body and
 media rate, parent-verified chains, related-post exclusion, missing-body count,
 wrong-root contamination and cleanup/resource telemetry. Reported reply count is

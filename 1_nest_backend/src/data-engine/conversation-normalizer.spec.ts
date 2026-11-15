@@ -7,6 +7,7 @@ import { collectEvidence } from './conversation-evidence';
 import { normalizeConversation } from './conversation-normalizer';
 import {
   collectPublicCards,
+  planPermalinkDetailValidation,
   resolveExactRoot,
 } from './conversation-extraction-v2';
 
@@ -206,6 +207,8 @@ describe('Conversation Extraction V2 normalization', () => {
     expect(normalized.counts.incompleteObservations).toBe(16);
     expect(normalized.counts.missingBody).toBe(0);
     expect(normalized.counts.verified).toBe(0);
+    expect(normalized.automation.candidateStatus).toBe('EXCEPTION_REVIEW');
+    expect(normalized.automation.continueDiscovery).toBe(true);
     expect(normalized.rootDisplayText).not.toMatch(/^\d{2}\/\d{2}\/\d{4}\n/);
     expect(saved.root.originalText).toMatch(/^\d{2}\/\d{2}\/\d{4}\n/);
     expect(JSON.stringify(saved.sourceCapture)).toBe(before);
@@ -251,5 +254,53 @@ describe('Conversation Extraction V2 normalization', () => {
     );
     // This artifact has the selection result, not the original DOM graph.
     expect(candidate.conversation?.root).toBeUndefined();
+  });
+
+  test('fallback skips explicit/recommended evidence and remains budget bounded', () => {
+    const cards = [card('UNKNOWN1', 'Unknown one'), card('EXPLICIT', 'Explicit'), card('RELATED', 'Related'), card('UNKNOWN2', 'Unknown two'), card('UNKNOWN3', 'Unknown three')];
+    const context: any = {
+      replies: [{ subjectUrl: cards[1].url }],
+      regions: [{ kind: 'RECOMMENDATION_REGION', subjectUrl: cards[2].url }],
+    };
+    expect(planPermalinkDetailValidation(root.url, cards, context, 2)).toEqual([
+      cards[0].url,
+      cards[3].url,
+    ]);
+    expect(() =>
+      planPermalinkDetailValidation(root.url, cards, context, 3),
+    ).toThrow('DETAIL_BUDGET');
+  });
+
+  test('auto-selects only verified quality content and reports the 65-second gate', () => {
+    const longBody = Array.from(
+      { length: 34 },
+      (_, index) =>
+        `Vì công việc văn phòng có nhiều áp lực nhưng trải nghiệm số ${index + 1} cho thấy cần nói rõ kỳ vọng và phối hợp với đồng nghiệp.`,
+    ).join(' ');
+    const collection = collectEvidence(root, {
+      url: root.url,
+      observedAt: root.provenance.observedAt,
+      synthetic: true,
+      visibleUrls: ['https://www.threads.com/@tester/post/LONG'],
+      jsonLd: [
+        {
+          '@type': 'Comment',
+          url: 'https://www.threads.com/@tester/post/LONG',
+          parentItem: root.url,
+          author: { url: 'https://www.threads.com/@tester' },
+          text: longBody,
+        },
+      ],
+    });
+    const normalized = normalizeConversation(collection);
+    expect(normalized.automation.selectedVerifiedReplyIds).toEqual(['LONG']);
+    expect(normalized.automation.candidateStatus).toBe('READY_FOR_DRAFT');
+    expect(normalized.automation.durationEstimate.source).toBe(
+      'ESTIMATED_TEXT_ONLY',
+    );
+    expect(normalized.automation.durationEstimate.maximumSeconds).toBeGreaterThanOrEqual(
+      65,
+    );
+    expect(normalized.automation.continueDiscovery).toBe(false);
   });
 });

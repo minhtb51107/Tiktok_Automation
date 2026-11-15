@@ -1,6 +1,7 @@
 import { describe, test, expect } from '@jest/globals';
 import { collectEvidence, canonicalPost } from './conversation-evidence';
 import type { PublicPost } from './conversation-contracts';
+import { selectedReplies } from './editorial-feasibility';
 const url = (id: string) => `https://www.threads.com/@tester/post/${id}`;
 export const TEST_ROOT: PublicPost = {
   id: 'ROOT',
@@ -131,5 +132,81 @@ describe('DATA04 strict reply evidence — TEST DATA', () => {
     const c = collect([TEST_REPLY(), TEST_REPLY('R2')]);
     expect(c.replies).toHaveLength(2);
     expect(c.unverifiedCandidateCount).toBe(0);
+  });
+  test('permalink-detail evidence still passes through the one graph validator', () => {
+    const candidate = {
+      kind: 'PERMALINK_DETAIL_PARENT' as const,
+      rootUrl: url('ROOT'),
+      subjectUrl: url('R1'),
+      parentUrl: url('ROOT'),
+      documentUrl: url('R1'),
+      authorUrl: 'https://www.threads.com/@tester',
+      bodyText: 'SYNTHETIC permalink detail reply.',
+      pointer: '/dom/exact-subject/header/reply-target',
+      observedAt: TEST_ROOT.provenance.observedAt,
+      label: 'Replying to @tester',
+      subjectPermalink: url('R1'),
+    };
+    const c = collectEvidence(TEST_ROOT, {
+      url: url('ROOT'),
+      observedAt: TEST_ROOT.provenance.observedAt,
+      synthetic: true,
+      visibleUrls: [url('R1')],
+      jsonLd: [],
+      relationshipCandidates: [candidate],
+    });
+    expect(c.replies).toHaveLength(1);
+    expect(c.replies[0].evidence.kind).toBe('PERMALINK_DETAIL_PARENT');
+    expect(selectedReplies(c, ['R1'])[0].id).toBe('R1');
+    expect(c.relationshipObservations).toEqual([
+      expect.objectContaining({
+        source: 'PERMALINK_DETAIL',
+        status: 'VERIFIED',
+        subjectUrl: url('R1'),
+      }),
+    ]);
+  });
+  test('provider nested chains validate canonically and wrong roots fail closed', () => {
+    const row = (id: string, parent: string, depth: number, rootUrl = url('ROOT')) => ({
+      kind: 'EXTERNAL_PROVIDER_PARENT' as const,
+      rootUrl,
+      subjectUrl: url(id),
+      parentUrl: url(parent),
+      documentUrl: 'https://apify.com/parseforge/threads-replies-scraper',
+      authorUrl: 'https://www.threads.com/@tester',
+      bodyText: `SYNTHETIC provider reply ${id}`,
+      pointer: `/provider/parseforge/threads-replies-scraper/rows/${id}`,
+      observedAt: TEST_ROOT.provenance.observedAt,
+      label: 'provider parentPostUrl; independently graph-validated',
+      subjectPermalink: url(id),
+      provider: {
+        actorId: 'parseforge/threads-replies-scraper',
+        rowHash: id === 'R1' ? 'a'.repeat(64) : 'b'.repeat(64),
+        depth,
+      },
+    });
+    const c = collectEvidence(TEST_ROOT, {
+      url: url('ROOT'),
+      observedAt: TEST_ROOT.provenance.observedAt,
+      synthetic: true,
+      visibleUrls: [url('R1'), url('R2')],
+      jsonLd: [],
+      relationshipCandidates: [row('R2', 'R1', 2), row('R1', 'ROOT', 1)],
+    });
+    expect(c.replies.map((reply) => reply.id)).toEqual(['R1', 'R2']);
+    expect(c.replies[1].parentId).toBe('R1');
+    expect(c.replies[0].evidence.provider?.actorId).toBe(
+      'parseforge/threads-replies-scraper',
+    );
+    const wrong = collectEvidence(TEST_ROOT, {
+      url: url('ROOT'),
+      observedAt: TEST_ROOT.provenance.observedAt,
+      synthetic: true,
+      visibleUrls: [url('R1')],
+      jsonLd: [],
+      relationshipCandidates: [row('R1', 'ROOT', 1, url('OTHER'))],
+    });
+    expect(wrong.replies).toHaveLength(0);
+    expect(wrong.relationshipObservations?.[0].status).toBe('REJECTED');
   });
 });

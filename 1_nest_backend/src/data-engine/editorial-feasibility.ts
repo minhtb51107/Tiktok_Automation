@@ -52,7 +52,22 @@ export function selectedReplies(c: ThreadCollection, ids: string[]) {
     let child = r;
     while (true) {
       const own = canonicalPost(child.url),
-        parent = canonicalPost(child.evidence.parentUrl);
+        parent = canonicalPost(child.evidence.parentUrl),
+        documentVerified =
+          ['JSON_LD_COMMENT', 'JSON_LD_PARENT_ITEM', 'DOM_EXPLICIT_REPLY_TARGET'].includes(
+            child.evidence.kind,
+          )
+            ? canonicalPost(child.evidence.documentUrl)?.url === root.url
+            : child.evidence.kind === 'PERMALINK_DETAIL_PARENT'
+              ? canonicalPost(child.evidence.documentUrl)?.url === own?.url
+              : child.evidence.kind === 'EXTERNAL_PROVIDER_PARENT' &&
+                child.evidence.documentUrl ===
+                  'https://apify.com/parseforge/threads-replies-scraper' &&
+                child.evidence.provider?.actorId ===
+                  'parseforge/threads-replies-scraper' &&
+                /^[a-f0-9]{64}$/.test(
+                  child.evidence.provider?.rowHash || '',
+                );
       if (
         visited.has(child.id) ||
         child.extractionStatus !== 'VERIFIED' ||
@@ -62,11 +77,15 @@ export function selectedReplies(c: ThreadCollection, ids: string[]) {
         child.rootId !== root.id ||
         child.provenance.synthetic !== c.root.provenance.synthetic ||
         canonicalPost(child.evidence.subjectUrl)?.url !== own.url ||
-        canonicalPost(child.evidence.documentUrl)?.url !== root.url ||
+        !documentVerified ||
         !child.evidence.documentHash ||
-        !['JSON_LD_COMMENT', 'JSON_LD_PARENT_ITEM', 'DOM_EXPLICIT_REPLY_TARGET'].includes(
-          child.evidence.kind,
-        ) ||
+        ![
+          'JSON_LD_COMMENT',
+          'JSON_LD_PARENT_ITEM',
+          'DOM_EXPLICIT_REPLY_TARGET',
+          'PERMALINK_DETAIL_PARENT',
+          'EXTERNAL_PROVIDER_PARENT',
+        ].includes(child.evidence.kind) ||
         parent?.id !== child.parentId
       )
         throw Error('EDITORIAL_RELATIONSHIP_UNVERIFIED');
