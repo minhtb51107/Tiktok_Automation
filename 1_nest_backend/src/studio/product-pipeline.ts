@@ -830,6 +830,125 @@ export class ProductPipelineService {
     }
     throw Error('AUTONOMOUS_STAGE_TIMEOUT');
   }
+  private async continueAutomaticDraft(
+    batch: AutonomousProductBatch,
+    result: AutonomousVideoResult,
+    index: number,
+  ): Promise<AutonomousVideoResult> {
+    if (!result.sessionId) throw Error('AUTONOMOUS_DRAFT_SESSION_MISSING');
+    batch.stage = 'GENERATING_VOICE';
+    await this.saveAuto(batch);
+    await this.studio.runtime(result.sessionId);
+    let current = await this.studio.load(result.sessionId);
+    for (const item of current.items
+      .filter((row) => row.selected)
+      .sort((a, b) => a.order - b.order)) {
+      if (currentAudio(current, item.id)) continue;
+      current = await this.studio.voiceAction(result.sessionId, item.id, {
+        revision: current.revision,
+        action: 'GENERATE',
+        voice: batch.request.voice,
+        speed: batch.request.speed,
+        draft: true,
+      });
+      const latest = current.voiceJobs?.slice(-1)[0];
+      if (latest?.status === 'ERROR') {
+        result.status = 'TTS_FAILED';
+        result.warnings = [latest.error || 'Kokoro generation failed'];
+        return result;
+      }
+    }
+    current = await this.studio.load(result.sessionId);
+    const selectedItemIds = new Set(
+        current.items.filter((row) => row.selected).map((row) => row.id),
+      ),
+      currentAssets = new Map<
+        string,
+        NonNullable<StudioSession['voiceAssets']>[number]
+      >();
+    for (const asset of current.voiceAssets || [])
+      if (selectedItemIds.has(asset.itemId) && asset.status !== 'STALE')
+        currentAssets.set(asset.itemId, asset);
+    if (currentAssets.size !== selectedItemIds.size) {
+      result.status = 'TTS_FAILED';
+      result.warnings = ['One or more selected scenes have no current audio'];
+      return result;
+    }
+    const measured = [...currentAssets.values()].reduce(
+      (sum, asset) => sum + asset.durationMs / 1000,
+      0,
+    );
+    result.measuredSeconds = Number(measured.toFixed(3));
+    if (measured < 60) {
+      result.status = 'NOT_ENOUGH_CONTENT';
+      result.warnings = [
+        `Measured source narration is ${result.measuredSeconds}s; no padding or invented text was added`,
+      ];
+      return result;
+    }
+    batch.stage = 'PREPARING_TIMELINE';
+    await this.saveAuto(batch);
+    await this.studio.preparePreview(result.sessionId, current.revision);
+    current = await this.studio.load(result.sessionId);
+    const timeline = current.project.timeline;
+    if (!timeline) throw Error('AUTONOMOUS_TIMELINE_MISSING');
+    if (timeline.scenes.some((scene) => scene.subtitles.length))
+      throw Error('AUTONOMOUS_SUBTITLES_NOT_OFF');
+    const timelineSeconds = timeline.totalFrames / timeline.fps;
+    result.timelineSeconds = Number(timelineSeconds.toFixed(3));
+    if (timelineSeconds < 65 || timelineSeconds > 90) {
+      result.status = 'NOT_ENOUGH_CONTENT';
+      result.warnings = [
+        `Measured timeline ${result.timelineSeconds}s is outside the 65-90s product target`,
+      ];
+      return result;
+    }
+    batch.stage = 'RENDERING';
+    await this.saveAuto(batch);
+    const renderJob = await this.studio.startJob(result.sessionId, {
+      operation: 'render',
+      input: {
+        revision: current.revision,
+        mode: 'DRAFT',
+        preset: '720P',
+        requestId: `auto-${batch.id}-${index}`,
+        backgroundMode: 'SAVED',
+      },
+    });
+    result.renderJobId = renderJob.jobId;
+    const completed = await this.waitStudioJob(
+      renderJob.jobId,
+      Date.now() + Math.min(batch.request.maxRunMs, 30 * 60_000),
+    );
+    if (completed.status !== 'SUCCEEDED') {
+      result.status = 'RENDER_FAILED';
+      result.warnings = [completed.error || completed.status];
+      return result;
+    }
+    batch.stage = 'VERIFYING';
+    await this.saveAuto(batch);
+    const manifest = await this.studio.renders.load(
+      result.sessionId,
+      renderJob.jobId,
+    );
+    if (
+      manifest.status !== 'COMPLETED' ||
+      !manifest.probe ||
+      manifest.expectedDurationSeconds < 65 ||
+      manifest.expectedDurationSeconds > 90 ||
+      manifest.sceneCount !== selectedItemIds.size
+    ) {
+      result.status = 'RENDER_FAILED';
+      result.warnings = ['MP4 manifest/probe failed product acceptance'];
+      return result;
+    }
+    result.status = 'COMPLETED';
+    result.timelineSeconds = Number(
+      manifest.expectedDurationSeconds.toFixed(3),
+    );
+    result.warnings = [...manifest.warnings];
+    return result;
+  }
   private async processAutomaticCollection(
     batch: AutonomousProductBatch,
     collection: ThreadCollection,
@@ -954,111 +1073,7 @@ export class ProductPipelineService {
       collectionId,
       assessment.id,
     );
-    batch.stage = 'GENERATING_VOICE';
-    await this.saveAuto(batch);
-    await this.studio.runtime(draft.id);
-    let current = await this.studio.load(draft.id);
-    for (const item of current.items
-      .filter((row) => row.selected)
-      .sort((a, b) => a.order - b.order)) {
-      current = await this.studio.voiceAction(draft.id, item.id, {
-        revision: current.revision,
-        action: 'GENERATE',
-        voice: batch.request.voice,
-        speed: batch.request.speed,
-        draft: true,
-      });
-      const latest = current.voiceJobs?.slice(-1)[0];
-      if (latest?.status === 'ERROR') {
-        result.status = 'TTS_FAILED';
-        result.warnings.push(latest.error || 'Kokoro generation failed');
-        return result;
-      }
-    }
-    current = await this.studio.load(draft.id);
-    const selectedItemIds = new Set(
-        current.items.filter((row) => row.selected).map((row) => row.id),
-      ),
-      currentAssets = new Map<string, NonNullable<StudioSession['voiceAssets']>[number]>();
-    for (const asset of current.voiceAssets || [])
-      if (selectedItemIds.has(asset.itemId) && asset.status !== 'STALE')
-        currentAssets.set(asset.itemId, asset);
-    if (currentAssets.size !== selectedItemIds.size) {
-      result.status = 'TTS_FAILED';
-      result.warnings.push('One or more selected scenes have no current audio');
-      return result;
-    }
-    const measured = [...currentAssets.values()].reduce(
-      (sum, asset) => sum + asset.durationMs / 1000,
-      0,
-    );
-    result.measuredSeconds = Number(measured.toFixed(3));
-    if (measured < 60) {
-      result.status = 'NOT_ENOUGH_CONTENT';
-      result.warnings.push(
-        `Measured source narration is ${result.measuredSeconds}s; no padding or invented text was added`,
-      );
-      return result;
-    }
-    batch.stage = 'PREPARING_TIMELINE';
-    await this.saveAuto(batch);
-    await this.studio.preparePreview(draft.id, current.revision);
-    current = await this.studio.load(draft.id);
-    const timeline = current.project.timeline;
-    if (!timeline) throw Error('AUTONOMOUS_TIMELINE_MISSING');
-    if (timeline.scenes.some((scene) => scene.subtitles.length))
-      throw Error('AUTONOMOUS_SUBTITLES_NOT_OFF');
-    const timelineSeconds = timeline.totalFrames / timeline.fps;
-    result.timelineSeconds = Number(timelineSeconds.toFixed(3));
-    if (timelineSeconds < 65 || timelineSeconds > 90) {
-      result.status = 'NOT_ENOUGH_CONTENT';
-      result.warnings.push(
-        `Measured timeline ${result.timelineSeconds}s is outside the 65-90s product target`,
-      );
-      return result;
-    }
-    batch.stage = 'RENDERING';
-    await this.saveAuto(batch);
-    const renderJob = await this.studio.startJob(draft.id, {
-      operation: 'render',
-      input: {
-        revision: current.revision,
-        mode: 'DRAFT',
-        preset: '720P',
-        requestId: `auto-${batch.id}-${index}`,
-        backgroundMode: 'SAVED',
-      },
-    });
-    result.renderJobId = renderJob.jobId;
-    const completed = await this.waitStudioJob(
-      renderJob.jobId,
-      Date.now() + Math.min(batch.request.maxRunMs, 30 * 60_000),
-    );
-    if (completed.status !== 'SUCCEEDED') {
-      result.status = 'RENDER_FAILED';
-      result.warnings.push(completed.error || completed.status);
-      return result;
-    }
-    batch.stage = 'VERIFYING';
-    await this.saveAuto(batch);
-    const manifest = await this.studio.renders.load(draft.id, renderJob.jobId);
-    if (
-      manifest.status !== 'COMPLETED' ||
-      !manifest.probe ||
-      manifest.expectedDurationSeconds < 65 ||
-      manifest.expectedDurationSeconds > 90 ||
-      manifest.sceneCount !== selectedItemIds.size
-    ) {
-      result.status = 'RENDER_FAILED';
-      result.warnings.push('MP4 manifest/probe failed product acceptance');
-      return result;
-    }
-    result.status = 'COMPLETED';
-    result.timelineSeconds = Number(
-      manifest.expectedDurationSeconds.toFixed(3),
-    );
-    result.warnings.push(...manifest.warnings);
-    return result;
+    return this.continueAutomaticDraft(batch, result, index);
   }
   private async executeAuto(id: string) {
     if (this.autoRunning.has(id)) return;
@@ -1105,8 +1120,36 @@ export class ProductPipelineService {
           return;
         }
         const collection = run.collections[index];
-        if (job.results.some((row) => row.sourceUrl === collection.root.url))
+        const existingIndex = job.results.findIndex(
+          (row) => row.sourceUrl === collection.root.url,
+        );
+        if (existingIndex >= 0) {
+          const existing = job.results[existingIndex];
+          if (
+            existing.status === 'TTS_FAILED' &&
+            existing.sessionId &&
+            existing.assessmentId
+          ) {
+            try {
+              job.results[existingIndex] = await this.continueAutomaticDraft(
+                job,
+                existing,
+                index,
+              );
+            } catch (error) {
+              existing.status = /RESOURCE/u.test(
+                error instanceof Error ? error.message : '',
+              )
+                ? 'RESOURCE_STOPPED'
+                : 'TTS_FAILED';
+              existing.warnings = [
+                error instanceof Error ? error.message : 'UNKNOWN',
+              ];
+            }
+            await this.saveAuto(job);
+          }
           continue;
+        }
         let result: AutonomousVideoResult;
         try {
           result = await this.processAutomaticCollection(job, collection, index);

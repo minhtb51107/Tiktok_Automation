@@ -75,6 +75,86 @@ describe('product pipeline snapshot', () => {
       'COMPLETED',
     ]);
   });
+  it('resumes a TTS draft from current cached audio without repeating inference', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'product-voice-resume-'));
+    try {
+      const text = 'Nguồn thật đã chọn';
+      const crypto = require('crypto');
+      const active = session({
+        id: '00000000-0000-4000-8000-000000000003',
+        items: [
+          {
+            id: 'root',
+            selected: true,
+            spokenText: text,
+            order: 0,
+          },
+        ],
+        voiceAssets: [
+          {
+            id: 'audio',
+            itemId: 'root',
+            status: 'GENERATED',
+            textHash: crypto.createHash('sha256').update(text).digest('hex'),
+            durationMs: 59000,
+          },
+        ],
+      });
+      const studio: any = {
+        runtime: jest.fn(async () => ({})),
+        load: jest.fn(async () => active),
+        voiceAction: jest.fn(),
+      };
+      const service = new ProductPipelineService(
+        studio,
+        {} as any,
+        {} as any,
+        {} as any,
+      );
+      (service as any).root = dir;
+      const batch: any = {
+        schemaVersion: 'product-auto-batch/1',
+        id: '22222222-2222-4222-8222-222222222222',
+        requestKey: 'key',
+        request: autonomousProductRequest({ topic: 'công việc' }),
+        status: 'RUNNING',
+        stage: 'GENERATING_VOICE',
+        discoveryRunId: 'run',
+        results: [],
+        errors: [],
+        cancelRequested: false,
+        startedAt: '2026-11-16T00:00:00Z',
+        completedAt: null,
+        createdAt: '2026-11-16T00:00:00Z',
+        updatedAt: '2026-11-16T00:00:00Z',
+      };
+      const result: any = {
+        sourceUrl: 'https://www.threads.com/@root/post/ROOT',
+        collectionId: 'collection',
+        assessmentId: 'assessment',
+        sessionId: active.id,
+        renderJobId: null,
+        status: 'TTS_FAILED',
+        selectedSourceIds: ['ROOT'],
+        estimatedSeconds: { minimum: 65, maximum: 80 },
+        measuredSeconds: null,
+        timelineSeconds: null,
+        warnings: ['prior runtime failure'],
+      };
+      const resumed = await (service as any).continueAutomaticDraft(
+        batch,
+        result,
+        0,
+      );
+      expect(studio.voiceAction).not.toHaveBeenCalled();
+      expect(resumed).toMatchObject({
+        status: 'NOT_ENOUGH_CONTENT',
+        measuredSeconds: 59,
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   it('never calls an observed context verified and waits for explicit review', () => {
     const value = productStageSnapshot(
       session({
