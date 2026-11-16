@@ -101,3 +101,95 @@ durable navigation telemetry. If public search navigation remains unavailable,
 the product cannot meet its autonomous discovery acceptance without a separate,
 legally accessible discovery source; saved older captures must not be presented
 as new-content acceptance.
+
+## Recovery acceptance LIVE-02 (2026-11-16)
+
+The newly authorized batch used isolated store `product-mvp-live02/store` and
+batch ID `5d1398c4-2051-468d-be89-35cf1962dfda`. It did not reuse the consumed
+LIVE-01 attempt.
+
+### Discovery root cause and correction
+
+The generic LIVE-01 failure was caused by a product-level observability gap:
+Puppeteer exceptions were collapsed into `CONVERSATION_NAVIGATION_FAILED`, so
+the saved run could not distinguish a timeout from network, browser, access,
+HTTP, parser or resource failure. Discovery now persists a sanitized stage,
+category, code, HTTP status, timeout type, safe Chromium cause and navigation
+audit. It retries at most once only for an actual timeout or explicitly
+transient `ERR_*` network condition; access/CAPTCHA/login, resource, HTTP,
+parser and browser failures are never retried.
+
+LIVE-02 proved public discovery itself is working:
+
+- four public search navigations returned HTTP 200 without redirect;
+- 23 new canonical candidates were discovered and 10 roots were enriched;
+- all searches completed on attempt 1, so transient retry was not exercised;
+- 10 collections contained 187 observed context cards in total;
+- 23 replies across seven roots passed the existing GraphQL/graph validator;
+- no login, CAPTCHA, access block, browser orphan or production mutation was
+  observed.
+
+### Product bridge defect found by LIVE data
+
+The first evaluation still selected zero replies because
+`selectedReplies()` had not been extended when
+`STRUCTURED_PUBLIC_PARENT` was added to `collectEvidence()`. GraphQL replies
+were therefore verified in `ThreadCollection` but rejected by editorial
+feasibility. The bridge now validates the structured payload hash/source and
+exact root document before accepting that evidence kind. It does not infer a
+parent from DOM order or semantics.
+
+An explicit resume reuses the saved discovery run and archives earlier
+side-effect-free policy results. It never repeats completed sessions or
+artifacts. Rule eligibility now exposes all non-spam/non-duplicate verified
+replies to Qwen instead of requiring an additional lexical-selection flag.
+
+After this fix, rule quality found 18 useful verified replies across the ten
+roots. Only two roots had a source-only maximum estimate of at least 60 seconds:
+
+- `gnrtth / DeI-TuzEc_9`: four verified replies, source-only estimate 52-72s;
+- `randomshiettttt / DZ3pkI6k40V`: four verified replies, estimate 48-65s.
+
+Qwen made two provider calls. The `gnrtth` assessment validated and the product
+intersection selected the four verified reply IDs. The second response was
+provider-successful but failed strict JSON schema validation and was not
+retried. Recorded incremental usage was 1,472 input tokens, 402 output tokens
+and USD 0.00027312. The durable ledger remains below the 40-request / USD 0.10
+acceptance ceiling.
+
+### Voice and MP4 outcome
+
+The product created one isolated DRAFT session
+`b9ffc11c-41bc-485c-a50e-fb28396bd0d1` with one exact root and four
+`PARENT_VERIFIED` replies. Save/reopen retained revision 7 and all 24 source
+items; only those five exact sources were selected. No AI-written hook,
+commentary, transition or conclusion was added.
+
+The first voice invocation exposed missing process-local Kokoro paths after a
+runtime restart. The existing ignored runtime configuration was then loaded;
+Kokoro reported `READY` with Python 3.14.6, `my_yen`, the local model,
+voicepack, FFmpeg and FFprobe. Resume reused the existing assessment and DRAFT
+without another inference call.
+
+Cold start was nevertheless stopped by the existing emergency guard after
+34.493 seconds. The final sample recorded 245.96 MiB available physical RAM,
+4,106.81 MiB system commit reserve, worker peak RSS 254.59 MiB and peak private
+bytes 271.79 MiB. This is `RESOURCE_GUARD_STOP`, not evidence of Windows OOM.
+No retry was made, no valid WAV was saved, and therefore no timeline, render or
+new MP4 was claimed.
+
+### LIVE-02 verification
+
+- targeted regressions after the two fixes: 45/45 and 27/27 PASS;
+- backend build after each fix: PASS;
+- Studio read-only browser smoke: HTTP 200, Generate Videos and the real
+  `gnrtth` DRAFT visible, zero POST/PUT/PATCH/DELETE while opening;
+- screenshot: ignored artifact `product-mvp-live02/studio-live02.png`;
+- production preservation: 933/933 files, no changed, missing or added files;
+- no crawler retry, publishing, Apify, production approval or production-store
+  write occurred.
+
+LIVE-02 verdict: `AUTO_VIDEO_MVP_PARTIAL`. Discovery, enrichment, structured
+reply validation, quality/Qwen selection and persisted DRAFT creation are
+WORKING LIVE. Voice is resource-blocked on this machine for this run; MP4 count
+is zero, so `AUTO_VIDEO_MVP_PASS` is not met.
