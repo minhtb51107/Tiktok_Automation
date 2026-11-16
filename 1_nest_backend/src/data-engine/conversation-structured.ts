@@ -144,6 +144,72 @@ function postFromObject(
   };
 }
 
+/**
+ * Evidence observed in the public target GraphQL response: each direct reply is
+ * wrapped by data.media.text_post_app_info.direct_replies.edges[*].node.posts.
+ * The edge index only identifies the wrapper; it never defines reply order or a
+ * nested parent. The named direct_replies container is the root relationship.
+ */
+export function targetDirectReplyContainerEvidence(
+  posts: StructuredPostObservation[],
+  diagnostics: StructuredPayloadDiagnostic[],
+  rootUrl: string,
+) {
+  const root = canonicalPost(rootUrl);
+  if (!root) throw Error('CONVERSATION_INVALID_ROOT');
+  const relationshipCandidates: RelationshipCandidate[] = [],
+    membershipEvidence: MembershipEvidence[] = [];
+  for (const post of posts) {
+    if (
+      post.source !== 'NETWORK' ||
+      !/^\/api\/graphql\/?$/u.test(post.endpointPath) ||
+      post.collectionKind !== 'CONVERSATION' ||
+      !/^\/data\/media\/text_post_app_info\/direct_replies\/edges\/\d+\/node\/posts\/edges\/0\/node$/u.test(
+        post.pointer,
+      ) ||
+      !/^\/data\/media\/text_post_app_info\/direct_replies\/edges\/\d+\/node$/u.test(
+        post.containerReference ?? '',
+      )
+    )
+      continue;
+    const observedAt =
+        diagnostics.find((row) => row.payloadHash === post.payloadHash)
+          ?.observedAt ?? new Date(0).toISOString(),
+      evidenceType = 'STRUCTURED_TARGET_DIRECT_REPLIES_CONTAINER';
+    membershipEvidence.push({
+      rootId: root.id,
+      subjectId: post.code,
+      status: 'THREAD_UI_CONFIRMED',
+      evidenceType,
+      sourceActionId: null,
+      containerReference: post.containerReference,
+      observedAt,
+    });
+    if (!post.originalText) continue;
+    relationshipCandidates.push({
+      kind: 'STRUCTURED_PUBLIC_PARENT',
+      rootUrl: root.url,
+      subjectUrl: post.url,
+      parentUrl: root.url,
+      documentUrl: root.url,
+      authorUrl: `https://www.threads.com/@${post.authorHandle}`,
+      bodyText: post.originalText,
+      pointer: post.pointer,
+      observedAt,
+      label: evidenceType,
+      subjectPermalink: post.url,
+      publishedAt: post.publishedAt,
+      structured: {
+        source: post.source,
+        payloadHash: post.payloadHash,
+        responseType: post.responseType,
+        queryName: post.queryName,
+      },
+    });
+  }
+  return { relationshipCandidates, membershipEvidence };
+}
+
 /** Generic bounded traversal. Field names are observed, never assumed to exist. */
 export function extractStructuredEvidence(
   inputs: StructuredPayloadInput[],
@@ -302,6 +368,25 @@ export function extractStructuredEvidence(
         queryName: post.queryName,
       },
     });
+  }
+  const directContainer = targetDirectReplyContainerEvidence(
+    posts,
+    diagnostics,
+    root.url,
+  );
+  for (const candidate of directContainer.relationshipCandidates)
+    if (
+      !relationshipCandidates.some(
+        (existing) => existing.subjectUrl === candidate.subjectUrl,
+      )
+    )
+      relationshipCandidates.push(candidate);
+  for (const evidence of directContainer.membershipEvidence) {
+    const index = membershipEvidence.findIndex(
+      (existing) => existing.subjectId === evidence.subjectId,
+    );
+    if (index >= 0) membershipEvidence[index] = evidence;
+    else membershipEvidence.push(evidence);
   }
   const best = new Map<string, StructuredPostObservation>();
   for (const post of posts) {

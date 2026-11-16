@@ -329,12 +329,35 @@ describe('passive Threads structured response extraction', () => {
         JSON.stringify({
           data: {
             media: {
-              ...post('100', 'ROOT', 'root', 'TEST DATA root post'),
               text_post_app_info: {
                 direct_replies: {
                   edges: [
                     {
-                      node: post('101', 'R1', 'reply', 'reply text'),
+                      node: {
+                        posts: {
+                          edges: [
+                            {
+                              node: post('101', 'R1', 'reply', 'reply text'),
+                            },
+                          ],
+                        },
+                      },
+                    },
+                    {
+                      node: {
+                        posts: {
+                          edges: [
+                            {
+                              node: post(
+                                '102',
+                                'R2',
+                                'reply2',
+                                'second reply text',
+                              ),
+                            },
+                          ],
+                        },
+                      },
                     },
                   ],
                 },
@@ -366,8 +389,22 @@ describe('passive Threads structured response extraction', () => {
         jsonLd: [],
         relationshipCandidates: extraction.relationshipCandidates,
       });
-    expect(extraction.relationshipCandidates).toHaveLength(1);
-    expect(graph.replies.map((row) => row.id)).toEqual(['R1']);
+    expect(extraction.relationshipCandidates).toHaveLength(2);
+    expect(extraction.relationshipCandidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subjectUrl: 'https://www.threads.com/@reply/post/R1',
+          parentUrl: rootUrl,
+          label: 'STRUCTURED_TARGET_DIRECT_REPLIES_CONTAINER',
+        }),
+        expect.objectContaining({
+          subjectUrl: 'https://www.threads.com/@reply2/post/R2',
+          parentUrl: rootUrl,
+          label: 'STRUCTURED_TARGET_DIRECT_REPLIES_CONTAINER',
+        }),
+      ]),
+    );
+    expect(graph.replies.map((row) => row.id)).toEqual(['R1', 'R2']);
     expect(JSON.stringify(observer.telemetry())).not.toContain('secret');
   });
 
