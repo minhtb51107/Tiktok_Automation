@@ -1,4 +1,4 @@
-import { autonomousDiscoveryErrors, autonomousProductRequest, ProductPipelineService, productStageSnapshot } from './product-pipeline';
+import { autonomousDiscoveryErrors, autonomousProductRequest, partitionAutomaticResumeResults, ProductPipelineService, productStageSnapshot } from './product-pipeline';
 import { describe, expect, it, jest } from '@jest/globals';
 import { mkdtemp, writeFile, rm } from 'fs/promises';
 import * as os from 'os';
@@ -50,6 +50,30 @@ describe('product pipeline snapshot', () => {
       status: 'PARTIAL', collections: [], errors: ['CONVERSATION_NAVIGATION_FAILED'],
       diagnosis: { stage: 'DISCOVERY', outcome: 'UNKNOWN' },
     })).toEqual(['CONVERSATION_NAVIGATION_FAILED', 'DISCOVERY_UNKNOWN_AT_DISCOVERY']);
+  });
+  it('re-evaluates only side-effect-free policy results on explicit resume', () => {
+    const base = {
+      sourceUrl: 'https://www.threads.com/@root/post/ROOT',
+      collectionId: null,
+      assessmentId: null,
+      sessionId: null,
+      renderJobId: null,
+      selectedSourceIds: [],
+      estimatedSeconds: null,
+      measuredSeconds: null,
+      timelineSeconds: null,
+      warnings: [],
+    } as any;
+    const result = partitionAutomaticResumeResults([
+      { ...base, status: 'NOT_ENOUGH_CONTENT' },
+      { ...base, status: 'QUALITY_FAILED', collectionId: 'persisted' },
+      { ...base, status: 'COMPLETED', sessionId: 'session' },
+    ]);
+    expect(result.retryable).toHaveLength(1);
+    expect(result.retained.map((row) => row.status)).toEqual([
+      'QUALITY_FAILED',
+      'COMPLETED',
+    ]);
   });
   it('never calls an observed context verified and waits for explicit review', () => {
     const value = productStageSnapshot(

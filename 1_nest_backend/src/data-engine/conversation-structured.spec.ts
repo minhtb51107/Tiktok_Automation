@@ -1,6 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
 import type { PublicPost } from './conversation-contracts';
 import { collectEvidence } from './conversation-evidence';
+import { selectedReplies } from './editorial-feasibility';
 import {
   diagnoseStructuredAcquisition,
   extractStructuredEvidence,
@@ -125,6 +126,7 @@ describe('passive Threads structured response extraction', () => {
         }),
       }),
     ]);
+    expect(selectedReplies(collection, ['REPLY1'])).toHaveLength(1);
   });
 
   test('does not infer parent from thread_items array order, while retaining explicit root membership', () => {

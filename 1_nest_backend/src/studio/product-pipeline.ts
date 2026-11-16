@@ -112,6 +112,12 @@ export interface AutonomousProductBatch {
   stage: AutonomousProductStage;
   discoveryRunId: string | null;
   results: AutonomousVideoResult[];
+  /** Prior side-effect-free evaluations retained when an explicit resume re-runs policy code. */
+  priorResults?: Array<{
+    resumedAt: string;
+    reason: 'POLICY_REEVALUATION_NO_SIDE_EFFECTS';
+    results: AutonomousVideoResult[];
+  }>;
   errors: string[];
   cancelRequested: boolean;
   startedAt: string | null;
@@ -201,6 +207,27 @@ const currentAudio = (session: StudioSession, itemId: string) => {
         createHash('sha256').update(item?.spokenText || '').digest('hex') &&
       asset.durationMs > 0,
   );
+};
+
+export const partitionAutomaticResumeResults = (
+  rows: AutonomousVideoResult[],
+) => {
+  const retryable: AutonomousVideoResult[] = [],
+    retained: AutonomousVideoResult[] = [];
+  for (const row of rows) {
+    const noSideEffects =
+      !row.collectionId &&
+      !row.assessmentId &&
+      !row.sessionId &&
+      !row.renderJobId;
+    if (
+      noSideEffects &&
+      ['NOT_ENOUGH_CONTENT', 'QUALITY_FAILED'].includes(row.status)
+    )
+      retryable.push(row);
+    else retained.push(row);
+  }
+  return { retryable, retained };
 };
 
 export function productStageSnapshot(
@@ -492,8 +519,21 @@ export class ProductPipelineService {
     if (job.status === 'COMPLETED') return job;
     if (job.status === 'BLOCKED')
       throw new BadRequestException('A new LIVE authorization is required');
+    const partition = partitionAutomaticResumeResults(job.results);
+    if (partition.retryable.length) {
+      job.priorResults = [
+        ...(job.priorResults || []),
+        {
+          resumedAt: new Date().toISOString(),
+          reason: 'POLICY_REEVALUATION_NO_SIDE_EFFECTS',
+          results: partition.retryable,
+        },
+      ];
+      job.results = partition.retained;
+    }
     job.cancelRequested = false;
     job.status = 'QUEUED';
+    job.completedAt = null;
     await this.saveAuto(job);
     setImmediate(() => void this.executeAuto(id));
     return job;
@@ -816,15 +856,27 @@ export class ProductPipelineService {
         terms,
       ),
       ruleIds = initial.comments
-        .filter((row) => row.selected && row.relationship === 'PARENT_VERIFIED')
-        .map((row) => row.id);
+        .filter(
+          (row) =>
+            row.useful && row.relationship === 'PARENT_VERIFIED',
+        )
+        .map((row) => row.id),
+      eligible = ruleIds.length
+        ? selectConversation(
+            collection,
+            'SERIOUS',
+            new Date().toISOString(),
+            terms,
+            { selectedIds: ruleIds },
+          )
+        : initial;
     result.estimatedSeconds = {
-      minimum: initial.estimate.minimumSeconds,
-      maximum: initial.estimate.maximumSeconds,
+      minimum: eligible.estimate.minimumSeconds,
+      maximum: eligible.estimate.maximumSeconds,
     };
-    if (!ruleIds.length || initial.estimate.maximumSeconds < 60) {
+    if (!ruleIds.length || eligible.estimate.maximumSeconds < 60) {
       result.status = 'NOT_ENOUGH_CONTENT';
-      result.warnings.push(...initial.reasons);
+      result.warnings.push(...eligible.reasons);
       return result;
     }
     batch.stage = 'VALIDATING';

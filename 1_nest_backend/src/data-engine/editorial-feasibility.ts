@@ -67,6 +67,15 @@ export function selectedReplies(c: ThreadCollection, ids: string[]) {
           ? canonicalPost(child.evidence.documentUrl)?.url === root.url
           : child.evidence.kind === 'PERMALINK_DETAIL_PARENT'
             ? canonicalPost(child.evidence.documentUrl)?.url === own?.url
+            : child.evidence.kind === 'STRUCTURED_PUBLIC_PARENT'
+              ? canonicalPost(child.evidence.documentUrl)?.url === root.url &&
+                !!child.evidence.structured &&
+                /^[a-f0-9]{64}$/u.test(
+                  child.evidence.structured.payloadHash,
+                ) &&
+                ['SSR', 'NETWORK'].includes(
+                  child.evidence.structured.source,
+                )
             : child.evidence.kind === 'EXTERNAL_PROVIDER_PARENT' &&
               child.evidence.documentUrl ===
                 'https://apify.com/parseforge/threads-replies-scraper' &&
@@ -89,6 +98,7 @@ export function selectedReplies(c: ThreadCollection, ids: string[]) {
           'JSON_LD_PARENT_ITEM',
           'DOM_EXPLICIT_REPLY_TARGET',
           'PERMALINK_DETAIL_PARENT',
+          'STRUCTURED_PUBLIC_PARENT',
           'EXTERNAL_PROVIDER_PARENT',
         ].includes(child.evidence.kind) ||
         parent?.id !== child.parentId
