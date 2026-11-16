@@ -17,7 +17,7 @@ import {
 } from '../studio/public-context-dom';
 import {
   newRequestTelemetry,
-  decidePublicRequest,
+  decidePublicRequestDetailed,
   type RequestTelemetry,
 } from '../studio/public-request-telemetry';
 import { crawlerInput } from './crawler-adapter';
@@ -39,6 +39,7 @@ import type {
 } from './conversation-contracts';
 import {
   extractStructuredEvidence,
+  diagnoseStructuredAcquisition,
   observeStructuredSsrScripts,
   parseSsrRelayScripts,
   PassiveStructuredResponseObserver,
@@ -367,6 +368,7 @@ export async function drivePublicConversation(
   page: Page,
   targetUrl: string,
   maxActions = 4,
+  structured?: PassiveStructuredResponseObserver,
 ) {
   if (!Number.isInteger(maxActions) || maxActions < 0 || maxActions > 4)
     throw Error('CONVERSATION_INVALID_ACTION_BUDGET');
@@ -398,6 +400,12 @@ export async function drivePublicConversation(
       observed,
       context,
     });
+    if (structured)
+      structured.observeSsr(
+        actionId === 'initial' ? 'BEFORE_ACTIONS' : `AFTER_${actionId}`,
+        await page.evaluate(observeStructuredSsrScripts),
+        new URL(page.url()).pathname,
+      );
     return { observed, context };
   };
 
@@ -571,18 +579,21 @@ async function visit<T>(
     await page.setRequestInterception(true);
     const structured = new PassiveStructuredResponseObserver();
     page.on('response', (response) => structured.observe(response));
+    page.on('requestfinished', (request) => structured.finishRequest(request));
+    page.on('requestfailed', (request) => structured.failRequest(request));
     page.on('request', (r) => {
       requests++;
       if (r.isNavigationRequest() && r.frame() === page.mainFrame())
         navigations++;
-      const admitted = decidePublicRequest(
+      const decision = decidePublicRequestDetailed(
         telemetry,
         r.url(),
         r.resourceType(),
         navigations,
         { events: 150, navigation: 4, blockHeavy: true },
       );
-      void (admitted ? r.continue() : r.abort()).catch(() => {
+      structured.recordRequest(r, decision);
+      void (decision.admitted ? r.continue() : r.abort()).catch(() => {
         telemetry.handlingFailures++;
       });
     });
@@ -592,6 +603,11 @@ async function visit<T>(
     });
     if (response && response.status() >= 400)
       throw Error('CONVERSATION_HTTP_' + response.status());
+    structured.observeSsr(
+      'DOM_CONTENT_LOADED',
+      await page.evaluate(observeStructuredSsrScripts),
+      new URL(page.url()).pathname,
+    );
     const gate = async () =>
       /\/(?:login|accounts|challenge|checkpoint)(?:\/|\?|$)/i.test(
         page.url(),
@@ -798,26 +814,43 @@ export async function enrichConversation(
       const final = canonicalPost(page.url());
       if (final?.url !== target.url)
         throw Error('CONVERSATION_ROOT_IDENTITY_MISMATCH');
-      const driven = await drivePublicConversation(page, target.url, 4),
+      const driven = await drivePublicConversation(
+          page,
+          target.url,
+          4,
+          networkObserver,
+        ),
         observed = driven.observed,
         context = driven.context,
         now = new Date().toISOString();
-      const ssrScripts = await page.evaluate(observeStructuredSsrScripts),
-        networkPayloads = await networkObserver.settle(),
-        structured = extractStructuredEvidence(
-          [
-            ...parseSsrRelayScripts(
-              ssrScripts,
-              new URL(page.url()).pathname,
-              now,
-            ),
-            ...networkPayloads,
-          ],
-          target.url,
-          observed.rows
-            .map((row) => row.subjectUrl)
-            .filter((value): value is string => !!value),
-        );
+      const ssrScripts = await page.evaluate(observeStructuredSsrScripts);
+      networkObserver.observeSsr(
+        'FINAL_COLLECTION',
+        ssrScripts,
+        new URL(page.url()).pathname,
+      );
+      const networkPayloads = await networkObserver.settle(),
+        structuredBase = {
+          ...extractStructuredEvidence(
+            [
+              ...parseSsrRelayScripts(
+                ssrScripts,
+                new URL(page.url()).pathname,
+                now,
+              ),
+              ...networkPayloads,
+            ],
+            target.url,
+            observed.rows
+              .map((row) => row.subjectUrl)
+              .filter((value): value is string => !!value),
+          ),
+          ...networkObserver.telemetry(),
+        } satisfies StructuredExtraction,
+        structured = {
+          ...structuredBase,
+          acquisitionDiagnosis: diagnoseStructuredAcquisition(structuredBase),
+        } satisfies StructuredExtraction;
       const fields = attempt.records[0]?.fields;
       const exact = (key: string, value: number | null) =>
         fields?.[key]?.status === 'AVAILABLE' ? value : null;
@@ -898,6 +931,10 @@ export async function enrichConversation(
           structuredVisibleUrls: structured.structuredVisibleUrls,
           domMatches: structured.domMatches,
           conflicts: structured.conflicts,
+          requests: structured.requests,
+          responses: structured.responses,
+          ssrMilestones: structured.ssrMilestones,
+          acquisitionDiagnosis: structured.acquisitionDiagnosis,
         },
       });
       const relationshipCandidates: NonNullable<
@@ -1025,6 +1062,10 @@ export async function enrichConversation(
         posts: structured.posts,
         domMatches: structured.domMatches,
         conflicts: structured.conflicts,
+        requests: structured.requests,
+        responses: structured.responses,
+        ssrMilestones: structured.ssrMilestones,
+        acquisitionDiagnosis: structured.acquisitionDiagnosis,
       };
       collection.relationshipDiagnostics = relationshipDiagnostics;
       const allObservedIdentities = new Set([

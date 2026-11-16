@@ -652,6 +652,15 @@ export function ConversationPanel({
               )
                 ? " · network JSON observed"
                 : " · network JSON unavailable"}
+              {c.structuredEvidence?.responses
+                ? ` · responses ${c.structuredEvidence.responses.length} · parser accepted ${c.structuredEvidence.responses.filter((row) => row.parserDecision === "ACCEPTED_JSON").length}`
+                : " · response telemetry unavailable"}
+              {c.structuredEvidence?.ssrMilestones
+                ? ` · SSR milestones ${c.structuredEvidence.ssrMilestones.length}`
+                : " · SSR milestone telemetry unavailable"}
+              {c.structuredEvidence?.acquisitionDiagnosis
+                ? ` · diagnosis ${c.structuredEvidence.acquisitionDiagnosis}`
+                : " · diagnosis INCONCLUSIVE"}
             </p>
             <pre style={{ maxHeight: 280, overflow: "auto" }}>
               {JSON.stringify(

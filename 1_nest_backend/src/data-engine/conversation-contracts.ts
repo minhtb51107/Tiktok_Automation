@@ -219,6 +219,63 @@ export interface StructuredPostObservation {
   pointer: string;
   fieldNames: string[];
 }
+export type StructuredResponseParserDecision =
+  | 'PENDING'
+  | 'ACCEPTED_JSON'
+  | 'SKIPPED_HTTP_STATUS'
+  | 'SKIPPED_NON_PUBLIC_HOST'
+  | 'SKIPPED_CONTENT_TYPE'
+  | 'SKIPPED_CONTENT_TYPE_JSON_PARSEABLE'
+  | 'SKIPPED_DECLARED_TOO_LARGE'
+  | 'SKIPPED_BODY_READ_FAILED'
+  | 'SKIPPED_EMPTY_BODY'
+  | 'SKIPPED_BODY_TOO_LARGE'
+  | 'SKIPPED_JSON_PARSE_FAILED'
+  | 'SKIPPED_DUPLICATE_PAYLOAD'
+  | 'SKIPPED_CAPTURE_LIMIT';
+export interface StructuredRequestDiagnostic {
+  id: string;
+  endpointPath: string;
+  method: string;
+  resourceType: string;
+  admitted: boolean;
+  admissionReason: string;
+  completion: 'PENDING' | 'FINISHED' | 'FAILED';
+  failureCategory: string | null;
+  observedAt: string;
+}
+export interface StructuredResponseDiagnostic {
+  requestId: string;
+  endpointPath: string;
+  method: string;
+  status: number;
+  contentType: string;
+  resourceType: string;
+  contentLength: number | null;
+  admitted: boolean;
+  admissionReason: string;
+  parserDecision: StructuredResponseParserDecision;
+  bodyHash: string | null;
+  conversationMarkers: string[];
+  observedAt: string;
+}
+export interface StructuredSsrMilestone {
+  milestone: string;
+  scriptCount: number;
+  totalBytes: number;
+  postNodes: number;
+  scriptHashes: string[];
+  queryNames: string[];
+  observedAt: string;
+}
+export type StructuredAcquisitionDiagnosis =
+  | 'STRUCTURED_RELATIONSHIP_EVIDENCE_PRESENT'
+  | 'SSR_LATE_INSERTION'
+  | 'NETWORK_CONTENT_TYPE_MISSED'
+  | 'STRUCTURED_SCHEMA_UNRECOGNIZED'
+  | 'PUBLIC_ACCESS_LIMITED'
+  | 'NO_STRUCTURED_EVIDENCE'
+  | 'INCONCLUSIVE';
 export interface ThreadCollection {
   /** Immutable exact-target capture, including separately labelled observed context. */
   sourceCapture?: import('../studio/public-types').SourceAttempt;
@@ -235,6 +292,10 @@ export interface ThreadCollection {
     posts: StructuredPostObservation[];
     domMatches: number;
     conflicts: string[];
+    requests?: StructuredRequestDiagnostic[];
+    responses?: StructuredResponseDiagnostic[];
+    ssrMilestones?: StructuredSsrMilestone[];
+    acquisitionDiagnosis?: StructuredAcquisitionDiagnosis;
   };
   /** Auditable relationship candidates; graph verdict remains collectEvidence(). */
   relationshipObservations?: RelationshipObservation[];

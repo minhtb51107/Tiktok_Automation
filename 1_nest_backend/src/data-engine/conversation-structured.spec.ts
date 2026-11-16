@@ -2,6 +2,7 @@ import { describe, expect, test } from '@jest/globals';
 import type { PublicPost } from './conversation-contracts';
 import { collectEvidence } from './conversation-evidence';
 import {
+  diagnoseStructuredAcquisition,
   extractStructuredEvidence,
   parseSsrRelayScripts,
   PassiveStructuredResponseObserver,
@@ -248,10 +249,18 @@ describe('passive Threads structured response extraction', () => {
       ),
     ).toEqual([]);
     const observer = new PassiveStructuredResponseObserver();
-    observer.observe({
-      status: () => 200,
+    const request = {
       url: () =>
         'https://www.threads.com/graphql/query/?doc_id=SECRET&access_token=SECRET',
+      method: () => 'POST',
+      resourceType: () => 'fetch',
+      failure: () => null,
+    } as any;
+    observer.recordRequest(request, { admitted: true, reason: 'ADMITTED' });
+    observer.observe({
+      status: () => 200,
+      url: request.url,
+      request: () => request,
       headers: () => ({ 'content-type': 'application/json; charset=utf-8' }),
       text: async () =>
         JSON.stringify({
@@ -263,5 +272,170 @@ describe('passive Threads structured response extraction', () => {
     expect(captured[0].endpointPath).toBe('/graphql/query/');
     expect(JSON.stringify(captured)).not.toContain('access_token');
     expect(JSON.stringify(captured)).not.toContain('doc_id');
+    expect(observer.telemetry().responses).toEqual([
+      expect.objectContaining({
+        endpointPath: '/graphql/query/',
+        method: 'POST',
+        resourceType: 'fetch',
+        parserDecision: 'ACCEPTED_JSON',
+      }),
+    ]);
+  });
+
+  test('diagnoses parseable JSON missed by content type without feeding it to the parser', async () => {
+    const observer = new PassiveStructuredResponseObserver(),
+      request = {
+        url: () => 'https://www.threads.com/api/graphql/?secret=REDACTED',
+        method: () => 'POST',
+        resourceType: () => 'xhr',
+        failure: () => null,
+      } as any;
+    observer.recordRequest(request, { admitted: true, reason: 'ADMITTED' });
+    observer.observe({
+      status: () => 200,
+      url: request.url,
+      request: () => request,
+      headers: () => ({ 'content-type': 'text/plain', 'content-length': '80' }),
+      text: async () =>
+        JSON.stringify({ data: { direct_replies: [], thread_items: [] } }),
+    } as any);
+    expect(await observer.settle()).toEqual([]);
+    expect(observer.telemetry().responses).toEqual([
+      expect.objectContaining({
+        endpointPath: '/api/graphql/',
+        parserDecision: 'SKIPPED_CONTENT_TYPE_JSON_PARSEABLE',
+        conversationMarkers: ['thread_items', 'direct_replies'],
+        bodyHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      }),
+    ]);
+    expect(JSON.stringify(observer.telemetry())).not.toContain('secret');
+  });
+
+  test('tracks SSR query names at independent milestones without retaining script text', () => {
+    const observer = new PassiveStructuredResponseObserver(),
+      script = JSON.stringify({
+        require: [
+          [
+            'RelayPrefetchedStreamCache',
+            'next',
+            [],
+            [
+              'adp_BarcelonaPostPageDownwardQueryRelayPreloader_hash',
+              { __bbox: { result: { data: { direct_replies: [] } } } },
+            ],
+          ],
+        ],
+      });
+    observer.observeSsr(
+      'DOM_CONTENT_LOADED',
+      [{ index: 0, text: script }],
+      '/@root/post/ROOT',
+    );
+    expect(observer.telemetry().ssrMilestones).toEqual([
+      expect.objectContaining({
+        milestone: 'DOM_CONTENT_LOADED',
+        scriptCount: 1,
+        postNodes: 0,
+        queryNames: ['BarcelonaPostPageDownwardQuery'],
+        scriptHashes: [expect.stringMatching(/^[a-f0-9]{64}$/u)],
+      }),
+    ]);
+    expect(JSON.stringify(observer.telemetry())).not.toContain(
+      'direct_replies',
+    );
+  });
+
+  test('classifies acquisition causes without inventing relationship evidence', () => {
+    const base = extractStructuredEvidence([], rootUrl),
+      request = {
+        id: 'request-1',
+        endpointPath: '/data/manifest.json',
+        method: 'GET',
+        resourceType: 'fetch',
+        admitted: true,
+        admissionReason: 'ADMITTED',
+        completion: 'FINISHED' as const,
+        failureCategory: null,
+        observedAt: root.provenance.observedAt,
+      },
+      response = {
+        requestId: 'request-1',
+        endpointPath: '/data/manifest.json',
+        method: 'GET',
+        status: 200,
+        contentType: 'application/json',
+        resourceType: 'fetch',
+        contentLength: null,
+        admitted: true,
+        admissionReason: 'ADMITTED',
+        parserDecision: 'ACCEPTED_JSON' as const,
+        bodyHash: 'a'.repeat(64),
+        conversationMarkers: [],
+        observedAt: root.provenance.observedAt,
+      },
+      milestone = {
+        milestone: 'DOM_CONTENT_LOADED',
+        scriptCount: 1,
+        totalBytes: 10,
+        postNodes: 0,
+        scriptHashes: ['b'.repeat(64)],
+        queryNames: ['BarcelonaPostPageTargetQuery'],
+        observedAt: root.provenance.observedAt,
+      };
+    expect(
+      diagnoseStructuredAcquisition({
+        ...base,
+        requests: [request],
+        responses: [response],
+        ssrMilestones: [milestone],
+      }),
+    ).toBe('NO_STRUCTURED_EVIDENCE');
+    expect(
+      diagnoseStructuredAcquisition({
+        ...base,
+        requests: [request],
+        responses: [
+          {
+            ...response,
+            contentType: 'text/plain',
+            parserDecision: 'SKIPPED_CONTENT_TYPE_JSON_PARSEABLE',
+            conversationMarkers: ['direct_replies'],
+          },
+        ],
+        ssrMilestones: [milestone],
+      }),
+    ).toBe('NETWORK_CONTENT_TYPE_MISSED');
+    expect(
+      diagnoseStructuredAcquisition({
+        ...base,
+        requests: [request],
+        responses: [response],
+        ssrMilestones: [
+          milestone,
+          {
+            ...milestone,
+            milestone: 'AFTER_ACTION_1',
+            queryNames: ['BarcelonaPostPageDownwardQuery'],
+          },
+        ],
+      }),
+    ).toBe('SSR_LATE_INSERTION');
+    expect(
+      diagnoseStructuredAcquisition({
+        ...base,
+        requests: [
+          request,
+          {
+            ...request,
+            id: 'request-2',
+            admitted: false,
+            admissionReason: 'BLOCKED_EVENT_BUDGET',
+            completion: 'FAILED',
+          },
+        ],
+        responses: [response],
+        ssrMilestones: [milestone],
+      }),
+    ).toBe('INCONCLUSIVE');
   });
 });

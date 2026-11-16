@@ -5,7 +5,7 @@ import * as os from 'os';
 import {createHash} from 'crypto';
 import {cleanSourceProjection} from '../studio/source-quality';
 import {classifyContext,type ContextRegionEvidence} from '../studio/context-classification';
-import {newRequestTelemetry,decidePublicRequest} from '../studio/public-request-telemetry';
+import {newRequestTelemetry,decidePublicRequest,decidePublicRequestDetailed} from '../studio/public-request-telemetry';
 import {collectEvidence} from './conversation-evidence';
 import {selectedReplies} from './editorial-feasibility';
 import {verifiedLibraryReplies} from '../studio/library-contract';
@@ -48,6 +48,8 @@ describe('DATA-QUALITY-02 — SYNTHETIC offline contracts',()=>{
    for(let i=0;i<70;i++)decidePublicRequest(t,'https://www.threads.com/a','script',1,limits);
    expect(t).toMatchObject({interceptionEvents:170,admittedRequests:50,blockedRequests:120});
    const u=newRequestTelemetry();expect(decidePublicRequest(u,'https://127.0.0.1/a','script',1,limits)).toBe(false);
+   expect(decidePublicRequestDetailed(newRequestTelemetry(),'https://www.threads.com/a','image',1,limits)).toEqual({admitted:false,reason:'BLOCKED_HEAVY_RESOURCE'});
+   expect(decidePublicRequestDetailed(newRequestTelemetry(),'https://127.0.0.1/a','script',1,limits)).toEqual({admitted:false,reason:'BLOCKED_UNSUPPORTED_ORIGIN'});
  });
  test('alternative DOM header permalink evidence validates nested chains; a body/profile link cannot',()=>{
    const root:ThreadCollection['root']={id:'ROOT',url:rootUrl,author:{handle:'test',name:null},originalText:'TEST DATA root',publishedAt:null,engagement:{likes:null,replies:null,reposts:null,shares:null},provenance:{documentUrl:rootUrl,observedAt:'2026-11-11T00:00:00Z',method:'SYNTHETIC',synthetic:true}};

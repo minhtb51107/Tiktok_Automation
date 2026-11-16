@@ -1,12 +1,17 @@
-import type { HTTPResponse } from 'puppeteer';
+import type { HTTPRequest, HTTPResponse } from 'puppeteer';
 import type { PublicRecord } from '../studio/public-types';
 import type {
   MembershipEvidence,
+  StructuredAcquisitionDiagnosis,
   StructuredPayloadDiagnostic,
   StructuredPayloadSource,
   StructuredPostObservation,
+  StructuredRequestDiagnostic,
+  StructuredResponseDiagnostic,
   StructuredResponseType,
+  StructuredSsrMilestone,
 } from './conversation-contracts';
+import type { PublicRequestDecision } from '../studio/public-request-telemetry';
 import {
   canonicalPost,
   type RelationshipCandidate,
@@ -31,6 +36,10 @@ export interface StructuredExtraction {
   cards: PublicRecord[];
   domMatches: number;
   conflicts: string[];
+  requests?: StructuredRequestDiagnostic[];
+  responses?: StructuredResponseDiagnostic[];
+  ssrMilestones?: StructuredSsrMilestone[];
+  acquisitionDiagnosis?: StructuredAcquisitionDiagnosis;
 }
 
 const scalar = (value: unknown): string | null => {
@@ -437,6 +446,71 @@ export class PassiveStructuredResponseObserver {
   private readonly pending = new Set<Promise<void>>();
   private readonly captured: StructuredPayloadInput[] = [];
   private readonly seen = new Set<string>();
+  private readonly requestByObject = new WeakMap<HTTPRequest, string>();
+  private readonly requests: StructuredRequestDiagnostic[] = [];
+  private readonly responses: StructuredResponseDiagnostic[] = [];
+  private readonly ssrMilestones: StructuredSsrMilestone[] = [];
+
+  recordRequest(request: HTTPRequest, decision: PublicRequestDecision) {
+    if (this.requests.length >= 500) return;
+    const id = `request-${this.requests.length + 1}`,
+      endpointPath = this.endpointPath(request.url());
+    this.requestByObject.set(request, id);
+    this.requests.push({
+      id,
+      endpointPath,
+      method: request.method(),
+      resourceType: request.resourceType(),
+      admitted: decision.admitted,
+      admissionReason: decision.reason,
+      completion: 'PENDING',
+      failureCategory: null,
+      observedAt: new Date().toISOString(),
+    });
+  }
+
+  finishRequest(request: HTTPRequest) {
+    const row = this.requestFor(request);
+    if (row) row.completion = 'FINISHED';
+  }
+
+  failRequest(request: HTTPRequest) {
+    const row = this.requestFor(request);
+    if (!row) return;
+    row.completion = 'FAILED';
+    row.failureCategory = request.failure()?.errorText
+      ? 'BROWSER_REQUEST_FAILED'
+      : 'BROWSER_REQUEST_FAILURE_UNSPECIFIED';
+  }
+
+  observeSsr(
+    milestone: string,
+    scripts: Array<{ index: number; text: string }>,
+    endpointPath: string,
+  ) {
+    const observedAt = new Date().toISOString(),
+      parsed = parseSsrRelayScripts(scripts, endpointPath, observedAt),
+      postNodes = extractStructuredEvidence(
+        parsed,
+        'https://www.threads.com/@diagnostic/post/DIAGNOSTIC',
+      ).posts.length;
+    this.ssrMilestones.push({
+      milestone,
+      scriptCount: scripts.length,
+      totalBytes: scripts.reduce((sum, row) => sum + row.text.length, 0),
+      postNodes,
+      scriptHashes: scripts.map((row) => hash(row.text)),
+      queryNames: [
+        ...new Set(
+          parsed
+            .map((row) => row.queryName)
+            .filter((name): name is string => !!name),
+        ),
+      ].sort(),
+      observedAt,
+    });
+  }
+
   observe(response: HTTPResponse) {
     const task = this.capture(response).finally(() =>
       this.pending.delete(task),
@@ -444,11 +518,41 @@ export class PassiveStructuredResponseObserver {
     this.pending.add(task);
   }
   private async capture(response: HTTPResponse) {
-    if (response.status() < 200 || response.status() >= 300) return;
+    const request = response.request(),
+      requestRow = this.requestFor(request),
+      endpointPath = this.endpointPath(response.url()),
+      headers = response.headers(),
+      contentType = headers['content-type'] ?? '',
+      declaredValue = Number(headers['content-length'] ?? 0),
+      declared =
+        Number.isFinite(declaredValue) && declaredValue > 0
+          ? declaredValue
+          : null,
+      diagnostic: StructuredResponseDiagnostic = {
+        requestId: requestRow?.id ?? 'request-untracked',
+        endpointPath,
+        method: request.method(),
+        status: response.status(),
+        contentType: contentType.split(';')[0]?.trim().toLowerCase() ?? '',
+        resourceType: request.resourceType(),
+        contentLength: declared,
+        admitted: requestRow?.admitted ?? true,
+        admissionReason: requestRow?.admissionReason ?? 'UNTRACKED_RESPONSE',
+        parserDecision: 'PENDING',
+        bodyHash: null,
+        conversationMarkers: [],
+        observedAt: new Date().toISOString(),
+      };
+    if (this.responses.length < 200) this.responses.push(diagnostic);
+    if (response.status() < 200 || response.status() >= 300) {
+      diagnostic.parserDecision = 'SKIPPED_HTTP_STATUS';
+      return;
+    }
     let url: URL;
     try {
       url = new URL(response.url());
     } catch {
+      diagnostic.parserDecision = 'SKIPPED_NON_PUBLIC_HOST';
       return;
     }
     if (
@@ -459,28 +563,70 @@ export class PassiveStructuredResponseObserver {
         'threads.net',
         'www.threads.net',
       ].includes(url.hostname)
-    )
+    ) {
+      diagnostic.parserDecision = 'SKIPPED_NON_PUBLIC_HOST';
       return;
-    const contentType = response.headers()['content-type'] ?? '';
-    if (!/(?:application|text)\/(?:[^;]+\+)?json\b/iu.test(contentType)) return;
-    const declared = Number(response.headers()['content-length'] ?? 0);
-    if (declared > 3000000) return;
+    }
+    const jsonContentType = /(?:application|text)\/(?:[^;]+\+)?json\b/iu.test(
+        contentType,
+      ),
+      diagnosticTextType =
+        ['xhr', 'fetch'].includes(request.resourceType()) &&
+        /(?:json|javascript|graphql|text\/plain)/iu.test(contentType);
+    if (!jsonContentType && !diagnosticTextType) {
+      diagnostic.parserDecision = 'SKIPPED_CONTENT_TYPE';
+      return;
+    }
+    if (declared !== null && declared > 3000000) {
+      diagnostic.parserDecision = 'SKIPPED_DECLARED_TOO_LARGE';
+      return;
+    }
     let body: string;
     try {
       body = await response.text();
     } catch {
+      diagnostic.parserDecision = 'SKIPPED_BODY_READ_FAILED';
       return;
     }
-    if (!body || body.length > 3000000) return;
+    if (!body) {
+      diagnostic.parserDecision = 'SKIPPED_EMPTY_BODY';
+      return;
+    }
+    if (body.length > 3000000) {
+      diagnostic.parserDecision = 'SKIPPED_BODY_TOO_LARGE';
+      return;
+    }
+    diagnostic.bodyHash = hash(body);
+    diagnostic.conversationMarkers = [
+      'containing_thread',
+      'reply_threads',
+      'thread_items',
+      'direct_replies',
+      'reply_to_post_id',
+      'root_post_id',
+    ].filter((marker) => body.includes(`"${marker}"`));
     let payload: unknown;
     try {
       payload = JSON.parse(body);
     } catch {
+      diagnostic.parserDecision = 'SKIPPED_JSON_PARSE_FAILED';
+      return;
+    }
+    if (!jsonContentType) {
+      diagnostic.parserDecision = 'SKIPPED_CONTENT_TYPE_JSON_PARSEABLE';
       return;
     }
     const payloadHash = hash(payload);
-    if (this.seen.has(payloadHash) || this.captured.length >= 30) return;
+    if (this.seen.has(payloadHash)) {
+      diagnostic.parserDecision = 'SKIPPED_DUPLICATE_PAYLOAD';
+      return;
+    }
+    if (this.captured.length >= 30) {
+      diagnostic.parserDecision = 'SKIPPED_CAPTURE_LIMIT';
+      return;
+    }
     this.seen.add(payloadHash);
+    diagnostic.parserDecision = 'ACCEPTED_JSON';
     this.captured.push({
       source: 'NETWORK',
       endpointPath: url.pathname,
@@ -494,4 +640,86 @@ export class PassiveStructuredResponseObserver {
     await Promise.allSettled([...this.pending]);
     return [...this.captured];
   }
+
+  telemetry() {
+    return {
+      requests: this.requests.map((row) => ({ ...row })),
+      responses: this.responses.map((row) => ({ ...row })),
+      ssrMilestones: this.ssrMilestones.map((row) => ({ ...row })),
+    };
+  }
+
+  private requestFor(request: HTTPRequest) {
+    const id = this.requestByObject.get(request);
+    return id ? this.requests.find((row) => row.id === id) : undefined;
+  }
+
+  private endpointPath(value: string) {
+    try {
+      return new URL(value).pathname;
+    } catch {
+      return 'INVALID_URL';
+    }
+  }
+}
+
+export function diagnoseStructuredAcquisition(
+  extraction: StructuredExtraction,
+): StructuredAcquisitionDiagnosis {
+  if (extraction.relationshipCandidates.length)
+    return 'STRUCTURED_RELATIONSHIP_EVIDENCE_PRESENT';
+  const responses = extraction.responses ?? [],
+    milestones = extraction.ssrMilestones ?? [],
+    firstQueries = new Set(milestones[0]?.queryNames ?? []),
+    laterConversationQuery = milestones
+      .slice(1)
+      .some((row) =>
+        row.queryNames.some(
+          (name) =>
+            /BarcelonaPostPage(?:Downward|Upward)Query/u.test(name) &&
+            !firstQueries.has(name),
+        ),
+      );
+  if (laterConversationQuery) return 'SSR_LATE_INSERTION';
+  if (
+    responses.some(
+      (row) =>
+        row.parserDecision === 'SKIPPED_CONTENT_TYPE_JSON_PARSEABLE' &&
+        row.conversationMarkers.length > 0,
+    )
+  )
+    return 'NETWORK_CONTENT_TYPE_MISSED';
+  if (responses.some((row) => [401, 403, 429].includes(row.status)))
+    return 'PUBLIC_ACCESS_LIMITED';
+  const conversationQueries = milestones.some((row) =>
+      row.queryNames.some((name) =>
+        /BarcelonaPostPage(?:Downward|Upward)Query/u.test(name),
+      ),
+    ),
+    conversationMarkers = responses.some(
+      (row) =>
+        row.parserDecision === 'ACCEPTED_JSON' &&
+        row.conversationMarkers.length > 0,
+    );
+  if (conversationQueries || conversationMarkers)
+    return 'STRUCTURED_SCHEMA_UNRECOGNIZED';
+  const possiblyRelevantBlockedRequest = (extraction.requests ?? []).some(
+    (row) =>
+      !row.admitted &&
+      (['BLOCKED_EVENT_BUDGET', 'BLOCKED_NAVIGATION_BUDGET'].includes(
+        row.admissionReason,
+      ) ||
+        (row.admissionReason === 'BLOCKED_UNSUPPORTED_ORIGIN' &&
+          ['xhr', 'fetch', 'document', 'script'].includes(row.resourceType))),
+  );
+  if (
+    !milestones.length ||
+    !responses.length ||
+    possiblyRelevantBlockedRequest ||
+    (extraction.requests ?? []).some(
+      (row) => row.admitted && row.completion !== 'FINISHED',
+    )
+  )
+    return 'INCONCLUSIVE';
+  return 'NO_STRUCTURED_EVIDENCE';
 }
