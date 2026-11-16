@@ -20,6 +20,29 @@ export class ProductPipelineController {
   list() {
     return this.pipeline.list();
   }
+  @Get('automation/batches')
+  listAuto() {
+    return this.pipeline.listAuto();
+  }
+  @Get('automation/batches/:id')
+  getAuto(@Param('id') id: string) {
+    return this.pipeline.getAuto(id);
+  }
+  @Post('automation/batches')
+  startAuto(@Body() body: any, @Headers('origin') origin?: string) {
+    this.origin(origin);
+    return this.pipeline.startAuto(body);
+  }
+  @Post('automation/batches/:id/resume')
+  resumeAuto(@Param('id') id: string, @Headers('origin') origin?: string) {
+    this.origin(origin);
+    return this.pipeline.resumeAuto(id);
+  }
+  @Post('automation/batches/:id/cancel')
+  cancelAuto(@Param('id') id: string, @Headers('origin') origin?: string) {
+    this.origin(origin);
+    return this.pipeline.cancelAuto(id);
+  }
   @Get(':id')
   get(@Param('id') id: string) {
     return this.pipeline.get(id);

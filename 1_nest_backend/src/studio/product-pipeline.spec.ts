@@ -1,4 +1,4 @@
-import { ProductPipelineService, productStageSnapshot } from './product-pipeline';
+import { autonomousProductRequest, ProductPipelineService, productStageSnapshot } from './product-pipeline';
 import { describe, expect, it, jest } from '@jest/globals';
 import { mkdtemp, writeFile, rm } from 'fs/promises';
 import * as os from 'os';
@@ -36,6 +36,14 @@ const session = (overrides: any = {}) => ({
 });
 
 describe('product pipeline snapshot', () => {
+  it('bounds an autonomous SERIOUS DRAFT batch without widening production authority', () => {
+    expect(autonomousProductRequest({ topic: 'công việc', targetVideos: 3 })).toMatchObject({
+      style: 'SERIOUS', targetVideos: 3, maxCandidates: 30, maxEnrich: 10,
+      voice: 'my_yen', speed: 1.3,
+    });
+    expect(() => autonomousProductRequest({ topic: 'công việc', targetVideos: 4 })).toThrow('Invalid autonomous DRAFT request');
+    expect(() => autonomousProductRequest({ topic: 'công việc', style: 'FUNNY' })).toThrow('Invalid autonomous DRAFT request');
+  });
   it('never calls an observed context verified and waits for explicit review', () => {
     const value = productStageSnapshot(
       session({

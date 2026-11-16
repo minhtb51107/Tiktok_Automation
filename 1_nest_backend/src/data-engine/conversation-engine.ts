@@ -314,6 +314,77 @@ export class ConversationEngine {
       return run;
     });
   }
+  /**
+   * Persists an already collected exact-root conversation without another
+   * browser request. Used by the product batch after ContentDiscovery enriched
+   * the URL. Validation and storage are identical to a normal conversation run.
+   */
+  async importCollection(collection: ThreadCollection, requestId: string) {
+    return this.exclusive(async () => {
+      if (!/^[\w-]{1,100}$/.test(requestId))
+        throw Error('CONVERSATION_INVALID_REQUEST');
+      const identity = canonicalPost(collection.root.url);
+      if (!identity) throw Error('CONVERSATION_INVALID_URL');
+      this.validateCollection(collection, identity.url, this.provider.execution);
+      const id = hash({ version: CONVERSATION_VERSION, requestId }),
+        existing = await this.data.store.read<ConversationRun>(
+          key('conversation-runs', id),
+        );
+      if (existing) {
+        if (
+          existing.request.urls?.[0] !== identity.url ||
+          (existing.captures[0]?.collection &&
+            hash(existing.captures[0].collection) !== hash(collection))
+        )
+          throw Error('CONVERSATION_REQUEST_CONFLICT');
+        return existing;
+      }
+      const run: ConversationRun = {
+        schemaVersion: DATA_SCHEMA,
+        version: CONVERSATION_VERSION,
+        id,
+        request: {
+          requestId,
+          urls: [identity.url],
+          limit: 1,
+          priority: 'HOT',
+          minInteractions: 0,
+        },
+        configHash: configHash(),
+        execution: this.provider.execution,
+        status: 'RUNNING',
+        stage: 'PERSISTING_SHADOW',
+        startedAt: collection.startedAt,
+        completedAt: null,
+        elapsedMs: 0,
+        candidates: [
+          { url: identity.url, observedOrder: 0, post: collection.root },
+        ],
+        ranking: rankCandidates(
+          [{ url: identity.url, observedOrder: 0, post: collection.root }],
+          1,
+          collection.startedAt,
+          { priority: 'HOT', minInteractions: 0 },
+        ),
+        captures: [{ url: identity.url, collection: structuredClone(collection) }],
+        results: [],
+        history: [],
+        error: null,
+      };
+      await this.save(run);
+      const record = await this.persist(run, run.captures[0].collection);
+      run.results.push({
+        url: identity.url,
+        collectionId: record.id,
+        evaluation: record.evaluation,
+      });
+      run.status = 'COMPLETED';
+      run.stage = 'WAITING_HUMAN_REVIEW';
+      run.completedAt = new Date().toISOString();
+      await this.save(run);
+      return run;
+    });
+  }
   private async process(run: ConversationRun) {
     try {
       run.status = 'RUNNING';
