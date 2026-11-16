@@ -99,4 +99,3 @@ A future single-use authorization should exercise only public UI behavior:
 If no additional public action is available, this root remains
 `NOT_ENOUGH_CONTENT`; discovery should move to the next candidate within a
 separately approved discovery budget rather than padding or weakening quality.
-
