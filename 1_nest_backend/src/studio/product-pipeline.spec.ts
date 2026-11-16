@@ -1,4 +1,4 @@
-import { autonomousProductRequest, ProductPipelineService, productStageSnapshot } from './product-pipeline';
+import { autonomousDiscoveryErrors, autonomousProductRequest, ProductPipelineService, productStageSnapshot } from './product-pipeline';
 import { describe, expect, it, jest } from '@jest/globals';
 import { mkdtemp, writeFile, rm } from 'fs/promises';
 import * as os from 'os';
@@ -43,6 +43,13 @@ describe('product pipeline snapshot', () => {
     });
     expect(() => autonomousProductRequest({ topic: 'công việc', targetVideos: 4 })).toThrow('Invalid autonomous DRAFT request');
     expect(() => autonomousProductRequest({ topic: 'công việc', style: 'FUNNY' })).toThrow('Invalid autonomous DRAFT request');
+  });
+
+  it('preserves failed live discovery evidence instead of reporting an empty failure', () => {
+    expect(autonomousDiscoveryErrors({
+      status: 'PARTIAL', collections: [], errors: ['CONVERSATION_NAVIGATION_FAILED'],
+      diagnosis: { stage: 'DISCOVERY', outcome: 'UNKNOWN' },
+    })).toEqual(['CONVERSATION_NAVIGATION_FAILED', 'DISCOVERY_UNKNOWN_AT_DISCOVERY']);
   });
   it('never calls an observed context verified and waits for explicit review', () => {
     const value = productStageSnapshot(

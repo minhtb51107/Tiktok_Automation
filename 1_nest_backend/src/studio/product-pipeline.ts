@@ -141,6 +141,22 @@ export const autonomousProductRequest = (body: any): AutonomousProductBatch['req
   return { topic, style, keywords, targetVideos, maxCandidates, maxEnrich, maxRunMs, voice: 'my_yen', speed: 1.3 };
 };
 
+export const autonomousDiscoveryErrors = (run: {
+  status: string;
+  errors?: string[];
+  diagnosis?: { stage?: string; outcome?: string };
+  collections?: unknown[];
+}) => [
+  ...new Set([
+    ...(run.errors || []),
+    ...(!run.collections?.length && run.status !== 'COMPLETED'
+      ? [
+          `DISCOVERY_${run.diagnosis?.outcome || 'UNKNOWN'}_AT_${run.diagnosis?.stage || 'UNKNOWN'}`,
+        ]
+      : []),
+  ]),
+];
+
 const stages: ProductStage[] = [
   'SOURCE',
   'AI_QUALITY',
@@ -406,11 +422,18 @@ export class ProductPipelineService {
     return job;
   }
   async getAuto(id: string) {
-    return JSON.parse(
+    const job = JSON.parse(
       await fs.readFile(this.autoFile(id), 'utf8').catch(() => {
         throw new BadRequestException('Unknown autonomous batch');
       }),
     ) as AutonomousProductBatch;
+    // Historical batch files remain immutable evidence. Enrich only the API
+    // view when an older executor stopped before copying discovery diagnostics.
+    if (!job.errors.length && job.discoveryRunId && this.quality) {
+      const run = await this.quality.engine.get(job.discoveryRunId).catch(() => null);
+      if (run) job.errors = autonomousDiscoveryErrors(run);
+    }
+    return job;
   }
   async listAuto() {
     const rows: AutonomousProductBatch[] = [];
@@ -1013,6 +1036,11 @@ export class ProductPipelineService {
           );
       job.discoveryRunId = run.id;
       job.stage = 'COLLECTING';
+      job.errors.push(
+        ...autonomousDiscoveryErrors(run).filter(
+          (error) => !job!.errors.includes(error),
+        ),
+      );
       await this.saveAuto(job);
       if (run.status === 'BLOCKED') {
         job.status = 'BLOCKED';

@@ -10,14 +10,15 @@ import { crawlerInput } from './crawler-adapter';
 import { GoldShadowEngine } from './gold-shadow';
 import { DISCOVERY_TOPICS } from './gold-v2';
 import { discoveryFailure, type DiscoveryOutcome } from './discovery-diagnostics';
+import type { PublicAccessAudit } from './conversation-public';
 export interface QualityRequest {requestId:string;style:ContentStyle;topic:string;keywords:string[];maxPosts:number;maxEnrich:number;priority:'BALANCED'|'HOT'|'RECENT';minInteractions:number;maxRunMs:number}
 export function qualityRequest(b:any):QualityRequest {
   const maxEnrich=b?.maxEnrich??Math.min(b?.maxPosts??0,10),priority=b?.priority??'BALANCED',minInteractions=b?.minInteractions??0;
   if(!b||!/^[-\w]{1,100}$/.test(b.requestId)||!['SERIOUS','FUNNY'].includes(b.style)||typeof b.topic!=='string'||b.topic.length>120||!Array.isArray(b.keywords)||b.keywords.length<1||b.keywords.length>8||b.keywords.some((q:any)=>typeof q!=='string'||!q.trim()||q.length>120)||!Number.isInteger(b.maxPosts)||b.maxPosts<1||b.maxPosts>50||!Number.isInteger(maxEnrich)||maxEnrich<1||maxEnrich>10||maxEnrich>b.maxPosts||!['BALANCED','HOT','RECENT'].includes(priority)||!Number.isSafeInteger(minInteractions)||minInteractions<0||minInteractions>1_000_000_000||!Number.isInteger(b.maxRunMs)||b.maxRunMs<1000||b.maxRunMs>3600000)throw Error('QUALITY_INVALID_REQUEST');
   return {requestId:b.requestId,style:b.style,topic:b.topic,keywords:[...new Set<string>(b.keywords.map((x:string)=>x.trim()))],maxPosts:b.maxPosts,maxEnrich,priority,minInteractions,maxRunMs:b.maxRunMs};
 }
-export interface QualityProvider {execution:'LIVE'|'SYNTHETIC';discover(keyword:string):Promise<PopularityCandidate[]>;enrich(url:string):Promise<ThreadCollection>}
-export interface QualityRun {schemaVersion:typeof DATA_SCHEMA;version:'content-discovery/1';diagnosis?:{stage:string;outcome:DiscoveryOutcome};configHash:string;captureHashes:Record<string,string>;id:string;request:QualityRequest;execution:'LIVE'|'SYNTHETIC';status:'RUNNING'|'COMPLETED'|'PARTIAL'|'BLOCKED';stage:string;startedAt:string;completedAt:string|null;elapsedMs:number;keywordCursor:number;targetCursor:number;candidates:PopularityCandidate[];urls:string[]|null;collections:ThreadCollection[];imports:string[];errors:string[];result:ReturnType<typeof rankConversations>|null;history:Array<{at:string;stage:string}>}
+export interface QualityProvider {execution:'LIVE'|'SYNTHETIC';discover(keyword:string,audit?:(event:PublicAccessAudit)=>void):Promise<PopularityCandidate[]>;enrich(url:string,audit?:(event:PublicAccessAudit)=>void):Promise<ThreadCollection>}
+export interface QualityRun {schemaVersion:typeof DATA_SCHEMA;version:'content-discovery/1';diagnosis?:{stage:string;outcome:DiscoveryOutcome};accessAudits?:PublicAccessAudit[];configHash:string;captureHashes:Record<string,string>;id:string;request:QualityRequest;execution:'LIVE'|'SYNTHETIC';status:'RUNNING'|'COMPLETED'|'PARTIAL'|'BLOCKED';stage:string;startedAt:string;completedAt:string|null;elapsedMs:number;keywordCursor:number;targetCursor:number;candidates:PopularityCandidate[];urls:string[]|null;collections:ThreadCollection[];imports:string[];errors:string[];result:ReturnType<typeof rankConversations>|null;history:Array<{at:string;stage:string}>}
 /** Small sequential coordinator over existing DATA04 discovery/enrichment and DATA01 storage. */
 export class ContentDiscovery {
   private busy=false;
@@ -36,12 +37,13 @@ export class ContentDiscovery {
     if(r.configHash!==hash(CONTENT_SELECTION))throw Error('QUALITY_CONFIG_CHANGED');
     if(r.collections.some(c=>r.captureHashes[c.root.url]!==hash(c)))throw Error('QUALITY_CAPTURE_INTEGRITY');
     await this.save(r);
-    while(r.keywordCursor<r.request.keywords.length&&r.candidates.length<r.request.maxPosts){budget();r.stage='DISCOVERY';await this.save(r);const rows=await this.provider.discover(r.request.keywords[r.keywordCursor]);
+    const audit=(event:PublicAccessAudit)=>{(r.accessAudits??=[]).push(structuredClone(event))};
+    while(r.keywordCursor<r.request.keywords.length&&r.candidates.length<r.request.maxPosts){budget();r.stage='DISCOVERY';await this.save(r);const rows=await this.provider.discover(r.request.keywords[r.keywordCursor],audit);
       for(const row of rows){const link=canonicalPost(row.url);if(link&&!r.candidates.some(x=>canonicalPost(x.url)?.id===link.id)&&r.candidates.length<r.request.maxPosts)r.candidates.push({...row,url:link.url,observedOrder:r.candidates.length})}r.keywordCursor++;await this.save(r);
     }
     if(!r.urls)r.urls=rankCandidates(r.candidates,maxEnrich,new Date(this.now()).toISOString(),{priority,minInteractions}).selected;
     while(r.targetCursor<r.urls.length){budget();const url=r.urls[r.targetCursor];let collection=r.collections.find(c=>c.root.url===url);r.stage='EXACT_ROOT_AND_REPLIES';await this.save(r);
-      if(!collection){collection=await this.provider.enrich(url);if(canonicalPost(collection.root.url)?.url!==url)throw Error('QUALITY_WRONG_TARGET');if(collection.root.provenance.synthetic!==(this.provider.execution==='SYNTHETIC'))throw Error('QUALITY_PROVENANCE_MISMATCH');r.collections.push(collection);r.captureHashes[url]=hash(collection);await this.save(r)}
+      if(!collection){collection=await this.provider.enrich(url,audit);if(canonicalPost(collection.root.url)?.url!==url)throw Error('QUALITY_WRONG_TARGET');if(collection.root.provenance.synthetic!==(this.provider.execution==='SYNTHETIC'))throw Error('QUALITY_PROVENANCE_MISMATCH');r.collections.push(collection);r.captureHashes[url]=hash(collection);await this.save(r)}
       if(collection.sourceCapture){const input=crawlerInput(collection.sourceCapture,r.id,this.provider.execution==='SYNTHETIC');if(input){const imported=await this.data.import([input],collection.root.provenance.observedAt);if(!r.imports.includes(imported.id))r.imports.push(imported.id);await new GoldShadowEngine(this.data).evaluateImport(imported.id);}}
       r.targetCursor++;await this.save(r);
     }
