@@ -570,6 +570,11 @@ export class PassiveStructuredResponseObserver {
     const jsonContentType = /(?:application|text)\/(?:[^;]+\+)?json\b/iu.test(
         contentType,
       ),
+      parseableJavascriptResponse =
+        ['xhr', 'fetch'].includes(request.resourceType()) &&
+        /^(?:application\/x-javascript|text\/javascript)(?:;|$)/iu.test(
+          contentType,
+        ),
       diagnosticTextType =
         ['xhr', 'fetch'].includes(request.resourceType()) &&
         /(?:json|javascript|graphql|text\/plain)/iu.test(contentType);
@@ -612,7 +617,7 @@ export class PassiveStructuredResponseObserver {
       diagnostic.parserDecision = 'SKIPPED_JSON_PARSE_FAILED';
       return;
     }
-    if (!jsonContentType) {
+    if (!jsonContentType && !parseableJavascriptResponse) {
       diagnostic.parserDecision = 'SKIPPED_CONTENT_TYPE_JSON_PARSEABLE';
       return;
     }
@@ -656,7 +661,12 @@ export class PassiveStructuredResponseObserver {
 
   private endpointPath(value: string) {
     try {
-      return new URL(value).pathname;
+      const url = new URL(value);
+      if (url.protocol === 'http:' || url.protocol === 'https:')
+        return url.pathname;
+      if (url.protocol === 'data:') return 'DATA_URL';
+      if (url.protocol === 'blob:') return 'BLOB_URL';
+      return `${url.protocol.replace(':', '').toUpperCase()}_URL`;
     } catch {
       return 'INVALID_URL';
     }

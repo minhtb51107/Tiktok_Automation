@@ -311,6 +311,84 @@ describe('passive Threads structured response extraction', () => {
     expect(JSON.stringify(observer.telemetry())).not.toContain('secret');
   });
 
+  test('accepts parseable JSON returned as JavaScript for an admitted public XHR', async () => {
+    const observer = new PassiveStructuredResponseObserver(),
+      request = {
+        url: () => 'https://www.threads.com/api/graphql/?secret=REDACTED',
+        method: () => 'POST',
+        resourceType: () => 'xhr',
+        failure: () => null,
+      } as any;
+    observer.recordRequest(request, { admitted: true, reason: 'ADMITTED' });
+    observer.observe({
+      status: () => 200,
+      url: request.url,
+      request: () => request,
+      headers: () => ({ 'content-type': 'text/javascript; charset=utf-8' }),
+      text: async () =>
+        JSON.stringify({
+          data: {
+            media: {
+              ...post('100', 'ROOT', 'root', 'TEST DATA root post'),
+              text_post_app_info: {
+                direct_replies: {
+                  edges: [
+                    {
+                      node: post('101', 'R1', 'reply', 'reply text'),
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+    } as any);
+    const captured = await observer.settle();
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toMatchObject({
+      source: 'NETWORK',
+      endpointPath: '/api/graphql/',
+    });
+    expect(observer.telemetry().responses).toEqual([
+      expect.objectContaining({
+        endpointPath: '/api/graphql/',
+        parserDecision: 'ACCEPTED_JSON',
+        conversationMarkers: ['direct_replies'],
+      }),
+    ]);
+    const extraction = extractStructuredEvidence(captured, rootUrl),
+      graph = collectEvidence(root, {
+        url: rootUrl,
+        observedAt: root.provenance.observedAt,
+        synthetic: true,
+        visibleUrls: [],
+        structuredVisibleUrls: extraction.structuredVisibleUrls,
+        jsonLd: [],
+        relationshipCandidates: extraction.relationshipCandidates,
+      });
+    expect(extraction.relationshipCandidates).toHaveLength(1);
+    expect(graph.replies.map((row) => row.id)).toEqual(['R1']);
+    expect(JSON.stringify(observer.telemetry())).not.toContain('secret');
+  });
+
+  test('redacts non-HTTP data URLs from telemetry paths', async () => {
+    const observer = new PassiveStructuredResponseObserver(),
+      request = {
+        url: () => 'data:text/javascript;base64,U0VDUkVU',
+        method: () => 'GET',
+        resourceType: () => 'script',
+        failure: () => null,
+      } as any;
+    observer.recordRequest(request, {
+      admitted: false,
+      reason: 'BLOCKED_UNSUPPORTED_ORIGIN',
+    });
+    expect(observer.telemetry().requests).toEqual([
+      expect.objectContaining({ endpointPath: 'DATA_URL' }),
+    ]);
+    expect(JSON.stringify(observer.telemetry())).not.toContain('U0VDUkVU');
+  });
+
   test('tracks SSR query names at independent milestones without retaining script text', () => {
     const observer = new PassiveStructuredResponseObserver(),
       script = JSON.stringify({
