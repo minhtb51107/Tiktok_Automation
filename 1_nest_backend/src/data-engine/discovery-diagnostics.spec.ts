@@ -1,7 +1,7 @@
 import {describe,test,expect} from '@jest/globals';
 import {discoveryFailure,inspectSearchPage,inspectPublicDiscovery,extractionStop} from './discovery-diagnostics';
 import {ThreadsProvider,ThreadsApiError} from '../threads-api/provider';
-import {discoverConversations} from './conversation-public';
+import {classifyPublicBrowserFailure,discoverConversations,withTransientPublicRetry} from './conversation-public';
 
 describe('Discovery diagnostics — OFFLINE/SYNTHETIC only',()=>{
   test('pilot candidate cap rejects invalid limits before any browser launch',async()=>{
@@ -17,11 +17,25 @@ describe('Discovery diagnostics — OFFLINE/SYNTHETIC only',()=>{
     ['CONVERSATION_NO_RESULTS','NO_RESULTS'],
     ['CONVERSATION_NO_PUBLIC_CANDIDATES','UNKNOWN'],
     ['CONVERSATION_NAVIGATION_FAILED','UNKNOWN'],
+    ['CONVERSATION_NAVIGATION_TIMEOUT','TIMEOUT'],
+    ['CONVERSATION_NAVIGATION_NETWORK_ERROR','NETWORK'],
     ['CONVERSATION_EXACT_ROOT_BODY_UNVERIFIED','UNKNOWN'],
   ])('%s is classified without guessing cause',(code,expected)=>expect(discoveryFailure(Error(code))).toBe(expected));
   test('an API 429 is rate limit, an unrecognized error stays unknown',()=>{
     expect(discoveryFailure(new ThreadsApiError('RATE_LIMITED',429))).toBe('RATE_LIMIT');
     expect(discoveryFailure(null)).toBe('UNKNOWN');
+  });
+  test('Puppeteer navigation failures retain safe category and retry only transient errors',async()=>{
+    const timeout=Object.assign(Error('Navigation timeout of 15000 ms exceeded'),{name:'TimeoutError'});
+    expect(classifyPublicBrowserFailure(timeout,'NAVIGATION')).toMatchObject({category:'TIMEOUT',code:'CONVERSATION_NAVIGATION_TIMEOUT',timeoutType:'PUPPETEER_PAGE_GOTO',transient:true});
+    expect(classifyPublicBrowserFailure(Error('net::ERR_CONNECTION_RESET at https://example.invalid/?secret=x'),'NAVIGATION')).toMatchObject({category:'NETWORK',causeCode:'ERR_CONNECTION_RESET',transient:true});
+    expect(classifyPublicBrowserFailure(Error('CONVERSATION_ACCESS_BLOCKED'),'ACCESS_GATE')).toMatchObject({category:'ACCESS',transient:false});
+    let attempts=0;
+    await expect(withTransientPublicRetry(async()=>{attempts++;if(attempts===1)throw timeout;return 'ok'},async()=>{})).resolves.toBe('ok');
+    expect(attempts).toBe(2);
+    attempts=0;
+    await expect(withTransientPublicRetry(async()=>{attempts++;throw Error('CONVERSATION_ACCESS_BLOCKED')},async()=>{})).rejects.toThrow('CONVERSATION_ACCESS_BLOCKED');
+    expect(attempts).toBe(1);
   });
   test('empty success is not permission denial or parser failure; no invented paging',()=>{
     expect(inspectSearchPage({data:[]})).toMatchObject({outcome:'ACCESS_EMPTY',count:0,paging:'NOT_PRESENT',publicAccess:'UNKNOWN'});

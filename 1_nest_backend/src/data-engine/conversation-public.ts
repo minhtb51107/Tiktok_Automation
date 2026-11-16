@@ -60,7 +60,167 @@ export interface PublicAccessAudit {
   stage?: 'EXACT_ROOT';
   requestCoverage?: string;
   requestTelemetry?: RequestTelemetry;
+  attempt?: number;
+  failure?: PublicBrowserFailure | null;
+  navigation?: {
+    requestedDocument: string;
+    finalDocument: string | null;
+    httpStatus: number | null;
+    redirected: boolean | null;
+    responseReceived: boolean;
+  };
 }
+export type PublicBrowserFailureCategory =
+  | 'TIMEOUT'
+  | 'NETWORK'
+  | 'BROWSER'
+  | 'ACCESS'
+  | 'HTTP'
+  | 'PARSER'
+  | 'RESOURCE'
+  | 'UNKNOWN';
+export interface PublicBrowserFailure {
+  stage:
+    | 'RESOURCE_PREFLIGHT'
+    | 'BROWSER_LAUNCH'
+    | 'BROWSER_SETUP'
+    | 'NAVIGATION'
+    | 'ACCESS_GATE'
+    | 'DOM_READ'
+    | 'CLEANUP';
+  category: PublicBrowserFailureCategory;
+  code: string;
+  httpStatus: number | null;
+  timeoutType: 'PUPPETEER_PAGE_GOTO' | 'RESOURCE_DEADLINE' | null;
+  causeCode: string | null;
+  transient: boolean;
+}
+
+const knownCode = (value: unknown) =>
+  typeof value === 'string' && /^CONVERSATION_[A-Z0-9_]+$/.test(value)
+    ? value
+    : null;
+
+/** Fixed labels only: raw Puppeteer messages, URLs and local paths never persist. */
+export function classifyPublicBrowserFailure(
+  error: unknown,
+  stage: PublicBrowserFailure['stage'],
+): PublicBrowserFailure {
+  const row = error as { name?: unknown; message?: unknown; publicFailure?: unknown },
+    name = typeof row?.name === 'string' ? row.name : '',
+    message = typeof row?.message === 'string' ? row.message : '',
+    existing = knownCode(message),
+    http = existing?.match(/^CONVERSATION_HTTP_(\d{3})$/)?.[1];
+  const carried = row?.publicFailure as PublicBrowserFailure | undefined;
+  if (
+    carried &&
+    knownCode(carried.code) &&
+    ['TIMEOUT', 'NETWORK', 'BROWSER', 'ACCESS', 'HTTP', 'PARSER', 'RESOURCE', 'UNKNOWN'].includes(carried.category)
+  ) return structuredClone(carried);
+  if (existing) {
+    if (existing === 'CONVERSATION_NAVIGATION_TIMEOUT')
+      return {
+        stage,
+        category: 'TIMEOUT',
+        code: existing,
+        httpStatus: null,
+        timeoutType: 'PUPPETEER_PAGE_GOTO',
+        causeCode: 'PUPPETEER_TIMEOUT',
+        transient: true,
+      };
+    const resource = /RESOURCE|TIME_BUDGET|CLEANUP/.test(existing),
+      access = /ACCESS_BLOCKED|HTTP_(401|403|429)/.test(existing),
+      parser = /PARSER|NO_PUBLIC_CANDIDATES|NO_RESULTS/.test(existing);
+    return {
+      stage,
+      category: resource
+        ? 'RESOURCE'
+        : access
+          ? 'ACCESS'
+          : http
+            ? 'HTTP'
+            : parser
+              ? 'PARSER'
+              : 'UNKNOWN',
+      code: existing,
+      httpStatus: http ? Number(http) : null,
+      timeoutType: existing === 'CONVERSATION_TIME_BUDGET' ? 'RESOURCE_DEADLINE' : null,
+      causeCode: null,
+      transient: false,
+    };
+  }
+  if (name === 'TimeoutError' || /Navigation timeout|Waiting failed.*timeout/iu.test(message))
+    return {
+      stage,
+      category: 'TIMEOUT',
+      code: 'CONVERSATION_NAVIGATION_TIMEOUT',
+      httpStatus: null,
+      timeoutType: 'PUPPETEER_PAGE_GOTO',
+      causeCode: 'PUPPETEER_TIMEOUT',
+      transient: true,
+    };
+  const networkCode = message.match(/net::(ERR_[A-Z0-9_]+)/u)?.[1] ?? null;
+  if (networkCode)
+    return {
+      stage,
+      category: 'NETWORK',
+      code: 'CONVERSATION_NAVIGATION_NETWORK_ERROR',
+      httpStatus: null,
+      timeoutType: null,
+      causeCode: networkCode,
+      transient: [
+        'ERR_CONNECTION_CLOSED',
+        'ERR_CONNECTION_RESET',
+        'ERR_NETWORK_CHANGED',
+        'ERR_TIMED_OUT',
+      ].includes(networkCode),
+    };
+  if (/Target closed|Session closed|browser has disconnected|Protocol error/iu.test(message))
+    return {
+      stage,
+      category: 'BROWSER',
+      code: 'CONVERSATION_BROWSER_FAILURE',
+      httpStatus: null,
+      timeoutType: null,
+      causeCode: name.replace(/[^A-Za-z0-9_]/g, '').slice(0, 60) || null,
+      transient: false,
+    };
+  return {
+    stage,
+    category: 'UNKNOWN',
+    code: 'CONVERSATION_NAVIGATION_FAILED',
+    httpStatus: null,
+    timeoutType: null,
+    causeCode: name.replace(/[^A-Za-z0-9_]/g, '').slice(0, 60) || null,
+    transient: false,
+  };
+}
+
+export async function withTransientPublicRetry<T>(
+  run: (attempt: number) => Promise<T>,
+  backoff: (attempt: number) => Promise<void> = (attempt) =>
+    new Promise((resolve) => setTimeout(resolve, attempt * 1000)),
+) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await run(attempt);
+    } catch (error) {
+      const failure = classifyPublicBrowserFailure(error, 'NAVIGATION');
+      if (attempt === 2 || !failure.transient) throw error;
+      await backoff(attempt);
+    }
+  }
+  throw Error('CONVERSATION_NAVIGATION_FAILED');
+}
+
+const sanitizedPublicDocumentUrl = (value: string) => {
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return 'INVALID_PUBLIC_URL';
+  }
+};
 export interface PublicDomEvidenceSnapshot {
   finalUrl: string;
   observed: ReturnType<typeof observePublicDocument>;
@@ -542,6 +702,7 @@ async function visit<T>(
   ) => Promise<T>,
   audit?: (event: PublicAccessAudit) => void,
   timeoutMs = 30000,
+  attempt = 1,
 ): Promise<T> {
   const started = Date.now();
   let requests = 0,
@@ -550,13 +711,23 @@ async function visit<T>(
     interactionActions = 0,
     loadMoreActions = 0,
     nestedExpandActions = 0,
-    outcome = 'COMPLETED';
+    outcome = 'COMPLETED',
+    failure: PublicBrowserFailure | null = null,
+    stage: PublicBrowserFailure['stage'] = 'RESOURCE_PREFLIGHT';
   const telemetry = newRequestTelemetry();
+  const navigation: NonNullable<PublicAccessAudit['navigation']> = {
+    requestedDocument: sanitizedPublicDocumentUrl(url),
+    finalDocument: null,
+    httpStatus: null,
+    redirected: null,
+    responseReceived: false,
+  };
   const executablePath = existingPublicBrowser();
   if (!executablePath) throw Error('CONVERSATION_BROWSER_MISSING');
   const guard = new BrowserResourceGuard(timeoutMs);
   try {
     await guard.start();
+    stage = 'BROWSER_LAUNCH';
     const browser = await guard.launch((signal) =>
       puppeteer.launch({
         executablePath,
@@ -572,6 +743,7 @@ async function visit<T>(
     );
     // Reuse Chromium's initial blank tab rather than leaving it beside a new tab.
     const pages = await browser.pages();
+    stage = 'BROWSER_SETUP';
     const page = pages[0] ?? (await browser.newPage());
     for (const extra of pages.slice(1)) await extra.close();
     await page.setBypassServiceWorker(true);
@@ -597,10 +769,15 @@ async function visit<T>(
         telemetry.handlingFailures++;
       });
     });
+    stage = 'NAVIGATION';
     const response = await page.goto(url, {
       waitUntil: 'domcontentloaded',
       timeout: 15000,
     });
+    navigation.finalDocument = sanitizedPublicDocumentUrl(page.url());
+    navigation.httpStatus = response?.status() ?? null;
+    navigation.redirected = navigation.finalDocument !== navigation.requestedDocument;
+    navigation.responseReceived = response !== null;
     if (response && response.status() >= 400)
       throw Error('CONVERSATION_HTTP_' + response.status());
     structured.observeSsr(
@@ -608,6 +785,7 @@ async function visit<T>(
       await page.evaluate(observeStructuredSsrScripts),
       new URL(page.url()).pathname,
     );
+    stage = 'ACCESS_GATE';
     const gate = async () =>
       /\/(?:login|accounts|challenge|checkpoint)(?:\/|\?|$)/i.test(
         page.url(),
@@ -631,6 +809,7 @@ async function visit<T>(
       await new Promise((r) => setTimeout(r, 500));
       if (await gate()) throw Error('CONVERSATION_ACCESS_BLOCKED');
     }
+    stage = 'DOM_READ';
     const result = await read(page, structured);
     const trace = (result as { acquisition?: ConversationAcquisitionTrace })
       ?.acquisition;
@@ -649,23 +828,23 @@ async function visit<T>(
     guard.check();
     return result;
   } catch (e: any) {
-    outcome =
-      guard.report.stopCode ??
-      (/^CONVERSATION_[A-Z0-9_]+$/.test(e.message || '')
-        ? e.message
-        : 'CONVERSATION_NAVIGATION_FAILED');
-    if (guard.report.stopCode) throw Error(guard.report.stopCode);
-    throw Error(
-      /^CONVERSATION_[A-Z0-9_]+$/.test(e.message || '')
-        ? e.message
-        : 'CONVERSATION_NAVIGATION_FAILED',
+    failure = classifyPublicBrowserFailure(
+      guard.report.stopCode ? Error(guard.report.stopCode) : e,
+      stage,
     );
+    outcome = failure.code;
+    throw Object.assign(Error(failure.code), { publicFailure: failure });
   } finally {
     try {
+      stage = 'CLEANUP';
       await guard.close();
+    } catch (error) {
+      failure = classifyPublicBrowserFailure(error, 'CLEANUP');
+      outcome = failure.code;
+      throw Object.assign(Error(failure.code), { publicFailure: failure });
     } finally {
       audit?.({
-        url,
+        url: sanitizedPublicDocumentUrl(url),
         requests,
         navigations,
         scrolls: actualScrolls,
@@ -679,6 +858,9 @@ async function visit<T>(
           : (guard.report.stopCode ?? outcome),
         resources: guard.report,
         requestTelemetry: telemetry,
+        attempt,
+        failure,
+        navigation,
       });
     }
   }
@@ -691,10 +873,11 @@ export async function discoverConversations(
   if (!Number.isInteger(limit) || limit < 1 || limit > 10)
     throw Error('CONVERSATION_INVALID_LIMIT');
   const url = discoveryUrl('SEARCH', keyword);
-  return visit(
-    url,
-    1,
-    async (page) => {
+  return withTransientPublicRetry((attempt) =>
+    visit(
+      url,
+      1,
+      async (page) => {
       const observed = await page.evaluate(observePublicDocument),
         now = new Date().toISOString(),
         seen = new Set<string>(),
@@ -757,7 +940,10 @@ export async function discoverConversations(
       }
       return out;
     },
-    audit,
+      audit,
+      30000,
+      attempt,
+    ),
   );
 }
 export async function enrichConversation(

@@ -1,11 +1,13 @@
 /** Fixed diagnostic labels only: never persist raw errors, tokens or paging URLs. */
 export type DiscoveryOutcome = 'ACCESS_EMPTY' | 'RESOURCE_GUARD_STOP' |
-  'PARSER_FAILURE' | 'NO_RESULTS' | 'RATE_LIMIT' | 'UNKNOWN' | 'RESULTS';
+  'PARSER_FAILURE' | 'NO_RESULTS' | 'RATE_LIMIT' | 'TIMEOUT' | 'NETWORK' | 'UNKNOWN' | 'RESULTS';
 
 export function discoveryFailure(error: unknown): DiscoveryOutcome {
   const e = error as {message?: string; kind?: string; httpStatus?: number};
   const code = typeof e?.message === 'string' ? e.message : '';
   if (/RESOURCE_BELOW|RESOURCE_GUARD/.test(code)) return 'RESOURCE_GUARD_STOP';
+  if (/NAVIGATION_TIMEOUT/.test(code)) return 'TIMEOUT';
+  if (/NAVIGATION_NETWORK_ERROR/.test(code)) return 'NETWORK';
   if (e?.kind === 'RATE_LIMITED' || e?.httpStatus === 429 || /HTTP_429/.test(code)) return 'RATE_LIMIT';
   if (e?.kind === 'INVALID_RESPONSE' || /CONVERSATION_PARSER_FAILURE/.test(code)) return 'PARSER_FAILURE';
   if (/CONVERSATION_NO_RESULTS/.test(code)) return 'NO_RESULTS';
