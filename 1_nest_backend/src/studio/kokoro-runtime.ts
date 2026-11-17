@@ -9,6 +9,12 @@ import {TTS_RESOURCE_POLICY,ttsResourceBlock,ttsResourceWarnings,SynthesisMetric
 import {assertNoLocalProbe} from './local-probe-lease';
 export const textHash = (text: string) =>
   createHash('sha256').update(text).digest('hex');
+export function resolveStudioDataRoot(
+  configured = process.env.STUDIO_DATA_ROOT,
+  cwd = process.cwd(),
+) {
+  return configured ? path.resolve(configured) : path.resolve(cwd, '.studio-data');
+}
 export function ttsCacheKeys(text:string,voice:string,speed:number,runtime:VoiceRuntime,context?:{itemId:string;normalizationVersion:string}) {
   const baseKey=textHash(JSON.stringify({text,voice,version:runtime.packageVersion,model:runtime.modelVersion,device:runtime.device,context:context||null,synthesisRate:1}));
   return {baseKey,cacheKey:textHash(baseKey+':'+speed)};
@@ -36,6 +42,9 @@ export class KokoroRuntime {
       voiceDir: process.env.STUDIO_KOKORO_VOICE_DIR || '',
       device: process.env.STUDIO_TTS_DEVICE === 'cuda' ? 'cuda' : 'cpu',
     };
+  }
+  private dataRoot() {
+    return resolveStudioDataRoot();
   }
   private python() {
     return process.env.STUDIO_PYTHON || 'python';
@@ -266,7 +275,8 @@ export class KokoroRuntime {
       throw Error(
         'BLOCKED_RUNTIME: missing dependencies/model/voicepack; no download attempted',
       );
-    const root = path.resolve('.studio-data/audio', sessionId);
+    const dataRoot = this.dataRoot();
+    const root = path.join(dataRoot, 'audio', sessionId);
     const assets = path.join(root, 'assets');
     const temp = path.join(root, 'temp');
     await fs.mkdir(assets, { recursive: true });
@@ -326,7 +336,7 @@ export class KokoroRuntime {
       throw Error('Audio is silent or level could not be verified');
     return {
       filePath: path
-        .relative(path.resolve('.studio-data'), file)
+        .relative(dataRoot, file)
         .replace(/\\/g, '/'),
       durationMs,
       cacheKey,
