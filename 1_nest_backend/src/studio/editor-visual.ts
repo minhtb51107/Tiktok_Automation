@@ -42,7 +42,7 @@ export function validateVisual(
   number(c.fontSize, 24, 64);
   number(c.gap, 0, 60);
   number(c.lineHeight ?? 1.45, 1.1, 2);
-  if (!['LIGHT', 'DARK'].includes(c.appearance ?? 'LIGHT'))
+  if (!['LIGHT', 'DARK'].includes(c.appearance ?? 'DARK'))
     throw new BadRequestException('Invalid card appearance');
   if (c.x + c.width * c.scale > 1080 || c.width <= c.padding * 2 + 100)
     throw new BadRequestException(

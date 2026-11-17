@@ -177,6 +177,20 @@ export function buildStudioPreview(
         fieldStates: Object.fromEntries(
           Object.entries(meta?.fields || {}).map(([k, v]) => [k, v.status]),
         ),
+        fieldEvidence: Object.fromEntries(
+          Object.entries(meta?.fields || {}).map(([k, v]) => [
+            k,
+            {
+              status: v.status,
+              raw: v.raw ?? null,
+              source: v.source,
+              observedAt: v.observedAt,
+              ...(v.approximate === undefined
+                ? {}
+                : { approximate: v.approximate }),
+            },
+          ]),
+        ),
       },
     };
     if(i.editorial?.kind==='COMMENTARY')delete scene.threadsCard;

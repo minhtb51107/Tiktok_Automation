@@ -1,5 +1,17 @@
 import { randomUUID } from 'crypto';
 import type { TextProposal } from './normalization.types';
+import {
+  HuggingFaceContentProvider,
+  type ContentAiProvider,
+} from '../data-engine/ai-provider';
+
+const sharedNormalizationProvider = new HuggingFaceContentProvider();
+
+export function normalizationProviderConfig(
+  provider: ContentAiProvider = sharedNormalizationProvider,
+) {
+  return provider.config();
+}
 export function redactProviderError(input: string) {
   return input
     .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
@@ -23,7 +35,7 @@ export function validateNormalization(
     v.itemId !== itemId ||
     typeof v.proposedSpokenText !== 'string' ||
     !v.proposedSpokenText.trim() ||
-    v.proposedSpokenText.length > input.length * 4 + 256 ||
+    v.proposedSpokenText.length > input.length * 2.5 + 128 ||
     !Array.isArray(v.changes) ||
     !Array.isArray(v.ambiguousTerms) ||
     !Array.isArray(v.warnings)
@@ -49,6 +61,41 @@ export function validateNormalization(
     v.warnings.some((w) => typeof w !== 'string')
   )
     throw Error('Invalid AI change annotations');
+  const protectedValues = (text: string) => [
+    ...text.matchAll(/https?:\/\/\S+|@[\p{L}\p{N}._-]+|#[\p{L}\p{N}_-]+|\d+(?:[.,]\d+)*/giu),
+  ].map((match) => match[0].toLocaleLowerCase('vi'));
+  if (
+    JSON.stringify(protectedValues(input)) !==
+    JSON.stringify(protectedValues(v.proposedSpokenText))
+  )
+    throw Error('AI changed protected source facts; proposal rejected');
+  const pictographs = (text: string) =>
+    [...text.matchAll(/\p{Extended_Pictographic}/gu)].map((m) => m[0]);
+  if (
+    JSON.stringify(pictographs(input)) !==
+    JSON.stringify(pictographs(v.proposedSpokenText))
+  )
+    throw Error('AI changed source emotion markers; proposal rejected');
+  // Every lexical edit must be declared. Punctuation, spacing and casing may be
+  // adjusted for speech, but unannotated words cannot be added or removed.
+  let annotated = input;
+  for (const change of v.changes) {
+    const at = annotated.indexOf(change.before);
+    if (at < 0) throw Error('AI change annotation is not reproducible');
+    annotated =
+      annotated.slice(0, at) +
+      change.after +
+      annotated.slice(at + change.before.length);
+  }
+  const lexical = (text: string) =>
+    text
+      .normalize('NFC')
+      .toLocaleLowerCase('vi')
+      .replace(/[^\p{L}\p{N}@#]+/gu, ' ')
+      .trim()
+      .replace(/\s+/g, ' ');
+  if (lexical(annotated) !== lexical(v.proposedSpokenText))
+    throw Error('AI made undeclared lexical changes; proposal rejected');
   const ambiguous = [
     ...input.matchAll(/(?:^|\s)(t|đcđ|clm|cmn)(?=\s|[.,!?;:]|$)/giu),
   ].map((m) => m[1]);
@@ -68,9 +115,12 @@ export function validateNormalization(
       ...v.changes.map((c) => ({
         term: c.before,
         replacement: c.after,
-        category: c.after.trim()
-          ? ('EXPAND' as const)
-          : ('OMIT_SPOKEN' as const),
+        category:
+          c.before === c.after
+            ? ('KEEP' as const)
+            : c.after.trim()
+              ? ('EXPAND' as const)
+              : ('OMIT_SPOKEN' as const),
         reason: c.reason,
       })),
       ...ambiguous.map((term) => ({
@@ -89,11 +139,13 @@ export function validateNormalization(
       ),
     ],
     proposedSpokenText: v.proposedSpokenText,
-    changes: v.changes.map((c) => ({
-      before: c.before,
-      after: c.after,
-      reason: c.reason,
-    })),
+    changes: v.changes
+      .filter((c) => c.before !== c.after)
+      .map((c) => ({
+        before: c.before,
+        after: c.after,
+        reason: c.reason,
+      })),
     ambiguousTerms: [
       ...v.ambiguousTerms.map((a) => ({ term: a.term, reason: a.reason })),
       ...ambiguous
@@ -114,8 +166,9 @@ export async function normalizeText(item: {
   revision: number;
   spokenText: string;
   originalText: string;
-}): Promise<TextProposal> {
+}, provider: ContentAiProvider = sharedNormalizationProvider): Promise<TextProposal> {
   const start = Date.now();
+  const config = provider.config();
   const run: TextProposal = {
     runId: randomUUID(),
     mode: 'LIVE',
@@ -130,8 +183,8 @@ export async function normalizeText(item: {
     error: null,
     approval: 'PENDING',
     decidedAt: null,
-    provider: 'Hugging Face Router',
-    model: 'Qwen/Qwen2.5-72B-Instruct',
+    provider: provider.name,
+    model: config.model,
     startedAt: new Date().toISOString(),
     completedAt: '',
     latencyMs: 0,
@@ -139,98 +192,73 @@ export async function normalizeText(item: {
     estimatedCost: null,
   };
   try {
-    if (!process.env.HUGGINGFACE_API_KEY)
-      throw Error('HUGGINGFACE_API_KEY is not configured');
     if (!item.spokenText.trim() || item.spokenText.length > 12000)
       throw Error('Spoken text must contain 1–12000 characters');
-    const response = await fetch(
-      'https://router.huggingface.co/v1/chat/completions',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: run.model,
-          messages: [
-            { role: 'system', content: NORMALIZATION_RULES },
-            {
-              role: 'user',
-              content: JSON.stringify({
-                itemId: item.id,
-                sourceText: item.spokenText,
-              }),
-            },
-          ],
-          temperature: 0.1,
-          max_tokens: 2500,
-        }),
-        signal: AbortSignal.timeout(45000),
-      },
-    );
-    if (!response.ok) {
-      let message = 'Response unavailable';
-      try {
-        const payload = (await response.json()) as any;
-        message =
-          typeof payload.error === 'string'
-            ? payload.error
-            : payload.error?.message ||
-              payload.message ||
-              'No public error message';
-      } catch {}
-      run.executionStatus =
-        response.status === 402
-          ? 'BLOCKED_BILLING'
-          : response.status === 401 || response.status === 403
-            ? 'AUTH_ERROR'
-            : response.status === 429
-              ? 'RATE_LIMITED'
-              : 'ERROR';
-      run.diagnostic = {
-        httpStatus: response.status,
-        endpoint: 'https://router.huggingface.co/v1/chat/completions',
-        credential: process.env.HUGGINGFACE_API_KEY ? 'present' : 'absent',
-        redactedBody: redactProviderError(String(message)),
-        billingInfo:
-          response.status === 402
-            ? 'Payment/credits required. Account balance unavailable; no billing change attempted.'
-            : 'Account billing information unavailable',
-      };
-      throw Error(
-        'AI provider HTTP ' +
-          response.status +
-          (response.status === 402 ? ' — BLOCKED_BILLING' : ''),
+    const completion = await provider.completeJson({
+      system: NORMALIZATION_RULES,
+      input: { itemId: item.id, sourceText: item.spokenText },
+      temperature: 0.1,
+      maxTokens: Math.min(2048, config.maxTokens),
+    });
+    try {
+      const parsed = JSON.parse(
+        completion.content
+          .replace(/^```(?:json)?\s*/, '')
+          .replace(/\s*```$/, ''),
       );
+      Object.assign(
+        run,
+        validateNormalization(parsed, item.id, item.spokenText),
+      );
+      provider.recordValidationOutcome?.(completion.ledgerId, 'VALIDATED');
+    } catch (error) {
+      provider.recordValidationOutcome?.(
+        completion.ledgerId,
+        'VALIDATION_FAILED',
+        error instanceof Error ? error.message : 'NORMALIZATION_SCHEMA_INVALID',
+        completion.content,
+      );
+      throw error;
     }
-    const body = (await response.json()) as any;
-    const content = body.choices?.[0]?.message?.content;
-    if (typeof content !== 'string')
-      throw Error('AI provider returned no text');
-    const parsed = JSON.parse(
-      content.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, ''),
-    );
-    Object.assign(run, validateNormalization(parsed, item.id, item.spokenText));
     run.executionStatus = 'SUCCESS';
-    const token = (v: unknown) =>
-      typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null;
     run.tokenUsage = {
-      input: token(body.usage?.prompt_tokens),
-      output: token(body.usage?.completion_tokens),
-      total: token(body.usage?.total_tokens),
+      input: completion.usage.inputTokens,
+      output: completion.usage.outputTokens,
+      total: completion.usage.totalTokens,
     };
-    run.warnings.push(
-      'Estimated cost unavailable: no verified pricing configured.',
-    );
-  } catch (e) {
+    run.estimatedCost = completion.usage.estimatedCostUsd;
+    if (completion.usage.costSource === 'UNAVAILABLE')
+      run.warnings.push(
+        'Estimated cost unavailable: provider did not report cost and no verified pricing is configured.',
+      );
+  } catch (e: any) {
     run.approval = 'ERROR';
-    run.executionStatus = run.executionStatus || 'ERROR';
+    run.executionStatus =
+      e?.message === 'AI_BLOCKED_BILLING'
+        ? 'BLOCKED_BILLING'
+        : e?.message === 'AI_BLOCKED_AUTH'
+          ? 'AUTH_ERROR'
+          : e?.message === 'AI_RATE_LIMITED'
+            ? 'RATE_LIMITED'
+            : 'ERROR';
     run.error =
       e instanceof Error &&
-      /^(AI |Invalid |HUGGINGFACE_|Spoken )/.test(e.message)
+      /^(AI_|AI |Invalid |Spoken )/.test(e.message)
         ? e.message
         : 'AI request timed out, failed, or returned invalid JSON. No text was applied.';
+    if (typeof e?.httpStatus === 'number')
+      run.diagnostic = {
+        httpStatus: e.httpStatus,
+        endpoint: 'Hugging Face Inference Providers',
+        credential: config.credential,
+        redactedBody: redactProviderError(
+          String(e.providerDiagnostic || e.redactedMessage || e.message),
+        ),
+        billingInfo:
+          e.message === 'AI_BLOCKED_BILLING'
+            ? 'Provider reported a billing block; no billing change attempted.'
+            : 'Billing state was not changed.',
+      };
   }
   run.completedAt = new Date().toISOString();
   run.latencyMs = Date.now() - start;

@@ -151,6 +151,13 @@ export interface StoryboardScene {
     createdAt: string | null; dateLabel: string | null; sourceUrl: string;
     counts: {likes:number|null;replies:number|null;reposts:number|null;shares:number|null};
     fieldStates: Record<string,string>;
+    fieldEvidence?: Record<string, {
+      status: string;
+      raw: string | null;
+      source: string;
+      observedAt?: string;
+      approximate?: boolean;
+    }>;
   };
   id: string;
   order: number;

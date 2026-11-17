@@ -3,7 +3,13 @@ import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { labelledCounts } from './metadata-fields';
-import { validateNormalization, NORMALIZATION_RULES } from './normalization';
+import {
+  validateNormalization,
+  NORMALIZATION_RULES,
+  normalizeText,
+} from './normalization';
+import type { ContentAiProvider } from '../data-engine/ai-provider';
+import { offlineNormalize } from './offline-normalization';
 import { StudioService } from './studio.service';
 import { ScraperService } from '../modules/core/scraper/scraper.service';
 describe('normalization and metadata', () => {
@@ -55,6 +61,97 @@ describe('normalization and metadata', () => {
       ),
     ).toThrow();
     expect(NORMALIZATION_RULES).toContain('untrusted source data');
+    expect(() =>
+      validateNormalization(
+        {
+          itemId: 'x',
+          proposedSpokenText: 'công ty trả 20 triệu',
+          changes: [{ before: 'cty', after: 'công ty', reason: 'expand' }],
+          ambiguousTerms: [],
+          warnings: [],
+        },
+        'x',
+        'cty trả 10 triệu',
+      ),
+    ).toThrow('protected source facts');
+  });
+  it('uses the shared provider contract, records validation and never persists reasoning', async () => {
+    const outcomes: unknown[] = [];
+    const provider: ContentAiProvider = {
+      name: 'HUGGING_FACE',
+      config: () => ({
+        model: 'Qwen/Qwen3-14B',
+        provider: 'auto',
+        timeoutMs: 60000,
+        maxTokens: 2048,
+        requestBudget: 5,
+        tokenBudget: 10000,
+        costBudgetUsd: 0.1,
+        credential: 'present',
+        reasoningMode: 'DISABLED',
+      }),
+      completeJson: async () => ({
+        ledgerId: 'ledger-normalization',
+        provider: 'HUGGING_FACE',
+        model: 'Qwen/Qwen3-14B',
+        providerRoute: 'auto',
+        content: JSON.stringify({
+          itemId: 'item',
+          proposedSpokenText: 'công ty không tuyển',
+          changes: [
+            { before: 'cty', after: 'công ty', reason: 'abbreviation' },
+            { before: 'ko', after: 'không', reason: 'teencode' },
+          ],
+          ambiguousTerms: [],
+          warnings: [],
+        }),
+        usage: {
+          inputTokens: 20,
+          outputTokens: 30,
+          totalTokens: 50,
+          estimatedCostUsd: 0.0001,
+          costSource: 'PROVIDER_REPORTED',
+        },
+        latencyMs: 10,
+        requestId: 'provider-request',
+        finishReason: 'stop',
+      }),
+      recordValidationOutcome: (...args) => outcomes.push(args),
+    };
+    const result = await normalizeText(
+      {
+        id: 'item',
+        revision: 2,
+        originalText: 'cty ko tuyển',
+        spokenText: 'cty ko tuyển',
+      },
+      provider,
+    );
+    expect(result.model).toBe('Qwen/Qwen3-14B');
+    expect(result.proposedSpokenText).toBe('công ty không tuyển');
+    expect(result.tokenUsage.total).toBe(50);
+    expect(result.estimatedCost).toBe(0.0001);
+    expect(outcomes).toEqual([['ledger-normalization', 'VALIDATED']]);
+    expect(JSON.stringify(result)).not.toContain('reasoning');
+  });
+  it('normalizes only the spoken projection with the versioned social dictionary', () => {
+    const original =
+      'Trong kcn, cty fdi tuyển qa, hr, xnk; t chưa làm sx bh nên k biết.';
+    const result = offlineNormalize({
+      id: 'sample',
+      revision: 0,
+      originalText: original,
+      spokenText: original,
+    });
+    expect(result.originalText).toBe(original);
+    expect(result.proposedSpokenText).toBe(
+      'Trong khu công nghiệp, công ty ép đi ai tuyển kiu ây, nhân sự, xuất nhập khẩu; t chưa làm sản xuất bh nên k biết.',
+    );
+    expect(result.ambiguousTerms.map((row) => row.term)).toEqual([
+      't',
+      'bh',
+      'k',
+    ]);
   });
   it('persists proposals, isolates accept/reject and honors manual locks without any network', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-normalize-'));

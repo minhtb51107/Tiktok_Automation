@@ -59,8 +59,10 @@ export interface BackgroundMusic {
   volume: number;
   startMs: number;
 }
+export const THREADS_DARK_GAMEPLAY_PRESET = 'THREADS_DARK_GAMEPLAY' as const;
 export function defaultSceneVisual(): SceneVisual {
   return {
+    backgroundColor: '#0f1115',
     card: {
       x: 90,
       y: 288,
@@ -70,7 +72,7 @@ export function defaultSceneVisual(): SceneVisual {
       fontSize: 40,
       gap: 22,
       lineHeight: 1.45,
-      appearance: 'LIGHT',
+      appearance: 'DARK',
     },
     meme: {
       enabled: false,
@@ -93,9 +95,36 @@ export function defaultSceneVisual(): SceneVisual {
 export const defaultBgm = (): BackgroundMusic => ({
   enabled: false,
   assetId: null,
-  volume: 0.08,
+  volume: 0.06,
   startMs: 0,
+  ducking: true,
+  duckVolume: 0.025,
 });
+
+/**
+ * Visual-only part of the Threads gameplay preset. The caller must attach an
+ * explicitly rights-reviewed local background asset; this helper never picks
+ * or downloads footage on its own.
+ */
+export function threadsDarkGameplayVisual(
+  current?: Partial<SceneVisual>,
+): SceneVisual {
+  const visual = normalizeVisual(current);
+  return {
+    ...visual,
+    backgroundColor: '#0f1115',
+    subtitlesEnabled: false,
+    card: {
+      ...visual.card,
+      appearance: 'DARK',
+      // Keep the card inside the portrait safe area while leaving gameplay
+      // visible above and below it.
+      x: Math.max(48, Math.min(visual.card.x, 90)),
+      y: Math.max(220, visual.card.y),
+      width: Math.min(900, visual.card.width),
+    },
+  };
+}
 export function dateLabel(value: string | null | undefined): string | null {
   if (!value) return null;
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return value;

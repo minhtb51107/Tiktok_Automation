@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { TextProposal } from './normalization.types';
 import { realNormalizationCases } from './real-normalization-cases';
+import { SPEECH_DICTIONARY } from './speech-dictionary';
 export function offlineNormalize(item: {
   id: string;
   revision: number;
@@ -37,6 +38,21 @@ export function offlineNormalize(item: {
     /việc|job|làm|công|tuyển|ứng tuyển|văn phòng/iu.test(input),
   );
   expand('ĐH', 'đại học', /bằng|học|trường|tốt nghiệp|sinh viên/iu.test(input));
+  for (const row of SPEECH_DICTIONARY) {
+    const re = new RegExp(
+      `(?<![\\p{L}\\p{N}_])${row.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`,
+      row.caseSensitive ? 'gu' : 'giu',
+    );
+    text = text.replace(re, (term) => {
+      labels.push({
+        term,
+        replacement: row.spoken,
+        category: 'EXPAND',
+        reason: `Versioned speech dictionary (${row.category})`,
+      });
+      return row.spoken;
+    });
+  }
   text = text.replace(
     /(?:[:;=8xX][-^']?[)(]+|→|←|↔|⇒|⇐|⟶|->|=>|<--?)/g,
     (term) => {
@@ -50,7 +66,7 @@ export function offlineNormalize(item: {
     },
   );
   for (const m of input.matchAll(
-    /(?<![\p{L}\p{N}_])(t|đcđ|clm|cmn)(?![\p{L}\p{N}_])/giu,
+    /(?<![\p{L}\p{N}_])(t|k|bh|đcđ|clm|cmn)(?![\p{L}\p{N}_])/giu,
   ))
     labels.push({
       term: m[1],

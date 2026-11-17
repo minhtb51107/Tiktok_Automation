@@ -18,6 +18,7 @@ import { buildStudioPreview } from "../../../1_nest_backend/src/video-pipeline/s
 import {
   normalizeVisual,
   defaultBgm,
+  threadsDarkGameplayVisual,
 } from "../../../1_nest_backend/src/video-pipeline/scene-visual";
 import { SeriousTimelinePreview } from "../video-pipeline/TimelinePreviewComposition";
 import { EditorInspector } from "./EditorInspector";
@@ -188,6 +189,26 @@ export function ProfessionalEditor({
       ...draftRef.current,
       settings: { ...draftRef.current.settings, ...patch },
     });
+  const applyThreadsDarkGameplayPreset = () => {
+    const currentDraft = structuredClone(draftRef.current);
+    currentDraft.settings.scenes = currentDraft.settings.scenes.map((scene) => ({
+      ...scene,
+      visual: threadsDarkGameplayVisual(scene.visual),
+    }));
+    currentDraft.settings.backgroundMusic = {
+      ...defaultBgm(),
+      ...(currentDraft.settings.backgroundMusic || {}),
+    };
+    change(currentDraft);
+    const hasGameplay = (currentDraft.settings.backgroundTracks || []).some(
+      (clip) => clip.enabled,
+    );
+    setNotice(
+      hasGameplay
+        ? "THREADS_DARK_GAMEPLAY preset applied"
+        : "THREADS_DARK_GAMEPLAY applied · MISSING_GAMEPLAY_ASSET: upload or choose rights-reviewed footage",
+    );
+  };
   const draftSession = useMemo(
     () => ({
       ...session,
@@ -664,6 +685,9 @@ export function ProfessionalEditor({
             onClick={save}
           >
             Save project
+          </button>
+          <button disabled={blocked} onClick={applyThreadsDarkGameplayPreset}>
+            Threads dark gameplay
           </button>
 
         </div>

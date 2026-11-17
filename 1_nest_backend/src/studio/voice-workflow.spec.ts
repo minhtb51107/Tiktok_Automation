@@ -30,7 +30,13 @@ async function fixture() {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'voice-workflow-'));
   const root = path.join(base, '.studio-data');
   await fs.mkdir(root);
-  const state = { calls: 0, inflight: 0, maxInflight: 0, failText: '' };
+  const state = {
+    calls: 0,
+    inflight: 0,
+    maxInflight: 0,
+    failText: '',
+    resourceStopText: '',
+  };
   const service = new StudioService({} as ScraperService);
   Object.assign(service, {
     root,
@@ -47,6 +53,10 @@ async function fixture() {
         state.maxInflight = Math.max(state.maxInflight, state.inflight);
         try {
           await new Promise((r) => setTimeout(r, 5));
+          if (text === state.resourceStopText)
+            throw Error(
+              'RESOURCE_GUARD_STOP: MOCK emergency floor reached',
+            );
           if (text === state.failText) throw Error('MOCK inference failed');
           const dir = path.join(root, 'audio', sessionId, 'assets');
           await fs.mkdir(dir, { recursive: true });
@@ -159,6 +169,46 @@ describe('Voice workflow usability (MOCK runtime, no inference)', () => {
         'Cảnh B.',
         'Cảnh C.',
       ]);
+    } finally {
+      await fs.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it('stops the remaining batch after an emergency resource guard', async () => {
+    const { base, service, state } = await fixture();
+    try {
+      let s = await service.create();
+      for (const text of ['Cảnh A.', 'Cảnh B.', 'Cảnh C.'])
+        s = await service.mutate(s.id, {
+          revision: s.revision,
+          manual: { text, author: 'MOCK', comments: '' },
+        });
+      s = await service.runtime(s.id);
+      s = await service.voiceBatch(s.id, {
+        revision: s.revision,
+        action: 'SETTINGS_ALL',
+        voice: 'fixture',
+        speed: 1.2,
+      });
+      for (const item of s.items)
+        s = await service.voiceAction(s.id, item.id, {
+          revision: s.revision,
+          action: 'APPROVE_SPOKEN',
+        });
+      state.resourceStopText = 'Cảnh A.';
+      s = await service.voiceBatch(s.id, {
+        revision: s.revision,
+        action: 'GENERATE_ALL',
+      });
+      expect(state.calls).toBe(1);
+      expect(s.voiceBatch?.results.map((result) => result.outcome)).toEqual([
+        'ERROR',
+        'SKIPPED',
+        'SKIPPED',
+      ]);
+      expect(s.voiceBatch?.results[1].reason).toContain(
+        'RESOURCE_GUARD_STOP',
+      );
     } finally {
       await fs.rm(base, { recursive: true, force: true });
     }

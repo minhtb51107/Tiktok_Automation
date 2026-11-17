@@ -167,7 +167,7 @@ export function EditorInspector({
             Card appearance
             <select
               aria-label="Card appearance"
-              value={v.card.appearance ?? "LIGHT"}
+              value={v.card.appearance ?? "DARK"}
               disabled={disabled}
               onChange={(e) =>
                 card({ appearance: e.target.value as "LIGHT" | "DARK" })

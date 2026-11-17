@@ -44,7 +44,7 @@ describe('Editor UX shared contracts (OFFLINE)', () => {
     expect(
       v.card.y + out.height + v.meme.height + v.meme.gap,
     ).toBeLessThanOrEqual(1920);
-    expect(normalizeVisual().card.appearance).toBe('LIGHT');
+    expect(normalizeVisual().card.appearance).toBe('DARK');
   });
   it('validates and roundtrips independent card appearance/line height; rejects hidden overflow', () => {
     const v = defaultSceneVisual();
@@ -94,6 +94,83 @@ describe('Editor UX shared contracts (OFFLINE)', () => {
       ]);
     } finally {
       await fs.rm(root, { recursive: true });
+    }
+  });
+  it('carries exact metadata evidence into a scene without converting missing values to zero', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'editor-meta-'));
+    const service = new StudioService({} as ScraperService);
+    Object.assign(service, { root });
+    try {
+      let s = await service.create();
+      s = await service.mutate(s.id, {
+        revision: s.revision,
+        manual: { text: 'Nội dung thật', author: 'nguoidung', comments: '' },
+      });
+      const item = s.items[0];
+      item.selected = true;
+      item.metadata = {
+        text: item.originalText,
+        bodyText: item.originalText,
+        author: 'nguoidung',
+        handle: 'nguoidung',
+        avatar: 'https://cdninstagram.com/avatar.jpg',
+        createdAt: '2026-11-17T00:00:00Z',
+        type: 'POST',
+        parentReference: null,
+        media: [],
+        likeCount: 12,
+        replyCount: null,
+        repostCount: null,
+        shareCount: null,
+        fields: {
+          likeCount: {
+            status: 'AVAILABLE',
+            value: 12,
+            normalized: 12,
+            raw: '12',
+            source: 'exact card',
+            observedAt: '2026-11-17T01:00:00Z',
+          },
+          replyCount: {
+            status: 'NOT_PRESENT',
+            value: null,
+            raw: '',
+            source: 'exact card',
+            observedAt: '2026-11-17T01:00:00Z',
+          },
+        },
+        provenance: { text: 'saved capture' },
+      };
+      s.sourceImages = {
+        [item.id]: {
+          itemId: item.id,
+          sourceUrl: item.metadata.avatar!,
+          status: 'READY',
+          uri: `/api/studio/sessions/${s.id}/source-images/${'a'.repeat(64)}`,
+          fileName: `${'a'.repeat(64)}.jpg`,
+          sha256: 'a'.repeat(64),
+          bytes: 10,
+          error: null,
+          provenance: 'PUBLIC_CDN',
+          checkedAt: '2026-11-17T01:00:00Z',
+        },
+      };
+      const card = buildStudioPreview(s).project.storyboard[0].threadsCard!;
+      expect(card.avatarUrl).toContain('/source-images/');
+      expect(card.counts).toEqual({
+        likes: 12,
+        replies: null,
+        reposts: null,
+        shares: null,
+      });
+      expect(card.countLabels?.replies).toBe('');
+      expect(card.fieldEvidence?.likeCount).toMatchObject({
+        status: 'AVAILABLE',
+        raw: '12',
+        source: 'exact card',
+      });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
     }
   });
 });

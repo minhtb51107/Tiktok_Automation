@@ -42,7 +42,7 @@ import type {
 } from '../video-pipeline/contracts';
 import type { StudioSession } from './studio.contracts';
 import { sourceReport, reportMarkdown } from './stage-report';
-import { normalizeText } from './normalization';
+import { normalizeText, normalizationProviderConfig } from './normalization';
 import { scriptReport } from './script-report';
 import {
   offlineNormalize,
@@ -1621,6 +1621,22 @@ export class StudioService {
         throw new ConflictException(
           'BLOCKED_BILLING: use offline/manual. No provider retry attempted.',
         );
+      if (mode === 'LIVE') {
+        const model = normalizationProviderConfig().model;
+        const cached = s.scriptProposals
+          ?.slice()
+          .reverse()
+          .find(
+            (proposal) =>
+              proposal.mode === 'LIVE' &&
+              proposal.executionStatus === 'SUCCESS' &&
+              proposal.itemId === item.id &&
+              proposal.baseRevision === item.revision &&
+              proposal.inputText === item.spokenText &&
+              proposal.model === model,
+          );
+        if (cached) return s;
+      }
       await this.tick(
         mode === 'OFFLINE'
           ? 'Offline normalization'
@@ -2005,12 +2021,21 @@ export class StudioService {
           s.voiceRuntime.voices.length === 1
             ? s.voiceRuntime.voices[0].id
             : null;
+        let resourceStopReason: string | null = null;
         for (const item of items) {
           await this.tick(
             'Batch audio: scene ' + (items.indexOf(item) + 1),
             items.indexOf(item),
             items.length,
           );
+          if (resourceStopReason) {
+            results.push({
+              itemId: item.id,
+              outcome: 'SKIPPED',
+              reason: `Batch stopped after ${resourceStopReason}`,
+            });
+            continue;
+          }
           if (!item.spokenApproval?.valid) {
             results.push({
               itemId: item.id,
@@ -2046,13 +2071,18 @@ export class StudioService {
           try {
             job = await this.generateItem(s, item, false, s.voiceRuntime);
           } catch (e) {
+            const reason = e instanceof Error ? e.message : 'TTS failed';
             results.push({
               itemId: item.id,
               outcome: 'ERROR',
-              reason: e instanceof Error ? e.message : 'TTS failed',
+              reason,
             });
+            if (reason.includes('RESOURCE_GUARD_STOP'))
+              resourceStopReason = reason;
             continue;
           }
+          if (job.error?.includes('RESOURCE_GUARD_STOP'))
+            resourceStopReason = job.error;
           results.push({
             itemId: item.id,
             outcome:

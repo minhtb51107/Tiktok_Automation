@@ -1,9 +1,19 @@
 /** Independently authored mappings; no external corpus/model copied. */
-export const SPEECH_DICTIONARY_VERSION='vi-social-speech/1';
+export const SPEECH_DICTIONARY_VERSION='vi-social-speech/2';
 export const SPEECH_DICTIONARY=Object.freeze([
+ {term:'vierjc',spoken:'việc',category:'TYPO'},
  {term:'cmt',spoken:'bình luận',category:'ABBREVIATION'},
  {term:'ko',spoken:'không',category:'TEENCODE'},
  {term:'cty',spoken:'công ty',category:'ABBREVIATION'},
+ {term:'kcn',spoken:'khu công nghiệp',category:'ABBREVIATION'},
+ {term:'nna',spoken:'ngôn ngữ Anh',category:'ABBREVIATION'},
+ {term:'qa',spoken:'kiu ây',category:'ACRONYM'},
+ {term:'hn',spoken:'Hà Nội',category:'PLACE'},
+ {term:'yc',spoken:'yêu cầu',category:'ABBREVIATION'},
+ {term:'sx',spoken:'sản xuất',category:'ABBREVIATION'},
+ {term:'fdi',spoken:'ép đi ai',category:'ACRONYM'},
+ {term:'xnk',spoken:'xuất nhập khẩu',category:'ABBREVIATION'},
+ {term:'hr',spoken:'nhân sự',category:'ABBREVIATION'},
  {term:'nma',spoken:'nhưng mà',category:'TEENCODE'},
  {term:'mn',spoken:'mọi người',category:'TEENCODE'},
  {term:'tphcm',spoken:'Thành phố Hồ Chí Minh',category:'PLACE'},

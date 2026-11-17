@@ -120,7 +120,7 @@ export const ThreadsVisual: React.FC<{
       <article
         data-testid="threads-video-card"
         data-editor-object="CARD"
-        data-appearance={c.appearance ?? "LIGHT"}
+        data-appearance={c.appearance ?? "DARK"}
         data-scene-id={item.scene.id}
         data-page={pageIndex + 1}
         style={{
@@ -141,7 +141,7 @@ export const ThreadsVisual: React.FC<{
           style={{
             display: "flex",
             gap: c.gap,
-            alignItems: "flex-start",
+            alignItems: "center",
             marginBottom: c.gap,
           }}
         >
@@ -172,7 +172,7 @@ export const ThreadsVisual: React.FC<{
               }}
             >?</div>
           )}
-          <div style={{ flex: 1, minWidth: 0, display:"flex",alignItems:"center",gap:12,flexWrap:"wrap" }}>
+          <div style={{ flex: 1, minWidth: 0, display:"flex",alignItems:"flex-start",gap:6,flexDirection:"column" }}>
             <div
               style={{
                 display: "flex",
@@ -180,6 +180,8 @@ export const ThreadsVisual: React.FC<{
                 gap: 12,
                 fontSize: 30 * c.scale,
                 lineHeight: 1.3,
+                width: "100%",
+                overflowWrap: "anywhere",
               }}
             >
               <strong style={{fontWeight:600}}>{card.handle || card.author}</strong>
@@ -202,7 +204,6 @@ export const ThreadsVisual: React.FC<{
                 style={{
                   fontSize: 22 * c.scale,
                   color: palette.muted,
-                  marginLeft:"auto",
                   whiteSpace:"nowrap",
                 }}
               >
@@ -249,8 +250,8 @@ export const ThreadsVisual: React.FC<{
         <div
           style={{
             display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
+            justifyContent: "flex-start",
+            gap: 30 * c.scale,
             marginTop: c.gap,
             paddingTop: 18,
             borderTop: "1px solid " + palette.border,
@@ -262,7 +263,7 @@ export const ThreadsVisual: React.FC<{
             <div
               key={k}
               data-count={k}
-              style={{ display: "flex", alignItems: "center", gap: 10 }}
+              style={{ display: "flex", alignItems: "center", gap: 8, minWidth: card.counts[k] === null ? 30 : undefined }}
             >
               <svg
                 width="30"
