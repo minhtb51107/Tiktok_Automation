@@ -28,7 +28,7 @@ export function scriptReport(s: StudioSession): StageReport {
     completedAt: latest?.completedAt || null,
     elapsedMs: latest?.latencyMs ?? null,
     inputSummary: `${s.items.filter((i) => i.selected).length} selected items; AI runs only on explicit request`,
-    outputSummary: `${runs.length} proposals; no automatic application`,
+    outputSummary: `${runs.length} proposals; ${runs.filter((r) => r.decisionSource === 'AUTOMATIC_POLICY').length} deterministic automatic DRAFT applications`,
     counts: {
       proposals: runs.length,
       accepted: runs.filter((r) => r.approval === 'ACCEPTED').length,
@@ -72,11 +72,17 @@ export function scriptReport(s: StudioSession): StageReport {
                 ? canon(expected) === canon(r.proposedSpokenText)
                 : null,
             semanticDrift:
-              r.approval === 'ACCEPTED' ? 'USER_APPROVED' : 'NOT_REVIEWED',
+              r.approval !== 'ACCEPTED'
+                ? 'NOT_REVIEWED'
+                : r.decisionSource === 'AUTOMATIC_POLICY'
+                  ? 'AUTOMATIC_DETERMINISTIC_POLICY'
+                  : 'USER_APPROVED',
             verdict:
               r.executionStatus === 'BLOCKED_BILLING'
                 ? 'BLOCKED_BILLING'
-                : r.executionStatus === 'SUCCESS' && r.approval === 'ACCEPTED'
+                : r.executionStatus === 'SUCCESS' &&
+                    r.approval === 'ACCEPTED' &&
+                    r.decisionSource !== 'AUTOMATIC_POLICY'
                   ? 'LIVE_APPROVED'
                   : 'NOT_LIVE_PASS',
           };

@@ -20,6 +20,8 @@ export interface TextProposal {
     reason: string;
   }[];
   explicitLockedTextApproval?: boolean;
+  /** Distinguishes an explicit editor decision from the deterministic DRAFT policy. */
+  decisionSource?: 'USER' | 'AUTOMATIC_POLICY';
   runId: string;
   itemId: string;
   baseRevision: number;

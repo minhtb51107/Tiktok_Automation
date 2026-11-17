@@ -2129,6 +2129,63 @@ export class StudioService {
       return this.persist(s);
     });
   }
+  /**
+   * Applies only deterministic, versioned speech rules for an automatic DRAFT.
+   * Ambiguous tokens are retained verbatim and recorded for exception review.
+   * This is not user approval and never invokes an inference provider.
+   */
+  async normalizeAutomaticDraft(id: string, revision: number) {
+    return this.exclusive(async () => {
+      const s = await this.load(id);
+      if (s.revision !== revision)
+        throw new ConflictException(
+          'Session changed. Reopen before automatic normalization.',
+        );
+      for (const item of s.items.filter((row) => row.selected)) {
+        const currentHash = textHash(item.spokenText);
+        if (
+          item.automaticNormalization?.policyVersion ===
+            SPEECH_DICTIONARY_VERSION &&
+          item.automaticNormalization.outputHash === currentHash
+        )
+          continue;
+        const run = offlineNormalize(item);
+        const proposed = run.proposedSpokenText;
+        if (!proposed)
+          throw new BadRequestException(
+            `Deterministic normalization produced no text for ${item.id}`,
+          );
+        const changed = proposed !== item.spokenText;
+        run.approval = 'ACCEPTED';
+        run.decisionSource = 'AUTOMATIC_POLICY';
+        run.decidedAt = new Date().toISOString();
+        run.warnings = [
+          ...run.warnings,
+          ...(run.ambiguousTerms.length
+            ? [
+                'Ambiguous tokens were retained unchanged and queued for exception review.',
+              ]
+            : []),
+        ];
+        s.scriptProposals = [...(s.scriptProposals || []), run];
+        if (changed) {
+          item.spokenText = proposed;
+          item.revision++;
+        }
+        item.automaticNormalization = {
+          policyVersion: SPEECH_DICTIONARY_VERSION,
+          inputHash: currentHash,
+          outputHash: textHash(item.spokenText),
+          appliedAt: run.decidedAt,
+          changed,
+          ambiguousTerms: [
+            ...new Set(run.ambiguousTerms.map((term) => term.term)),
+          ],
+        };
+      }
+      return this.persist(s);
+    });
+  }
   async audioFile(id: string, assetId: string) {
     const s = await this.load(id);
     const a = s.voiceAssets?.find((a) => a.id === assetId);
@@ -2218,6 +2275,7 @@ export class StudioService {
         ];
         item.revision++;
         run.approval = 'ACCEPTED';
+        run.decisionSource = 'USER';
         run.explicitLockedTextApproval = action === 'ACCEPT_LOCKED';
       } else if (action === 'REJECT') run.approval = 'REJECTED';
       else throw new BadRequestException('Invalid approval action');

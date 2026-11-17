@@ -226,4 +226,44 @@ describe('normalization and metadata', () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+  it('applies deterministic normalization idempotently for an automatic DRAFT without claiming user approval', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'auto-normalize-'));
+    const service = new StudioService({} as ScraperService);
+    Object.assign(service, { root });
+    try {
+      let s = await service.create();
+      s = await service.mutate(s.id, {
+        revision: s.revision,
+        manual: {
+          text: 'cty tuyển vp nhưng k biết bh',
+          author: 'Nguồn thật',
+          comments: '',
+        },
+      });
+      const original = s.items[0].originalText;
+      s = await service.normalizeAutomaticDraft(s.id, s.revision);
+      expect(s.items[0].spokenText).toBe(
+        'công ty tuyển văn phòng nhưng k biết bh',
+      );
+      expect(s.items[0].originalText).toBe(original);
+      expect(s.items[0].manualLocks).not.toContain('NARRATION_TEXT');
+      expect(s.items[0].automaticNormalization).toMatchObject({
+        policyVersion: 'vi-social-speech/2',
+        changed: true,
+        ambiguousTerms: ['k', 'bh'],
+      });
+      expect(s.scriptProposals?.[0]).toMatchObject({
+        approval: 'ACCEPTED',
+        decisionSource: 'AUTOMATIC_POLICY',
+      });
+      const proposalCount = s.scriptProposals?.length;
+      s = await service.normalizeAutomaticDraft(s.id, s.revision);
+      expect(s.scriptProposals).toHaveLength(proposalCount!);
+      expect(s.items[0].spokenText).toBe(
+        'công ty tuyển văn phòng nhưng k biết bh',
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });

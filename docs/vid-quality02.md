@@ -72,7 +72,8 @@ Legacy EconomicBackground/GridBackground and serious compositions were inspected
 in Git history (including328aa6a) and preserved, not reactivated or rebuilt.
 New: validated canvas HEX color in Inspector and optional deterministic BGM duck
 volume over actual active voice windows (including trims/offsets). Ducking boundary
-tests PASS; fade envelopes are not implemented. No BGM asset was attached because
+tests PASS. Production Quality V2 adds a short deterministic gain ramp around
+narration boundaries. No BGM asset was attached because
 existing external music rights are UNKNOWN. Thus actual BGM mix/rights acceptance
 remains PARTIAL; no copyrighted/unknown music was added to the smoke.
 

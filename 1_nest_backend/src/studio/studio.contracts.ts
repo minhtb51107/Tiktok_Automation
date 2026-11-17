@@ -10,6 +10,14 @@ export interface StudioItem {
   mediaNarrationAppliedHash?: string;
   mediaNarrationApplied?: import('../video-pipeline/contracts').StoryboardScene['imageNarration'];
   pronunciationOverrides?: Record<string, string>;
+  automaticNormalization?: {
+    policyVersion: string;
+    inputHash: string;
+    outputHash: string;
+    appliedAt: string;
+    changed: boolean;
+    ambiguousTerms: string[];
+  };
   localSourceMedia?: NonNullable<
     import('../data-engine/conversation-contracts').PublicPost['attachments']
   >;

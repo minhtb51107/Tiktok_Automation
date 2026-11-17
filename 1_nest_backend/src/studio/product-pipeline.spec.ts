@@ -1,4 +1,4 @@
-import { autonomousDiscoveryErrors, autonomousProductRequest, measuredMp4Duration, partitionAutomaticResumeResults, ProductPipelineService, productStageSnapshot, seriousDraftDurationStatus } from './product-pipeline';
+import { autonomousDiscoveryErrors, autonomousProductRequest, measuredMp4Duration, partitionAutomaticResumeResults, ProductPipelineService, productStageSnapshot, resumableAutomaticVoiceResult, seriousDraftDurationStatus } from './product-pipeline';
 import { describe, expect, it, jest } from '@jest/globals';
 import { mkdtemp, writeFile, rm } from 'fs/promises';
 import * as os from 'os';
@@ -91,6 +91,21 @@ describe('product pipeline snapshot', () => {
       'COMPLETED',
     ]);
   });
+  it('resumes an existing DRAFT after either a TTS or resource stop', () => {
+    const base = {
+      sessionId: 'session',
+      assessmentId: 'assessment',
+    } as any;
+    expect(
+      resumableAutomaticVoiceResult({ ...base, status: 'TTS_FAILED' }),
+    ).toBe(true);
+    expect(
+      resumableAutomaticVoiceResult({ ...base, status: 'RESOURCE_STOPPED' }),
+    ).toBe(true);
+    expect(
+      resumableAutomaticVoiceResult({ ...base, status: 'COMPLETED' }),
+    ).toBe(false);
+  });
   it('resumes a TTS draft from current cached audio without repeating inference', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'product-voice-resume-'));
     try {
@@ -127,6 +142,7 @@ describe('product pipeline snapshot', () => {
       const studio: any = {
         runtime: jest.fn(async () => ({})),
         load: jest.fn(async () => active),
+        normalizeAutomaticDraft: jest.fn(async () => active),
         voiceAction: jest.fn(),
         preparePreview: jest.fn(async () => ({})),
       };
@@ -170,6 +186,10 @@ describe('product pipeline snapshot', () => {
         batch,
         result,
         0,
+      );
+      expect(studio.normalizeAutomaticDraft).toHaveBeenCalledWith(
+        active.id,
+        active.revision,
       );
       expect(studio.voiceAction).not.toHaveBeenCalled();
       expect(resumed).toMatchObject({

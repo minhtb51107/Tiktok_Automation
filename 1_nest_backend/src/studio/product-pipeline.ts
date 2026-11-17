@@ -254,6 +254,13 @@ export const partitionAutomaticResumeResults = (
   return { retryable, retained };
 };
 
+export const resumableAutomaticVoiceResult = (
+  row: AutonomousVideoResult,
+) =>
+  ['TTS_FAILED', 'RESOURCE_STOPPED'].includes(row.status) &&
+  !!row.sessionId &&
+  !!row.assessmentId;
+
 export function productStageSnapshot(
   session: StudioSession,
   sourceJobStatus: string | null,
@@ -860,10 +867,26 @@ export class ProductPipelineService {
     index: number,
   ): Promise<AutonomousVideoResult> {
     if (!result.sessionId) throw Error('AUTONOMOUS_DRAFT_SESSION_MISSING');
+    let current = await this.studio.load(result.sessionId);
+    current = await this.studio.normalizeAutomaticDraft(
+      result.sessionId,
+      current.revision,
+    );
+    const normalizationWarnings = current.items
+      .filter(
+        (item) =>
+          item.selected &&
+          (item.automaticNormalization?.ambiguousTerms.length || 0) > 0,
+      )
+      .map(
+        (item) =>
+          `${item.id}: ambiguous spoken tokens retained (${item.automaticNormalization!.ambiguousTerms.join(', ')})`,
+      );
+    result.warnings = [...new Set([...result.warnings, ...normalizationWarnings])];
     batch.stage = 'GENERATING_VOICE';
     await this.saveAuto(batch);
     await this.studio.runtime(result.sessionId);
-    let current = await this.studio.load(result.sessionId);
+    current = await this.studio.load(result.sessionId);
     for (const item of current.items
       .filter((row) => row.selected)
       .sort((a, b) => a.order - b.order)) {
@@ -877,7 +900,9 @@ export class ProductPipelineService {
       });
       const latest = current.voiceJobs?.slice(-1)[0];
       if (latest?.status === 'ERROR') {
-        result.status = 'TTS_FAILED';
+        result.status = latest.error?.includes('RESOURCE_GUARD_STOP')
+          ? 'RESOURCE_STOPPED'
+          : 'TTS_FAILED';
         result.warnings = [latest.error || 'Kokoro generation failed'];
         return result;
       }
@@ -1143,11 +1168,7 @@ export class ProductPipelineService {
         );
         if (existingIndex >= 0) {
           const existing = job.results[existingIndex];
-          if (
-            existing.status === 'TTS_FAILED' &&
-            existing.sessionId &&
-            existing.assessmentId
-          ) {
+          if (resumableAutomaticVoiceResult(existing)) {
             try {
               job.results[existingIndex] = await this.continueAutomaticDraft(
                 job,
