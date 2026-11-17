@@ -354,8 +354,8 @@ export function measuredDuration(
     narrationSeconds: narration,
   };
   if (
-    seconds <= EDITORIAL_CONFIG.minReleaseSeconds ||
-    narration <= EDITORIAL_CONFIG.minReleaseSeconds
+    seconds < EDITORIAL_CONFIG.minReleaseSeconds ||
+    narration <= seconds / 2
   )
     return { ...result, status: 'DURATION_TOO_SHORT' };
   if (

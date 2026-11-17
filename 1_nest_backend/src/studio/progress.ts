@@ -43,6 +43,15 @@ export type ProgressSink = (
 ) => Promise<void>;
 const active = (j: StudioJob) => ['QUEUED', 'RUNNING'].includes(j.status);
 export class JobCancelled extends Error {}
+export function resolveJobsRoot(
+  configured = process.env.STUDIO_DATA_ROOT,
+  cwd = process.cwd(),
+) {
+  const dataRoot = configured
+    ? path.resolve(configured)
+    : path.resolve(cwd, '.studio-data');
+  return path.join(dataRoot, 'jobs');
+}
 export class StudioJobs {
   private cancellers = new Map<string, () => void>();
   onCancel(id: string, cancel: () => void) {
@@ -53,7 +62,7 @@ export class StudioJobs {
   private queue: Promise<unknown> = Promise.resolve();
   private writing: Promise<unknown> = Promise.resolve();
   private live = new Map<string, StudioJob>();
-  constructor(private root = path.resolve('.studio-data/jobs')) {}
+  constructor(private root = resolveJobsRoot()) {}
   private file(id: string) {
     if (!/^[a-f0-9-]{36}$/.test(id))
       throw new BadRequestException('Invalid job ID');

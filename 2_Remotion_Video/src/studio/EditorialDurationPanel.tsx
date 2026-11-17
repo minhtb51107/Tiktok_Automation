@@ -34,7 +34,7 @@ export function EditorialDurationPanel({
   return (
     <section className="v2-card" data-testid="editorial-duration">
       <h3>
-        Conversation script {report?.scriptStatus || "DRAFT"} · 70–100s target
+        Conversation script {report?.scriptStatus || "DRAFT"} · minimum 60s · preferred 65–90s
       </h3>
       <p>
         Source bundle {session.productionOrigin?.conversation?.collectionId} ·
@@ -53,7 +53,7 @@ export function EditorialDurationPanel({
             {report.measured.narrationSeconds ?? "unknown"}s
           </p>
           <p>
-            At or below 60s: DURATION_TOO_SHORT. Never extend with silence,
+            Below 60s: DURATION_TOO_SHORT. Never extend with silence,
             repetition or unnatural speed. Duration alone does not grant release
             readiness.
           </p>

@@ -615,7 +615,7 @@ export function ConversationPanel({
             Candidate: {view!.normalized.automation.candidateStatus} · estimated{" "}
             {view!.normalized.automation.durationEstimate.minimumSeconds}–
             {view!.normalized.automation.durationEstimate.maximumSeconds}s ·{" "}
-            ESTIMATED_TEXT_ONLY · target 65–90s
+            ESTIMATED_TEXT_ONLY · minimum 60s · preferred 65–90s
             {view!.normalized.automation.continueDiscovery
               ? " · continue to next discovery source"
               : ""}

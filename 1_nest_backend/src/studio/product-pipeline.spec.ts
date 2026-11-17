@@ -1,4 +1,4 @@
-import { autonomousDiscoveryErrors, autonomousProductRequest, partitionAutomaticResumeResults, ProductPipelineService, productStageSnapshot } from './product-pipeline';
+import { autonomousDiscoveryErrors, autonomousProductRequest, measuredMp4Duration, partitionAutomaticResumeResults, ProductPipelineService, productStageSnapshot, seriousDraftDurationStatus } from './product-pipeline';
 import { describe, expect, it, jest } from '@jest/globals';
 import { mkdtemp, writeFile, rm } from 'fs/promises';
 import * as os from 'os';
@@ -36,6 +36,22 @@ const session = (overrides: any = {}) => ({
 });
 
 describe('product pipeline snapshot', () => {
+  it.each([
+    [59.99, 'TOO_SHORT'],
+    [60, 'PASS_BELOW_PREFERRED'],
+    [65, 'PASS_PREFERRED'],
+    [90, 'PASS_PREFERRED'],
+    [90.001, 'TOO_LONG'],
+  ] as const)('applies the SERIOUS DRAFT duration boundary at %s seconds', (seconds, expected) => {
+    expect(seriousDraftDurationStatus(seconds)).toBe(expected);
+  });
+
+  it('uses the MP4 FFprobe duration as authoritative render duration', () => {
+    expect(measuredMp4Duration({ probe: { format: { duration: '60.000000' } } })).toBe(60);
+    expect(measuredMp4Duration({ probe: { format: { duration: '59.990000' } } })).toBe(59.99);
+    expect(measuredMp4Duration({ probe: {} })).toBeNull();
+  });
+
   it('bounds an autonomous SERIOUS DRAFT batch without widening production authority', () => {
     expect(autonomousProductRequest({ topic: 'công việc', targetVideos: 3 })).toMatchObject({
       style: 'SERIOUS', targetVideos: 3, maxCandidates: 30, maxEnrich: 10,
@@ -99,11 +115,20 @@ describe('product pipeline snapshot', () => {
             durationMs: 59000,
           },
         ],
+        project: {
+          ...session().project,
+          timeline: {
+            totalFrames: 1799,
+            fps: 30,
+            scenes: [{ scene: { id: 'root' }, subtitles: [] }],
+          },
+        },
       });
       const studio: any = {
         runtime: jest.fn(async () => ({})),
         load: jest.fn(async () => active),
         voiceAction: jest.fn(),
+        preparePreview: jest.fn(async () => ({})),
       };
       const service = new ProductPipelineService(
         studio,
@@ -150,6 +175,7 @@ describe('product pipeline snapshot', () => {
       expect(resumed).toMatchObject({
         status: 'NOT_ENOUGH_CONTENT',
         measuredSeconds: 59,
+        timelineSeconds: 59.967,
       });
     } finally {
       await rm(dir, { recursive: true, force: true });

@@ -5,8 +5,18 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { RenderManifest, RenderSnapshot } from './render.types';
 import { JobCancelled, StudioJobs, type ProgressSink } from './progress';
 
+export function resolveRenderRoot(
+  configured = process.env.STUDIO_DATA_ROOT,
+  cwd = process.cwd(),
+) {
+  const dataRoot = configured
+    ? path.resolve(configured)
+    : path.resolve(cwd, '.studio-data');
+  return path.join(dataRoot, 'renders');
+}
+
 export class RenderStore {
-  constructor(private root = path.resolve('.studio-data/renders')) {}
+  constructor(private root = resolveRenderRoot()) {}
   directory(session: string, job: string) {
     if (![session,job].every(x=>/^[a-f0-9-]{36}$/.test(x))) throw new BadRequestException('Invalid render ID');
     return path.join(this.root,session,job);

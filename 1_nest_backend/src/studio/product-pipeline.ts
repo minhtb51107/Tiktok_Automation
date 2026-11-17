@@ -126,6 +126,30 @@ export interface AutonomousProductBatch {
   updatedAt: string;
 }
 
+export const SERIOUS_DRAFT_DURATION_POLICY = {
+  minimumSeconds: 60,
+  preferredMinimumSeconds: 65,
+  maximumSeconds: 90,
+} as const;
+
+export function seriousDraftDurationStatus(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < SERIOUS_DRAFT_DURATION_POLICY.minimumSeconds)
+    return 'TOO_SHORT' as const;
+  if (seconds > SERIOUS_DRAFT_DURATION_POLICY.maximumSeconds)
+    return 'TOO_LONG' as const;
+  return seconds < SERIOUS_DRAFT_DURATION_POLICY.preferredMinimumSeconds
+    ? ('PASS_BELOW_PREFERRED' as const)
+    : ('PASS_PREFERRED' as const);
+}
+
+export function measuredMp4Duration(manifest: Pick<RenderManifest, 'probe'>) {
+  const seconds = Number(
+    (manifest.probe as { format?: { duration?: string | number } } | undefined)
+      ?.format?.duration,
+  );
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
 export const autonomousProductRequest = (body: any): AutonomousProductBatch['request'] => {
   const topic = typeof body?.topic === 'string' ? body.topic.trim() : '',
     style = body?.style ?? 'SERIOUS',
@@ -879,13 +903,6 @@ export class ProductPipelineService {
       0,
     );
     result.measuredSeconds = Number(measured.toFixed(3));
-    if (measured < 60) {
-      result.status = 'NOT_ENOUGH_CONTENT';
-      result.warnings = [
-        `Measured source narration is ${result.measuredSeconds}s; no padding or invented text was added`,
-      ];
-      return result;
-    }
     batch.stage = 'PREPARING_TIMELINE';
     await this.saveAuto(batch);
     await this.studio.preparePreview(result.sessionId, current.revision);
@@ -896,10 +913,11 @@ export class ProductPipelineService {
       throw Error('AUTONOMOUS_SUBTITLES_NOT_OFF');
     const timelineSeconds = timeline.totalFrames / timeline.fps;
     result.timelineSeconds = Number(timelineSeconds.toFixed(3));
-    if (timelineSeconds < 65 || timelineSeconds > 90) {
+    const timelineStatus = seriousDraftDurationStatus(timelineSeconds);
+    if (timelineStatus === 'TOO_SHORT' || timelineStatus === 'TOO_LONG') {
       result.status = 'NOT_ENOUGH_CONTENT';
       result.warnings = [
-        `Measured timeline ${result.timelineSeconds}s is outside the 65-90s product target`,
+        `Measured timeline ${result.timelineSeconds}s is outside the 60-90s SERIOUS DRAFT range (65-90s preferred)`,
       ];
       return result;
     }
@@ -930,12 +948,14 @@ export class ProductPipelineService {
     const manifest = await this.studio.renders.load(
       result.sessionId,
       renderJob.jobId,
-    );
+      ),
+      mp4Seconds = measuredMp4Duration(manifest);
     if (
       manifest.status !== 'COMPLETED' ||
-      !manifest.probe ||
-      manifest.expectedDurationSeconds < 65 ||
-      manifest.expectedDurationSeconds > 90 ||
+      mp4Seconds === null ||
+      ['TOO_SHORT', 'TOO_LONG'].includes(
+        seriousDraftDurationStatus(mp4Seconds ?? Number.NaN),
+      ) ||
       manifest.sceneCount !== selectedItemIds.size
     ) {
       result.status = 'RENDER_FAILED';
@@ -943,9 +963,7 @@ export class ProductPipelineService {
       return result;
     }
     result.status = 'COMPLETED';
-    result.timelineSeconds = Number(
-      manifest.expectedDurationSeconds.toFixed(3),
-    );
+    result.timelineSeconds = Number(mp4Seconds.toFixed(3));
     result.warnings = [...manifest.warnings];
     return result;
   }
@@ -1045,7 +1063,7 @@ export class ProductPipelineService {
       maximum: selected.estimate.maximumSeconds,
     };
     if (
-      selected.estimate.maximumSeconds < 65 ||
+      selected.estimate.maximumSeconds < 60 ||
       selected.estimate.minimumSeconds > 90
     ) {
       result.status = 'NOT_ENOUGH_CONTENT';

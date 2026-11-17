@@ -63,7 +63,7 @@ describe('DATA05 feasibility and duration — SYNTHETIC contract tests', () => {
     });
   });
   test.each([59000, 60000, 61000])(
-    'strict >60 seconds boundary %i',
+    'inclusive 60-second timeline boundary %i',
     (durationMs) => {
       const a: AudioAsset = {
         id: 'audio',
@@ -87,7 +87,7 @@ describe('DATA05 feasibility and duration — SYNTHETIC contract tests', () => {
       });
       const r = measuredDuration(t, [a]);
       expect(r.status).toBe(
-        durationMs > 60000 ? 'FIXTURE_CONTRACT_PASS' : 'DURATION_TOO_SHORT',
+        durationMs >= 60000 ? 'FIXTURE_CONTRACT_PASS' : 'DURATION_TOO_SHORT',
       );
       expect(r.releaseReady).toBe(false);
       expect(r.source).toBe('FIXTURE');

@@ -3,14 +3,21 @@ import { renderValidation, validateRenderRequest, snapshotHash } from './render-
 import { buildStudioPreview } from '../video-pipeline/studio-preview';
 import { StudioService } from './studio.service';
 import { ScraperService } from '../modules/core/scraper/scraper.service';
-import { StudioJobs } from './progress';
-import { RenderStore } from './render-store';
+import { resolveJobsRoot, StudioJobs } from './progress';
+import { RenderStore, resolveRenderRoot } from './render-store';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { textHash } from './kokoro-runtime';
 
 describe('Render safety contracts OFFLINE (not live MP4 proof)',()=>{
+ it('stores renders under the configured isolated Studio root',()=>{
+  const cwd=path.resolve('workspace','backend'),isolated=path.resolve('sandbox','store');
+  expect(resolveRenderRoot(isolated,cwd)).toBe(path.join(isolated,'renders'));
+  expect(resolveRenderRoot(undefined,cwd)).toBe(path.join(cwd,'.studio-data','renders'));
+  expect(resolveJobsRoot(isolated,cwd)).toBe(path.join(isolated,'jobs'));
+  expect(resolveJobsRoot(undefined,cwd)).toBe(path.join(cwd,'.studio-data','jobs'));
+ });
  it('gates stale/missing narration and FINAL separately from a playable DRAFT, without approving or rewriting source',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'studio-render-policy-'));
   const service=new StudioService({} as ScraperService);Object.assign(service,{root});
