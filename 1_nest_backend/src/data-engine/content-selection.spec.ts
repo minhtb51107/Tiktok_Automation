@@ -4,7 +4,7 @@ import {mkdtemp} from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import {editorialFixture,TEST_COMMENTARY} from './editorial-test.fixture';
-import {selectConversation,rankConversations} from './content-selection';
+import {diversityAwareOrder,selectConversation,rankConversations} from './content-selection';
 import {ContentDiscovery,qualityRequest} from './content-discovery';
 import {DataEngine} from './engine';
 import {DataStore} from './store';
@@ -14,6 +14,7 @@ const at='2026-11-09T00:00:00Z';
 const extra='Tôi từng trao đổi với quản lý về thời gian làm việc và các trách nhiệm cụ thể trong tuần. Ban đầu hai bên hiểu khác nhau về việc phản hồi sau giờ hành chính. Sau cuộc họp, chúng tôi viết lại cách phân công để đồng nghiệp biết ai có thể hỗ trợ khi cần. Tôi không xem kinh nghiệm của bản thân là quy luật chung cho tất cả công ty. Những người có hoàn cảnh gia đình khác nhau có thể ưu tiên sự ổn định thay vì thay đổi môi trường. Nếu chỉ đọc tên vị trí tuyển dụng thì khó biết lịch sinh hoạt thực tế sẽ thay đổi như thế nào. Tôi cho rằng ứng viên nên hỏi rõ điều kiện trước khi nhận việc, còn người quản lý cần trả lời bằng ví dụ thay vì những lời hứa mơ hồ. Không phải cuộc trao đổi nào cũng thành công; đôi khi hai bên cần thừa nhận họ không có cùng kỳ vọng. Câu chuyện này khiến tôi muốn nghe thêm trải nghiệm từ những người đi làm ở các môi trường khác.';
 const fixture=(reply=TEST_COMMENTARY+' '+extra)=>{const c=editorialFixture(undefined,reply).collection;c.root.itemType='POST';return c};
 describe('DATA-QUALITY-01 source planning (SYNTHETIC)',()=>{
+ test('diversity-aware ordering penalizes repetitive viewpoints without lowering eligibility',()=>{const rows=[{id:'a',author:'one',displayText:'Tôi nghỉ việc vì quản lý giao việc sau giờ hành chính',score:90},{id:'b',author:'two',displayText:'Tôi nghỉ việc vì quản lý giao việc ngoài giờ hành chính',score:88},{id:'c',author:'three',displayText:'Tôi ở lại vì công ty cho lịch linh hoạt để chăm con',score:80}];expect(diversityAwareOrder(rows).map(row=>row.id)).toEqual(['a','c','b'])});
  test('long verified source quotes produce editable ESTIMATED proposal, no measured duration or approvals',()=>{const c=fixture(),before=JSON.stringify(c),r=selectConversation(c,'SERIOUS',at);expect(r.status).toBe('READY_FOR_EDITORIAL_REVIEW');expect(r.estimate.minimumSeconds).toBeGreaterThanOrEqual(60);expect(r.estimate.source).toBe('ESTIMATED');expect(r.estimate.authoritative).toBe(false);expect(r.projectProposal?.timeline).toBeUndefined();expect(r.storyboard[0].threadsCard?.counts.likes).toBe(5000);expect(r.candidate.status).toBe('PENDING');expect(r.productionApproved).toBe(false);expect(r.scriptDraft).toContain(c.replies[0].originalText);expect(JSON.stringify(c)).toBe(before)});
  test('viral root plus emoji-only replies is insufficient regardless of likes',()=>{const c=fixture('😂😂');c.root.engagement.likes=999999;expect(selectConversation(c,'FUNNY',at).status).toBe('INSUFFICIENT_CONTENT')});
  test('low engagement substantive conversation stays eligible for review; missing is not zero',()=>{const c=fixture();c.root.engagement={likes:null,replies:null,reposts:null,shares:null};const r=selectConversation(c,'SERIOUS',at);expect(r.status).toBe('READY_FOR_EDITORIAL_REVIEW');expect(r.comments[0].engagement.likes).toBeNull()});

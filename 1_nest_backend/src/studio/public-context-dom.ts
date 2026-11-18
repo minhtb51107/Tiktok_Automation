@@ -240,6 +240,7 @@ export function observePublicContext() {
 export function performPublicConversationAction(input: {
   actionId: string;
   allowReplyExpansion: boolean;
+  excludedControlSignatures?: string[];
 }) {
   const documentHeightBefore = document.documentElement.scrollHeight;
   const nodePath = (element: Element | null) => {
@@ -293,13 +294,14 @@ export function performPublicConversationAction(input: {
   if (input.allowReplyExpansion) {
     const candidates = [...document.querySelectorAll('button,[role="button"]')]
       .filter(visible)
-      .map((element) => ({
-        element: element as HTMLElement,
-        label: (element.getAttribute('aria-label') || element.textContent || '')
-          .replace(/\s+/g, ' ')
-          .trim(),
-      }))
-      .filter(({ label }) => {
+      .map((element) => {
+        const card=element.closest('div[data-pressable-container="true"],article'),
+          label=(element.getAttribute('aria-label') || element.textContent || '').replace(/\s+/g, ' ').trim(),
+          controlSignature=`${exactSubject(card) ?? 'NO_SUBJECT'}|${nodePath(element)}|${label}`;
+        return {element:element as HTMLElement,label,controlSignature};
+      })
+      .filter(({ label,controlSignature }) => {
+        if(input.excludedControlSignatures?.includes(controlSignature))return false;
         if (/^(reply|trả lời)$/iu.test(label)) return false;
         return (
           /\b(view|show|see|load)\b.*\b(repl(?:y|ies))\b/iu.test(label) ||
@@ -321,6 +323,7 @@ export function performPublicConversationAction(input: {
         label: selected.label,
         containerIdentity: nodePath(card || selected.element.parentElement),
         containerSubjectUrl: exactSubject(card),
+        controlSignature:selected.controlSignature,
         documentHeightBefore,
       };
     }
@@ -336,6 +339,7 @@ export function performPublicConversationAction(input: {
     label: null,
     containerIdentity: null,
     containerSubjectUrl: null,
+    controlSignature:null,
     documentHeightBefore,
     scrollChanged: window.scrollY !== before,
   };

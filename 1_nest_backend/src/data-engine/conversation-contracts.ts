@@ -185,6 +185,24 @@ export interface ConversationAcquisitionTrace {
     recommendedCards: number;
   }>;
   stopReason: string;
+  /** Effective public-browser budget. Optional for backward-compatible captures. */
+  budget?: ConversationCollectionBudget;
+}
+export interface ConversationCollectionBudget {
+  maxDurationMs: number;
+  maxActions: number;
+  maxCards: number;
+  maxRequestEvents: number;
+  maxUnchangedActions: number;
+  maxPermalinkValidations: number;
+}
+export interface StructuredPaginationObservation {
+  payloadHash: string;
+  pointer: string;
+  edgeCount: number | null;
+  hasNextPage: boolean | null;
+  endCursorPresent: boolean;
+  observedAt: string;
 }
 export type StructuredPayloadSource = 'SSR' | 'NETWORK';
 export type StructuredResponseType = 'SSR_RELAY' | 'SSR_JSON' | 'NETWORK_JSON';
@@ -198,6 +216,7 @@ export interface StructuredPayloadDiagnostic {
   observedFieldNames: string[];
   postNodes: number;
   relationshipFields: string[];
+  pagination?: StructuredPaginationObservation[];
   observedAt: string;
 }
 export interface StructuredPostObservation {

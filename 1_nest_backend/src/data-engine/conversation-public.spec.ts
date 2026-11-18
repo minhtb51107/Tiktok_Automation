@@ -1,5 +1,6 @@
 import {
   drivePublicConversation,
+  conversationBudget,
   mergeConversationSnapshots,
   observePublicDocument,
   stripObservedTimestampChrome,
@@ -42,6 +43,10 @@ const observed = (rows: ReturnType<typeof row>[]) => ({
 const context = { regions: [], replies: [] };
 
 describe('browser-driven conversation acquisition', () => {
+  test('validates configurable deep-collection budgets without changing emergency guards',()=>{
+    expect(conversationBudget({maxDurationMs:90000,maxActions:15,maxCards:100,maxRequestEvents:300,maxUnchangedActions:3,maxPermalinkValidations:2})).toMatchObject({maxDurationMs:90000,maxActions:15,maxCards:100});
+    expect(()=>conversationBudget({maxActions:16})).toThrow('CONVERSATION_INVALID_COLLECTION_BUDGET');
+  });
   test('removes date chrome from the clean body but does not alter raw evidence', () => {
     const input = row('A', '06/10/2026\nNội dung thật\nDòng thứ hai');
     input.rawText = 'author\n06/10/2026\nNội dung thật\nDòng thứ hai\n86\n14';

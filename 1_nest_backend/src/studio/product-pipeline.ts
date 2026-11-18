@@ -15,6 +15,7 @@ import { observedContextViews } from '../data-engine/conversation-context';
 import { ContentQualityService } from '../data-engine/content-quality.controller';
 import { selectConversation } from '../data-engine/content-selection';
 import type { ThreadCollection, ConversationReview } from '../data-engine/conversation-contracts';
+import { DEEP_CONVERSATION_BUDGET } from '../data-engine/conversation-public';
 
 export type ProductStage =
   | 'SOURCE'
@@ -102,6 +103,7 @@ export interface AutonomousProductBatch {
     topic: string;
     style: 'SERIOUS';
     keywords: string[];
+    keywordExpansion: 'OFF' | 'EXPLICIT';
     targetVideos: number;
     maxCandidates: number;
     maxEnrich: number;
@@ -158,9 +160,11 @@ export const autonomousProductRequest = (body: any): AutonomousProductBatch['req
     maxCandidates = body?.maxCandidates ?? 30,
     maxEnrich = body?.maxEnrich ?? 10,
     maxRunMs = body?.maxRunMs ?? 3_600_000,
-    keywords = Array.isArray(body?.keywords)
-      ? [...new Set<string>(body.keywords.map((x: unknown) => String(x).trim()).filter(Boolean))]
-      : [topic, 'đi làm', 'công sở', 'nghề nghiệp'].filter(Boolean);
+    keywordExpansion = body?.keywordExpansion === 'EXPLICIT' ? 'EXPLICIT' : 'OFF',
+    explicit = Array.isArray(body?.keywords)
+      ? body.keywords.map((x: unknown) => String(x).trim()).filter(Boolean)
+      : [],
+    keywords = [...new Set<string>([topic, ...(keywordExpansion === 'EXPLICIT' ? explicit : [])])];
   if (
     !topic || topic.length > 120 || style !== 'SERIOUS' ||
     !Number.isInteger(targetVideos) || targetVideos < 1 || targetVideos > 3 ||
@@ -169,7 +173,7 @@ export const autonomousProductRequest = (body: any): AutonomousProductBatch['req
     !Number.isInteger(maxRunMs) || maxRunMs < 60_000 || maxRunMs > 3_600_000 ||
     !keywords.length || keywords.length > 8 || keywords.some((x) => x.length > 120)
   ) throw new BadRequestException('Invalid autonomous DRAFT request');
-  return { topic, style, keywords, targetVideos, maxCandidates, maxEnrich, maxRunMs, voice: 'my_yen', speed: 1.3 };
+  return { topic, style, keywords, keywordExpansion, targetVideos, maxCandidates, maxEnrich, maxRunMs, voice: 'my_yen', speed: 1.3 };
 };
 
 export const autonomousDiscoveryErrors = (run: {
@@ -1153,6 +1157,7 @@ export class ProductPipelineService {
               priority: 'HOT',
               minInteractions: 0,
               maxRunMs: job!.request.maxRunMs,
+              collectionBudget: DEEP_CONVERSATION_BUDGET,
             }),
           );
       job.discoveryRunId = run.id;

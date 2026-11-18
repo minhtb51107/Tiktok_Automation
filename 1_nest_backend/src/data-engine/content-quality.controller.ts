@@ -6,7 +6,7 @@ import { CONTENT_SELECTION } from './content-selection';
 @Injectable()
 export class ContentQualityService {
   readonly engine:ContentDiscovery;
-  constructor(readonly data:DataStudioService){this.engine=new ContentDiscovery(data.engine,{execution:'LIVE',discover:(keyword,audit)=>discoverConversations(keyword,audit),enrich:(url,audit)=>enrichConversation(url,audit)})}
+  constructor(readonly data:DataStudioService){this.engine=new ContentDiscovery(data.engine,{execution:'LIVE',discover:(keyword,audit)=>discoverConversations(keyword,audit),enrich:(url,audit,budget)=>enrichConversation(url,audit,undefined,budget?.maxDurationMs??180000,budget)})}
   live(body:any,origin?:string){if(origin&&!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)||process.env.STUDIO_DATA_QUALITY_LIVE_ENABLED!=='1'||body?.liveApproved!==true)throw new ForbiddenException('QUALITY_LIVE_APPROVAL_REQUIRED')}
 }
 @Controller('api/studio/data/content-quality')

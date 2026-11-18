@@ -636,6 +636,19 @@ export function ConversationPanel({
                 ? ` · ${c.acquisition.stopReason} · last state ${c.acquisition.transitions[c.acquisition.transitions.length - 1]?.state || "UNKNOWN"}`
                 : " · no browser action trace persisted"}
             </p>
+            <p data-testid="conversation-pagination-evidence">
+              Pagination observations{" "}
+              {c.structuredEvidence?.diagnostics.flatMap(
+                (row) => row.pagination ?? [],
+              ).length ?? 0}
+              {" · "}has next page{" "}
+              {c.structuredEvidence?.diagnostics
+                .flatMap((row) => row.pagination ?? [])
+                .filter((row) => row.hasNextPage === true).length ?? 0}
+              {c.acquisition?.budget
+                ? ` · budget ${c.acquisition.budget.maxActions} actions / ${c.acquisition.budget.maxCards} cards / ${c.acquisition.budget.maxDurationMs}ms`
+                : " · legacy budget unknown"}
+            </p>
             <p data-testid="conversation-structured-evidence">
               Passive structured payloads{" "}
               {c.structuredEvidence?.diagnostics.length ?? 0}

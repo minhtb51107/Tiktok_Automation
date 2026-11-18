@@ -16,6 +16,20 @@ export const CONTENT_SELECTION = {
 };
 const spam=(s:string)=>/(inbox|zalo|liên hệ|đặt hàng)/iu.test(s)&&/(giá chỉ|sale|ship|đơn hàng|https?:\/\/|\b0(?:[ .-]?\d){8,10}\b)/iu.test(s);
 const repetitive=(s:string)=>{const clauses=s.split(/[.!?;\n]+/u).map(normalize).filter(x=>tokens(x).length>=4);return clauses.length>=4&&new Set(clauses).size/clauses.length<0.7};
+export function diversityAwareOrder<T extends {id:string;displayText:string;author:string;score:number}>(rows:T[]) {
+  const remaining=[...rows],ordered:T[]=[];
+  while(remaining.length){
+    let best=0,bestUtility=-Infinity;
+    remaining.forEach((row,index)=>{
+      const overlap=ordered.length?Math.max(...ordered.map(selected=>similarity(row.displayText,selected.displayText))):0,
+        authorPenalty=ordered.some(selected=>selected.author===row.author)?8:0,
+        utility=row.score-overlap*45-authorPenalty;
+      if(utility>bestUtility){best=index;bestUtility=utility}
+    });
+    ordered.push(...remaining.splice(best,1));
+  }
+  return ordered;
+}
 function record(text:string,author:string,url:string|null):PublicRecord {
   return {text,bodyText:text,author,handle:author,avatar:null,createdAt:null,type:'UNKNOWN',parentReference:null,media:[],likeCount:null,replyCount:null,repostCount:null,shareCount:null,provenance:{text:'persisted conversation observation'},...(url?{url}:{})};
 }
@@ -64,6 +78,7 @@ export function selectConversation(c:ThreadCollection,style:ContentStyle,asOf:st
   const suggestions=comments.filter(x=>x.useful&&(x.relevance>0||x.raw.media.length>0)).sort((a,b)=>b.score-a.score||a.id.localeCompare(b.id));
   let eligible=suggestions.filter(x=>mode==='TOPIC_COMPILATION'||['PARENT_VERIFIED','OBSERVED_RELATIONSHIP_UNVERIFIED'].includes(x.context.classification));
   if(editorial.selectedIds)eligible=editorial.selectedIds.map(id=>{const item=comments.find(x=>x.id===id);if(!item?.useful)throw Error('QUALITY_UNUSABLE_EXPLICIT_SELECTION');return item});
+  else eligible=diversityAwareOrder(eligible);
   let narration=rootNarration;
   for(const r of eligible){if(comments.filter(x=>x.selected).length>=CONTENT_SELECTION.maxSelectedComments)break;
     const next=[narration,r.displayText].filter(Boolean).join('\n\n'),estimate=estimatedDuration(next,CONTENT_SELECTION.readingSpeed);
@@ -72,6 +87,8 @@ export function selectConversation(c:ThreadCollection,style:ContentStyle,asOf:st
     r.selected=true;narration=next;if(!editorial.selectedIds&&estimate.minimumSeconds>=65)break;
   }
   const selected=comments.filter(x=>x.selected).sort((a,b)=>eligible.indexOf(a)-eligible.indexOf(b));
+  const pairwise=selected.flatMap((row,index)=>selected.slice(index+1).map(other=>1-similarity(row.displayText,other.displayText))),
+    selectionDiversity={method:'PAIRWISE_LEXICAL_NOVELTY' as const,score:pairwise.length?Number((pairwise.reduce((sum,value)=>sum+value,0)/pairwise.length).toFixed(3)):null,selectedCount:selected.length};
   const estimate={...estimatedDuration(narration,CONTENT_SELECTION.readingSpeed),targetSeconds:CONTENT_SELECTION.targetSeconds};
   const weights=CONTENT_SELECTION.profiles[style],quality=evaluateConversation(c,asOf);
   const topicCorpus=normalize([rootNarration,c.root.topic??'',...selected.map(x=>x.displayText)].join(' ')),matchedTopicTerms=[...new Set(topicTerms.map(normalize).filter(t=>t&&topicCorpus.includes(t)))];
@@ -80,7 +97,7 @@ export function selectConversation(c:ThreadCollection,style:ContentStyle,asOf:st
     coherence:Math.min(1,(reasoning+selected.filter(x=>x.relevance>=2).length)/4)*weights.coherence,
     hook:/[?？]|tại sao|có ai|mâu thuẫn|không đồng ý/iu.test(rootText)?weights.hook:weights.hook/2,
     popularity:quality.popularity.score===null?null:quality.popularity.score/100*weights.popularity,topic:topicTerms.length?Math.min(1,matchedTopicTerms.length/3)*weights.topic:null};
-  const reasons=['HEURISTIC_NOT_SEMANTIC_PROOF','ESTIMATED_NOT_MEASURED','ORIGINAL_COMMENTARY_REQUIRES_EDITOR','RIGHTS_UNKNOWN'];
+  const reasons=['HEURISTIC_NOT_SEMANTIC_PROOF','ESTIMATED_NOT_MEASURED','ORIGINAL_COMMENTARY_REQUIRES_EDITOR','RIGHTS_UNKNOWN','DIVERSITY_AWARE_SELECTION'];
   if(mode==='TOPIC_COMPILATION')reasons.push('TOPIC_COMPILATION_NOT_A_SINGLE_VERIFIED_THREAD');
   if(suggestions.some(x=>x.context.classification==='UNKNOWN'))reasons.push('EDITORIAL_SELECTION_REQUIRED_FOR_UNSCOPED_CONTEXT');
   if(selected.some(x=>x.context.classification==='RELATED_OR_RECOMMENDED'))reasons.push('EXPLICIT_CONTEXT_CHOICE_NOT_CONFIRMED_DISCUSSION');
@@ -106,7 +123,7 @@ export function selectConversation(c:ThreadCollection,style:ContentStyle,asOf:st
   });
   const projectProposal:VideoProject|null=typed?{contractVersion:'1.0',id:candidate.id,style,title:rootText.slice(0,100),sources:[{id:identity.id,platform:'THREADS',canonicalUrl:identity.url,retrievedAt:c.root.provenance.observedAt,synthetic:c.root.provenance.synthetic}],posts:[{id:identity.id,sourceId:identity.id,author:{displayName:c.root.author.name??identity.handle,handle:identity.handle},text:rootRecord.text,mediaAssetIds:[],commentIds:selected.map(x=>x.id)}],comments:selected.map(x=>({id:x.id,sourceId:identity.id,postId:identity.id,...(x.parentId&&x.parentId!==identity.id?{parentCommentId:x.parentId}:{}),author:{displayName:x.author},text:x.originalText,relationshipStatus:x.relationship,observedTargetUrl:identity.url,mediaAssetIds:[]})),candidates:[candidate],storyboard,audioAssets:[],mediaAssets:[],publishing:{title:'',caption:'',hashtags:[],language:'vi',manualApprovalRequired:true}}:null;
   if(projectProposal){projectProposal.mediaAssets=mediaAssets;projectProposal.posts[0].mediaAssetIds=storyboard[0].mediaAssetIds;for(const comment of projectProposal.comments)comment.mediaAssetIds=storyboard.find(x=>x.id===comment.id)!.mediaAssetIds}
-  return {version:CONTENT_SELECTION.version,configHash:hash({policy:CONTENT_SELECTION,topicTerms,mode}),mode,selectionOrigin:editorial.selectedIds?'EXPLICIT_DRAFT_SELECTION_NOT_APPROVAL':'RULE_SUGGESTION_NOT_APPROVAL',sourceUrl:identity.url,root:structuredClone(c.root),rootType,rightsStatus:'UNKNOWN' as const,style,status,score:Math.round(Object.values(breakdown).reduce<number>((a,b)=>a+(b??0),0)),breakdown,topicRelevance:{method:'LEXICAL_ONLY',matchedTerms:matchedTopicTerms,status:topicTerms.length?(matchedTopicTerms.length?'OBSERVED_LEXICAL_MATCH':'UNCERTAIN'):'UNKNOWN'},reasons,estimate,
+  return {version:CONTENT_SELECTION.version,configHash:hash({policy:CONTENT_SELECTION,topicTerms,mode}),mode,selectionOrigin:editorial.selectedIds?'EXPLICIT_DRAFT_SELECTION_NOT_APPROVAL':'RULE_SUGGESTION_NOT_APPROVAL',sourceUrl:identity.url,root:structuredClone(c.root),rootType,rightsStatus:'UNKNOWN' as const,style,status,score:Math.round(Object.values(breakdown).reduce<number>((a,b)=>a+(b??0),0)),breakdown,selectionDiversity,topicRelevance:{method:'LEXICAL_ONLY',matchedTerms:matchedTopicTerms,status:topicTerms.length?(matchedTopicTerms.length?'OBSERVED_LEXICAL_MATCH':'UNCERTAIN'):'UNKNOWN'},reasons,estimate,
     reportedReplies:c.reportedReplyCount,observedReplies:c.observedReplyCount,verifiedReplies:comments.filter(x=>x.relationship==='PARENT_VERIFIED').length,completeness:c.status,comments,quotes,scriptDraft:narration,candidate,storyboard,projectProposal,conversation:quality,accuracy:'NOT_MEASURED',productionApproved:false};
 }
 export function rankConversations(collections:ThreadCollection[],style:ContentStyle,asOf:string,topicTerms:string[]=[]){

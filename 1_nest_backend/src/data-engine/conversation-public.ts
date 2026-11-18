@@ -34,6 +34,7 @@ import type {
   PopularityCandidate,
   PublicPost,
   ConversationAcquisitionTrace,
+  ConversationCollectionBudget,
   MembershipEvidence,
   ThreadCollection,
 } from './conversation-contracts';
@@ -45,6 +46,34 @@ import {
   PassiveStructuredResponseObserver,
   type StructuredExtraction,
 } from './conversation-structured';
+export const DEFAULT_CONVERSATION_BUDGET: ConversationCollectionBudget = {
+  maxDurationMs: 180000,
+  maxActions: 4,
+  maxCards: 40,
+  maxRequestEvents: 150,
+  maxUnchangedActions: 2,
+  maxPermalinkValidations: 2,
+};
+export const DEEP_CONVERSATION_BUDGET: ConversationCollectionBudget = {
+  maxDurationMs: 90000,
+  maxActions: 15,
+  maxCards: 100,
+  maxRequestEvents: 300,
+  maxUnchangedActions: 3,
+  maxPermalinkValidations: 2,
+};
+export function conversationBudget(value?: Partial<ConversationCollectionBudget>) {
+  const budget = { ...DEFAULT_CONVERSATION_BUDGET, ...value };
+  if (
+    !Number.isInteger(budget.maxActions) || budget.maxActions < 0 || budget.maxActions > 15 ||
+    !Number.isInteger(budget.maxDurationMs) || budget.maxDurationMs < 30000 || budget.maxDurationMs > 180000 ||
+    !Number.isInteger(budget.maxCards) || budget.maxCards < 1 || budget.maxCards > 100 ||
+    !Number.isInteger(budget.maxRequestEvents) || budget.maxRequestEvents < 50 || budget.maxRequestEvents > 500 ||
+    !Number.isInteger(budget.maxUnchangedActions) || budget.maxUnchangedActions < 1 || budget.maxUnchangedActions > 5 ||
+    !Number.isInteger(budget.maxPermalinkValidations) || budget.maxPermalinkValidations < 0 || budget.maxPermalinkValidations > 2
+  ) throw Error('CONVERSATION_INVALID_COLLECTION_BUDGET');
+  return budget;
+}
 export interface PublicAccessAudit {
   url: string;
   requests: number | null;
@@ -473,6 +502,7 @@ export interface PublicConversationSnapshot {
 /** Merge bounded snapshots by exact subject identity; never merges unidentified cards. */
 export function mergeConversationSnapshots(
   snapshots: PublicConversationSnapshot[],
+  maxCards = DEFAULT_CONVERSATION_BUDGET.maxCards,
 ) {
   const rows = new Map<
     string,
@@ -507,7 +537,7 @@ export function mergeConversationSnapshots(
       if (!prior || score(row) > score(prior)) rows.set(key, row);
     });
   }
-  const mergedRows = [...rows.values()].slice(0, 40);
+  const mergedRows = [...rows.values()].slice(0, maxCards);
   return {
     rows: mergedRows,
     jsonLd: [...jsonLd.values()],
@@ -529,9 +559,9 @@ export async function drivePublicConversation(
   targetUrl: string,
   maxActions = 4,
   structured?: PassiveStructuredResponseObserver,
+  requestedBudget?: Partial<ConversationCollectionBudget>,
 ) {
-  if (!Number.isInteger(maxActions) || maxActions < 0 || maxActions > 4)
-    throw Error('CONVERSATION_INVALID_ACTION_BUDGET');
+  const budget = conversationBudget({ ...requestedBudget, maxActions });
   const transitions: ConversationAcquisitionTrace['transitions'] = [],
     actions: ConversationAcquisitionTrace['actions'] = [],
     snapshots: PublicConversationSnapshot[] = [];
@@ -594,15 +624,19 @@ export async function drivePublicConversation(
   );
 
   let unchanged = 0;
-  for (let index = 0; index < maxActions; index++) {
+  const exhaustedControls=new Set<string>();
+  let cardBudgetReached = false;
+  for (let index = 0; index < budget.maxActions; index++) {
     const id = `action-${index + 1}`,
-      beforeSubjects = new Set(
+      beforeIdentities = new Set(
         latest.observed.rows.map((row) => row.subjectUrl).filter(Boolean),
-      ).size,
+      ),
+      beforeSubjects = beforeIdentities.size,
       beforeCards = latest.observed.diagnostics.cards,
       action = await page.evaluate(performPublicConversationAction, {
         actionId: id,
         allowReplyExpansion: true,
+        excludedControlSignatures:[...exhaustedControls],
       });
     transition(
       action.kind === 'EXPAND_NESTED' ? 'EXPANDING_NESTED' : 'LOADING_MORE',
@@ -624,10 +658,11 @@ export async function drivePublicConversation(
       )
       .catch(() => {});
     latest = await capture(id);
-    const afterSubjects = new Set(
+    const afterIdentities = new Set(
         latest.observed.rows.map((row) => row.subjectUrl).filter(Boolean),
-      ).size,
-      changed = afterSubjects > beforeSubjects;
+      ),
+      afterSubjects = afterIdentities.size,
+      changed = [...afterIdentities].some(identity=>!beforeIdentities.has(identity));
     actions.push({
       id,
       kind: action.kind,
@@ -646,9 +681,19 @@ export async function drivePublicConversation(
       latest.observed,
     );
     unchanged = changed ? 0 : unchanged + 1;
-    if (unchanged >= 2) break;
+    if(!changed&&action.controlSignature)exhaustedControls.add(action.controlSignature);
+    const uniqueAcrossSnapshots = new Set(
+      snapshots.flatMap((snapshot) =>
+        snapshot.observed.rows.map((row) => row.subjectUrl).filter(Boolean),
+      ),
+    ).size;
+    if (uniqueAcrossSnapshots >= budget.maxCards) {
+      cardBudgetReached = true;
+      break;
+    }
+    if (unchanged >= budget.maxUnchangedActions) break;
   }
-  const merged = mergeConversationSnapshots(snapshots),
+  const merged = mergeConversationSnapshots(snapshots, budget.maxCards),
     contexts = snapshots.flatMap((snapshot) => snapshot.context.regions),
     replies = snapshots.flatMap((snapshot) => snapshot.context.replies),
     context = {
@@ -686,9 +731,14 @@ export async function drivePublicConversation(
       ).length,
     })),
     stopReason:
-      actions.length < maxActions
-        ? 'NO_ADDITIONAL_PUBLIC_SUBJECTS_AFTER_TWO_ACTIONS'
-        : 'ACTION_BUDGET_REACHED',
+      cardBudgetReached
+        ? 'CARD_BUDGET_REACHED'
+        : unchanged >= budget.maxUnchangedActions
+          ? 'NO_NEW_UNIQUE_REPLIES_AFTER_CONSECUTIVE_ACTIONS'
+          : actions.length >= budget.maxActions
+            ? 'ACTION_BUDGET_REACHED'
+            : 'PUBLIC_PAGINATION_EXHAUSTED',
+    budget,
   };
   return { observed: merged, context, trace, snapshots };
 }
@@ -703,6 +753,7 @@ async function visit<T>(
   audit?: (event: PublicAccessAudit) => void,
   timeoutMs = 30000,
   attempt = 1,
+  maxRequestEvents = DEFAULT_CONVERSATION_BUDGET.maxRequestEvents,
 ): Promise<T> {
   const started = Date.now();
   let requests = 0,
@@ -762,7 +813,7 @@ async function visit<T>(
         r.url(),
         r.resourceType(),
         navigations,
-        { events: 150, navigation: 4, blockHeavy: true },
+        { events: maxRequestEvents, navigation: 4, blockHeavy: true },
       );
       structured.recordRequest(r, decision);
       void (decision.admitted ? r.continue() : r.abort()).catch(() => {
@@ -902,7 +953,7 @@ export async function discoverConversations(
                   id: identity.id,
                   url: identity.url,
                   author: { handle: identity.handle, name: null },
-                  originalText: '',
+                  originalText: row.text,
                   publishedAt:
                     row.date && Number.isFinite(Date.parse(row.date))
                       ? new Date(row.date).toISOString()
@@ -951,6 +1002,7 @@ export async function enrichConversation(
   audit?: (event: PublicAccessAudit) => void,
   evidence?: (page: Page, snapshot: PublicDomEvidenceSnapshot) => Promise<void>,
   totalBudgetMs = 180000,
+  requestedBudget?: Partial<ConversationCollectionBudget>,
 ): Promise<ThreadCollection> {
   if (
     !Number.isInteger(totalBudgetMs) ||
@@ -959,6 +1011,7 @@ export async function enrichConversation(
   )
     throw Error('CONVERSATION_INVALID_TIME_BUDGET');
   const acquisitionStarted = Date.now();
+  const collectionBudget = conversationBudget(requestedBudget);
   const target = canonicalPost(url);
   if (!target) throw Error('CONVERSATION_INVALID_URL');
   const attempt = await extractPublicThreads(target.url, 'TARGET_ONLY', true);
@@ -1003,8 +1056,9 @@ export async function enrichConversation(
       const driven = await drivePublicConversation(
           page,
           target.url,
-          4,
+          collectionBudget.maxActions,
           networkObserver,
+          collectionBudget,
         ),
         observed = driven.observed,
         context = driven.context,
@@ -1141,7 +1195,7 @@ export async function enrichConversation(
         target.url,
         observedCards,
         context,
-        2,
+        collectionBudget.maxPermalinkValidations,
       )) {
         const checkedAt = new Date().toISOString();
         try {
@@ -1307,5 +1361,7 @@ export async function enrichConversation(
     },
     audit,
     Math.min(150000, remainingBudgetMs),
+    1,
+    collectionBudget.maxRequestEvents,
   );
 }

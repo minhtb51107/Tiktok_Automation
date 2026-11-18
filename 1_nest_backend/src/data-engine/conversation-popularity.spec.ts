@@ -1,5 +1,5 @@
 import { describe, test, expect } from '@jest/globals';
-import { popularity, rankCandidates } from './conversation-popularity';
+import { observedQueryRelevance, popularity, rankCandidates } from './conversation-popularity';
 import type { PublicPost } from './conversation-contracts';
 const p = (id: string, n: number | null): PublicPost => ({
   id,
@@ -66,5 +66,15 @@ describe('DATA04 popularity — synthetic', () => {
     expect(ranked.selected).toEqual([unknown.url]);
     expect(ranked.ranked[0].thresholdStatus).toBe('UNKNOWN');
     expect(ranked.status).toBe('PARTIAL');
+  });
+  test('ranks observed query relevance before unrelated engagement without inventing metadata', () => {
+    const relevant=p('A',10),popular=p('B',1000);
+    relevant.originalText='Kinh nghiệm ngành IT khi thất nghiệp và tìm việc lại';
+    popular.originalText='Một buổi biểu diễn âm nhạc cuối tuần';
+    const rows=[{url:popular.url,post:popular,observedOrder:0},{url:relevant.url,post:relevant,observedOrder:1}],
+      ranked=rankCandidates(rows,2,'2026-11-01T02:00:00Z',{priority:'BALANCED',queryTerms:['ngành IT thất nghiệp']});
+    expect(ranked.selected[0]).toBe(relevant.url);
+    expect(ranked.ranked.find(row=>row.url===relevant.url)?.relevanceScore).toBeGreaterThan(0);
+    expect(observedQueryRelevance(relevant,['ngành IT thất nghiệp'])?.method).toBe('OBSERVED_TEXT_LEXICAL_RELEVANCE');
   });
 });

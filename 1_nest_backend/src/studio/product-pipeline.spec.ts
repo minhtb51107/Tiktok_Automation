@@ -55,8 +55,10 @@ describe('product pipeline snapshot', () => {
   it('bounds an autonomous SERIOUS DRAFT batch without widening production authority', () => {
     expect(autonomousProductRequest({ topic: 'công việc', targetVideos: 3 })).toMatchObject({
       style: 'SERIOUS', targetVideos: 3, maxCandidates: 30, maxEnrich: 10,
-      voice: 'my_yen', speed: 1.3,
+      voice: 'my_yen', speed: 1.3, keywords: ['công việc'], keywordExpansion: 'OFF',
     });
+    expect(autonomousProductRequest({topic:'drama ca sĩ X',keywords:['ca sĩ X lên tiếng'],keywordExpansion:'EXPLICIT'}).keywords).toEqual(['drama ca sĩ X','ca sĩ X lên tiếng']);
+    expect(autonomousProductRequest({topic:'review công ty Y'}).keywords).not.toEqual(expect.arrayContaining(['đi làm','công sở','nghề nghiệp']));
     expect(() => autonomousProductRequest({ topic: 'công việc', targetVideos: 4 })).toThrow('Invalid autonomous DRAFT request');
     expect(() => autonomousProductRequest({ topic: 'công việc', style: 'FUNNY' })).toThrow('Invalid autonomous DRAFT request');
   });

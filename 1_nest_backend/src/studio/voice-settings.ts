@@ -1,4 +1,4 @@
-import {speechProjection} from './speech-dictionary';
+import {AMBIGUOUS_REASONS} from './speech-rules';
 // Shared JSON settings contract used by the Studio UI and backend.
 export const VOICE_SPEED = {
   min: 0.5,
@@ -7,7 +7,12 @@ export const VOICE_SPEED = {
   default: 1.2,
 } as const;
 export function spokenAmbiguities(text: string,overrides:Record<string,string>={}): string[] {
-  return speechProjection(text,overrides).ambiguous;
+  const covered=new Set(Object.keys(overrides).map(value=>value.normalize('NFC').toLocaleLowerCase('vi'))),
+    normalized=text.normalize('NFC').toLocaleLowerCase('vi');
+  return Object.keys(AMBIGUOUS_REASONS).filter(term=>
+    !covered.has(term.toLocaleLowerCase('vi'))&&
+    new RegExp(`(^|[^\\p{L}\\p{N}_])${term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}($|[^\\p{L}\\p{N}_])`,'iu').test(normalized),
+  );
 }
 export function validVoiceSpeed(value: unknown): value is number {
   return (

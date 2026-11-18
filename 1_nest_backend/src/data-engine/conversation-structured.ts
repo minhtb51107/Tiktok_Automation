@@ -224,7 +224,8 @@ export function extractStructuredEvidence(
   for (const input of inputs.slice(0, 40)) {
     const posts: StructuredPostObservation[] = [],
       fields = new Set<string>(),
-      relationships = new Set<string>();
+      relationships = new Set<string>(),
+      pagination: StructuredPayloadDiagnostic['pagination'] = [];
     let visited = 0;
     const walk = (value: unknown, pointer: string, depth: number) => {
       if (visited++ > 50000 || depth > 40) return;
@@ -238,6 +239,19 @@ export function extractStructuredEvidence(
       }
       const row = object(value);
       if (!row) return;
+      const pageInfo = object(row.page_info) ?? object(row.pageInfo);
+      if (pageInfo && pagination.length < 50) {
+        const hasNext = pageInfo.has_next_page ?? pageInfo.hasNextPage,
+          endCursor = pageInfo.end_cursor ?? pageInfo.endCursor;
+        pagination.push({
+          payloadHash: hash(input.payload),
+          pointer,
+          edgeCount: Array.isArray(row.edges) ? row.edges.length : null,
+          hasNextPage: typeof hasNext === 'boolean' ? hasNext : null,
+          endCursorPresent: typeof endCursor === 'string' && !!endCursor,
+          observedAt: input.observedAt,
+        });
+      }
       for (const key of Object.keys(row)) {
         fields.add(key);
         if (relationKeys.has(key)) relationships.add(key);
@@ -263,6 +277,7 @@ export function extractStructuredEvidence(
         .slice(0, 200),
       postNodes: posts.length,
       relationshipFields: [...relationships].sort(),
+      pagination,
       observedAt: input.observedAt,
     });
     allPosts.push(...posts);

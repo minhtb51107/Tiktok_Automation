@@ -42,6 +42,12 @@ const input = (payload: unknown): StructuredPayloadInput => ({
 });
 
 describe('passive Threads structured response extraction', () => {
+  test('records observed pagination metadata without persisting cursor values',()=>{
+    const result=extractStructuredEvidence([{source:'NETWORK',endpointPath:'/api/graphql',responseType:'NETWORK_JSON',queryName:null,observedAt:'2026-11-18T00:00:00.000Z',payload:{data:{media:{code:'ROOT',pk:'1',user:{username:'root'},text_post_app_info:{direct_replies:{edges:[],page_info:{has_next_page:true,end_cursor:'PRIVATE_CURSOR'}}}}}}}],root.url);
+    const pagination=result.diagnostics.flatMap(row=>row.pagination??[]);
+    expect(pagination).toEqual(expect.arrayContaining([expect.objectContaining({hasNextPage:true,endCursorPresent:true,edgeCount:0})]));
+    expect(JSON.stringify(pagination)).not.toContain('PRIVATE_CURSOR');
+  });
   test('parses actual Relay preloader shape and validates a singleton direct reply through the existing graph validator', () => {
     const data = {
       media: {
