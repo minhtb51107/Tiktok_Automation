@@ -20,9 +20,14 @@ root and four verified replies, immutable originals, provenance, real root
 metadata, and the available per-reply likes. Missing reply metadata remains
 `NOT_PRESENT`; it is not converted to zero.
 
-No rights-reviewed gameplay or BGM asset exists in this sandbox. Those portions
-therefore remain `MISSING_GAMEPLAY_ASSET` and `MISSING_BGM_ASSET`, even though
-their selection, layout, loop/trim, gain and ducking controls are implemented.
+A later filesystem audit found the user-provided Minecraft Parkour clip in the
+original frontend worktree and the tracked `bgm/lofi.mp3` and `bgm/sneaky.mp3`
+files. The gameplay source remains untouched; an ignored runtime copy named
+`backgrounds/user_gameplay.mp4` makes it available to this feature worktree.
+Studio registers that clip and both BGM files through the existing public asset
+API. SERIOUS automatic DRAFTs select `user_gameplay.mp4` and `lofi.mp3` when a
+project has no saved background/music choice. Existing project choices are not
+replaced. Rights remain `UNKNOWN/DRAFT_ONLY`, so publishing stays blocked.
 
 The most recent Kokoro cold start was stopped by the existing emergency guard
 after available physical memory fell below 256 MiB. Its five previous WAV files
@@ -32,15 +37,18 @@ WAV files are generated and the 60–90 second duration gate passes.
 
 ## Verification
 
-- Targeted Jest: 6 suites / 39 tests passed; the final Product Pipeline rerun
-  passed 14/14 tests after adding the automatic-normalization assertion.
+- Targeted Jest for the asset recovery: 5 suites / 35 tests passed, including
+  automatic batch selection and idempotency. Earlier normalization/BGM suites
+  remain covered.
 - Backend Nest build, frontend TypeScript, and Studio bundle passed.
-- Read-only Studio browser smoke returned HTTP 200, opened the saved five-scene
-  collection, emitted no write requests or page errors, and preserved revision
-  42. The screenshot is the ignored runtime artifact
-  `production-ready-v2-editor.png`.
+- Studio browser acceptance saved the preset at revision 46. The preview
+  decoded the Minecraft background through the public-assets endpoint, muted
+  its source audio, loaded `lofi.mp3` at volume 0.06, and showed both tracks on
+  the editor timeline without console/page errors. The screenshot is the
+  ignored runtime artifact `existing-assets-preview.png`.
 - The production baseline remained 933/933 files byte-identical.
-- Available physical memory after browser cleanup was about 1,119 MiB. The
-  preceding Kokoro attempt recorded a 1,030.7 MiB peak RSS and had already hit
-  the 256 MiB emergency floor from a lower starting point, so no unsafe retry
-  or render was started.
+- Available physical memory fluctuated between 769 and 1,577 MiB while the
+  owned backend was stopped, but stabilized around 1,033–1,147 MiB after the
+  required sandbox restarted. The preceding Kokoro attempt recorded a 1,030.7
+  MiB peak RSS; adding the unchanged 256 MiB emergency reserve requires more
+  headroom than the running sandbox had. No unsafe retry or render was started.

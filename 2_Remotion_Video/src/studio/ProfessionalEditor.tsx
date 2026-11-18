@@ -189,26 +189,68 @@ export function ProfessionalEditor({
       ...draftRef.current,
       settings: { ...draftRef.current.settings, ...patch },
     });
-  const applyThreadsDarkGameplayPreset = () => {
-    const currentDraft = structuredClone(draftRef.current);
-    currentDraft.settings.scenes = currentDraft.settings.scenes.map((scene) => ({
-      ...scene,
-      visual: threadsDarkGameplayVisual(scene.visual),
-    }));
-    currentDraft.settings.backgroundMusic = {
-      ...defaultBgm(),
-      ...(currentDraft.settings.backgroundMusic || {}),
-    };
-    change(currentDraft);
-    const hasGameplay = (currentDraft.settings.backgroundTracks || []).some(
-      (clip) => clip.enabled,
-    );
-    setNotice(
-      hasGameplay
-        ? "THREADS_DARK_GAMEPLAY preset applied"
-        : "THREADS_DARK_GAMEPLAY applied · MISSING_GAMEPLAY_ASSET: upload or choose rights-reviewed footage",
-    );
-  };
+  const applyThreadsDarkGameplayPreset = () =>
+    void action(async () => {
+      const currentDraft = structuredClone(draftRef.current);
+      const gameplay = library.find(
+        (asset) =>
+          asset.category === "BACKGROUND" &&
+          asset.kind === "VIDEO" &&
+          /(?:gameplay|parkour|minecraft|snaptt)/i.test(asset.relativePath),
+      );
+      const lofi = library.find(
+        (asset) =>
+          asset.category === "BGM" &&
+          asset.kind === "AUDIO" &&
+          asset.relativePath.toLocaleLowerCase() === "bgm/lofi.mp3",
+      );
+      const details = await mergeDetails(
+        [gameplay?.id, lofi?.id].filter((id): id is string => !!id),
+      );
+      const gameplayDetails = details.find((asset) => asset.id === gameplay?.id);
+      currentDraft.settings.scenes = currentDraft.settings.scenes.map((scene) => ({
+        ...scene,
+        visual: threadsDarkGameplayVisual(scene.visual),
+      }));
+      if (
+        gameplayDetails?.durationMs &&
+        !currentDraft.settings.backgroundTracks?.some((clip) => clip.enabled)
+      ) {
+        currentDraft.settings.backgroundTracks = [
+          {
+            id: "bg-threads-gameplay",
+            assetId: gameplayDetails.id,
+            startMs: 0,
+            durationMs: gameplayDetails.durationMs,
+            sourceInMs: 0,
+            sourceOutMs: gameplayDetails.durationMs,
+            loop: true,
+            enabled: true,
+          },
+        ];
+      }
+      if (lofi && !currentDraft.settings.backgroundMusic?.assetId)
+        currentDraft.settings.backgroundMusic = {
+          ...defaultBgm(),
+          assetId: lofi.id,
+          enabled: true,
+        };
+      change(currentDraft);
+      const hasGameplay = (currentDraft.settings.backgroundTracks || []).some(
+        (clip) => clip.enabled,
+      );
+      setNotice(
+        [
+          "THREADS_DARK_GAMEPLAY preset applied",
+          hasGameplay ? null : "MISSING_GAMEPLAY_ASSET",
+          currentDraft.settings.backgroundMusic?.assetId
+            ? null
+            : "MISSING_BGM_ASSET",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      );
+    });
   const draftSession = useMemo(
     () => ({
       ...session,

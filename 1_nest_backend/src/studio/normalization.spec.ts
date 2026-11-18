@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -262,6 +262,66 @@ describe('normalization and metadata', () => {
       expect(s.items[0].spokenText).toBe(
         'công ty tuyển văn phòng nhưng k biết bh',
       );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+  it('attaches existing local gameplay and lofi to an automatic SERIOUS DRAFT without granting rights', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'auto-media-'));
+    const service = new StudioService({} as ScraperService);
+    Object.assign(service, { root });
+    const assets = [
+      {
+        id: 'pub-gameplay',
+        name: 'user_gameplay.mp4',
+        relativePath: 'backgrounds/user_gameplay.mp4',
+        uri: '/api/studio/public-assets/pub-gameplay',
+        category: 'BACKGROUND',
+        kind: 'VIDEO',
+        bytes: 100,
+      },
+      {
+        id: 'pub-lofi',
+        name: 'lofi.mp3',
+        relativePath: 'bgm/lofi.mp3',
+        uri: '/api/studio/public-assets/pub-lofi',
+        category: 'BGM',
+        kind: 'AUDIO',
+        bytes: 100,
+      },
+    ] as any[];
+    service.publicAssets.inventory = jest.fn(async () => assets);
+    service.publicAssets.resolve = jest.fn(async (id: string) => ({
+      ...assets.find((asset) => asset.id === id),
+      durationMs: id === 'pub-gameplay' ? 133867 : 185644,
+    }));
+    try {
+      let s = await service.create();
+      s = await service.mutate(s.id, {
+        revision: s.revision,
+        manual: { text: 'Nội dung thật', author: 'Nguồn', comments: '' },
+      });
+      const original = s.items[0].originalText;
+      s = await service.applyAutomaticSeriousAssets(s.id, s.revision);
+      expect(s.editor?.backgroundTracks?.[0]).toMatchObject({
+        assetId: 'pub-gameplay',
+        loop: true,
+        durationMs: 133867,
+      });
+      expect(s.editor?.backgroundMusic).toMatchObject({
+        assetId: 'pub-lofi',
+        enabled: true,
+        volume: 0.06,
+        ducking: true,
+      });
+      expect(s.editor?.scenes[0].visual?.card.appearance).toBe('DARK');
+      expect(s.mediaRights?.['pub-gameplay'].status).toBe('UNKNOWN');
+      expect(s.mediaRights?.['pub-lofi'].status).toBe('UNKNOWN');
+      expect(s.items[0].originalText).toBe(original);
+      const revision = s.revision;
+      s = await service.applyAutomaticSeriousAssets(s.id, s.revision);
+      expect(s.revision).toBe(revision);
+      expect(s.editor?.backgroundTracks).toHaveLength(1);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

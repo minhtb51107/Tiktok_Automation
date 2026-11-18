@@ -15,6 +15,21 @@ export interface LibraryAsset {
   width?: number;
   height?: number;
 }
+export function seriousDraftAssets(assets: LibraryAsset[]) {
+  const gameplay = assets.find(
+    (asset) =>
+      asset.category === 'BACKGROUND' &&
+      asset.kind === 'VIDEO' &&
+      /(?:gameplay|parkour|minecraft|snaptt)/i.test(asset.relativePath),
+  );
+  const bgm = assets.find(
+    (asset) =>
+      asset.category === 'BGM' &&
+      asset.kind === 'AUDIO' &&
+      asset.relativePath.toLocaleLowerCase() === 'bgm/lofi.mp3',
+  );
+  return { gameplay: gameplay ?? null, bgm: bgm ?? null };
+}
 export class PublicAssets {
   private probes = new Map<string, Partial<LibraryAsset>>();
   constructor(private root = path.resolve('../2_Remotion_Video/public')) {}

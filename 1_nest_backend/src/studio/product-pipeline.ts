@@ -872,6 +872,10 @@ export class ProductPipelineService {
       result.sessionId,
       current.revision,
     );
+    current = await this.studio.applyAutomaticSeriousAssets(
+      result.sessionId,
+      current.revision,
+    );
     const normalizationWarnings = current.items
       .filter(
         (item) =>

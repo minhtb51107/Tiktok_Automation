@@ -143,6 +143,7 @@ describe('product pipeline snapshot', () => {
         runtime: jest.fn(async () => ({})),
         load: jest.fn(async () => active),
         normalizeAutomaticDraft: jest.fn(async () => active),
+        applyAutomaticSeriousAssets: jest.fn(async () => active),
         voiceAction: jest.fn(),
         preparePreview: jest.fn(async () => ({})),
       };
@@ -188,6 +189,10 @@ describe('product pipeline snapshot', () => {
         0,
       );
       expect(studio.normalizeAutomaticDraft).toHaveBeenCalledWith(
+        active.id,
+        active.revision,
+      );
+      expect(studio.applyAutomaticSeriousAssets).toHaveBeenCalledWith(
         active.id,
         active.revision,
       );

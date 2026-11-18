@@ -52,7 +52,7 @@ import {
 import { KokoroRuntime, textHash } from './kokoro-runtime';
 import { voiceReport } from './voice-report';
 import { StudioJobs, ProgressSink } from './progress';
-import { PublicAssets } from './public-assets';
+import { PublicAssets, seriousDraftAssets } from './public-assets';
 import { splitTopicText } from './topic-mapping';
 import {
   editorSettings,
@@ -78,6 +78,7 @@ import { observedContextViews } from '../data-engine/conversation-context';
 import { canonicalPost } from '../data-engine/conversation-identity';
 import { editorialSession } from '../data-engine/editorial-adapter';
 import type { EditorialPlan } from '../data-engine/editorial-contracts';
+import { defaultBgm } from '../video-pipeline/scene-visual';
 
 export function threadsUrl(value: unknown): string {
   return validateThreadsUrl(value);
@@ -362,6 +363,71 @@ export class StudioService {
     });
   }
   readonly publicAssets = new PublicAssets();
+  /**
+   * Selects only the known local SERIOUS DRAFT assets. Local availability is
+   * not a publishing-rights declaration; both assets remain UNKNOWN there.
+   */
+  async applyAutomaticSeriousAssets(id: string, revision: number) {
+    return this.exclusive(async () => {
+      const s = await this.load(id);
+      if (s.revision !== revision)
+        throw new ConflictException(
+          'Session changed before automatic media selection.',
+        );
+      const selected = seriousDraftAssets(await this.publicAssets.inventory());
+      const settings = editorSettings(s);
+      const appliedAssetIds = new Set<string>();
+      let changed = false;
+      if (
+        selected.gameplay &&
+        !settings.backgroundTracks?.some((track) => track.enabled)
+      ) {
+        const asset = await this.publicAssets.resolve(selected.gameplay.id);
+        if (!asset.durationMs)
+          throw new BadRequestException('Gameplay duration unavailable');
+        settings.backgroundTracks = [
+          {
+            id: 'bg-threads-gameplay',
+            assetId: asset.id,
+            startMs: 0,
+            durationMs: asset.durationMs,
+            sourceInMs: 0,
+            sourceOutMs: asset.durationMs,
+            loop: true,
+            enabled: true,
+          },
+        ];
+        appliedAssetIds.add(asset.id);
+        changed = true;
+      }
+      if (selected.bgm && !settings.backgroundMusic?.assetId) {
+        settings.backgroundMusic = {
+          ...defaultBgm(),
+          assetId: selected.bgm.id,
+          enabled: true,
+        };
+        appliedAssetIds.add(selected.bgm.id);
+        changed = true;
+      }
+      for (const asset of [selected.gameplay, selected.bgm]) {
+        if (!asset || !appliedAssetIds.has(asset.id)) continue;
+        s.mediaRights ??= {};
+        if (!s.mediaRights[asset.id]) {
+          s.mediaRights[asset.id] = {
+            status: 'UNKNOWN',
+            evidence:
+              'User-provided local asset available for internal DRAFT only; publishing/commercial rights are not asserted.',
+            at: new Date().toISOString(),
+          };
+          changed = true;
+        }
+      }
+      if (!changed) return s;
+      s.editor = settings;
+      delete s.project.timeline;
+      return this.persist(s);
+    });
+  }
   private async visualAssets(s: StudioSession) {
     const ids = new Set<string>();
     const add = (id?: string | null) => {
