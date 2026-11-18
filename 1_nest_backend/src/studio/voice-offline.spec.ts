@@ -5,7 +5,8 @@ import * as path from 'path';
 import { StudioService } from './studio.service';
 import { ScraperService } from '../modules/core/scraper/scraper.service';
 import { normalizeText } from './normalization';
-import { qualityCases, realQualityCases } from './offline-normalization';
+import { offlineNormalize, qualityCases, realQualityCases } from './offline-normalization';
+import { HuggingFaceContentProvider } from '../data-engine/ai-provider';
 describe('offline normalization and Voice gates (MOCK runtime, no inference)', () => {
   it('matches curated expected results for nine rules and all five real targets', () => {
     const cases = [...qualityCases(), ...realQualityCases()];
@@ -18,35 +19,51 @@ describe('offline normalization and Voice gates (MOCK runtime, no inference)', (
       });
   });
   it('classifies/redacts HTTP 402 and never treats payment denial as successful output', async () => {
-    const saved = process.env.HUGGINGFACE_API_KEY;
-    process.env.HUGGINGFACE_API_KEY = 'offline-test';
-    const mock = jest.spyOn(global, 'fetch').mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          error:
-            'Insufficient credits; Bearer hf_secret_for_test person@example.com',
-        }),
-        { status: 402, headers: { 'content-type': 'application/json' } },
-      ),
+    let calls = 0;
+    const provider = new HuggingFaceContentProvider(
+      {
+        HUGGINGFACE_API_KEY: 'offline-test',
+        HUGGINGFACE_MODEL: 'Qwen/Qwen3-14B',
+        HUGGINGFACE_PROVIDER: 'hf-inference',
+      },
+      (() => ({
+        chatCompletion: async () => {
+          calls++;
+          throw {
+            httpResponse: {
+              status: 402,
+              clone: () => ({
+                text: async () =>
+                  JSON.stringify({
+                    error:
+                      'Insufficient credits; Bearer ' +
+                      ['hf_', 'secret_for_test'].join('') +
+                      ' person@example.com',
+                  }),
+              }),
+            },
+            message: 'Payment required',
+          };
+        },
+      })) as any,
+      { append() {}, events: () => [], summary: () => ({}) } as any,
     );
-    try {
-      const result = await normalizeText({
+    const result = await normalizeText(
+      {
         id: 'x',
         revision: 0,
         spokenText: 'ko đi',
         originalText: 'ko đi',
-      });
-      expect(result.executionStatus).toBe('BLOCKED_BILLING');
-      expect(result.approval).toBe('ERROR');
-      expect(result.proposedSpokenText).toBeNull();
-      expect(result.diagnostic?.redactedBody).not.toContain('hf_secret');
-      expect(result.diagnostic?.redactedBody).not.toContain('person@');
-      expect(mock).toHaveBeenCalledTimes(1);
-    } finally {
-      mock.mockRestore();
-      if (saved === undefined) delete process.env.HUGGINGFACE_API_KEY;
-      else process.env.HUGGINGFACE_API_KEY = saved;
-    }
+      },
+      provider,
+    );
+    expect(result.executionStatus).toBe('BLOCKED_BILLING');
+    expect(result.approval).toBe('ERROR');
+    expect(result.proposedSpokenText).toBeNull();
+    expect(result.diagnostic?.redactedBody).not.toContain('secret_for_test');
+    expect(result.diagnostic?.redactedBody).not.toContain('person@');
+    expect(calls).toBe(1);
+    expect(offlineNormalize({ id: 'x', revision: 0, spokenText: 'ko đi', originalText: 'ko đi' }).estimatedCost).toBe(0);
   });
   it('requires spoken approval, persists measured manifest, invalidates affected audio and retains files', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'voice-contract-'));

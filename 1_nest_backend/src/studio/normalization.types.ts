@@ -19,6 +19,12 @@ export interface TextProposal {
     category: 'EXPAND' | 'KEEP' | 'OMIT_SPOKEN' | 'REVIEW_AMBIGUOUS';
     reason: string;
   }[];
+  /** Positioned audit trail from the V3 offline engine (rule IDs, before/after). */
+  normalization?: {
+    normalizationVersion: string;
+    ttsInputHash: string;
+    changes: import('./speech-normalizer').SpeechChange[];
+  };
   explicitLockedTextApproval?: boolean;
   /** Distinguishes an explicit editor decision from the deterministic DRAFT policy. */
   decisionSource?: 'USER' | 'AUTOMATIC_POLICY';

@@ -145,13 +145,9 @@ describe('normalization and metadata', () => {
     });
     expect(result.originalText).toBe(original);
     expect(result.proposedSpokenText).toBe(
-      'Trong khu công nghiệp, công ty ép đi ai tuyển kiu ây, nhân sự, xuất nhập khẩu; t chưa làm sản xuất bh nên k biết.',
+      'Trong khu công nghiệp, công ty ép đi ai tuyển kiu ây, nhân sự, xuất nhập khẩu; t chưa làm sản xuất bao giờ nên không biết.',
     );
-    expect(result.ambiguousTerms.map((row) => row.term)).toEqual([
-      't',
-      'bh',
-      'k',
-    ]);
+    expect(result.ambiguousTerms.map((row) => row.term)).toEqual(['t']);
   });
   it('persists proposals, isolates accept/reject and honors manual locks without any network', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-normalize-'));
@@ -243,15 +239,23 @@ describe('normalization and metadata', () => {
       const original = s.items[0].originalText;
       s = await service.normalizeAutomaticDraft(s.id, s.revision);
       expect(s.items[0].spokenText).toBe(
-        'công ty tuyển văn phòng nhưng k biết bh',
+        'công ty tuyển văn phòng nhưng không biết bh',
       );
       expect(s.items[0].originalText).toBe(original);
+      expect(s.items[0].displayText).toBe(original);
       expect(s.items[0].manualLocks).not.toContain('NARRATION_TEXT');
       expect(s.items[0].automaticNormalization).toMatchObject({
-        policyVersion: 'vi-social-speech/2',
+        policyVersion: 'vi-speech-policy/3',
+        dictionaryVersion: 'vi-social-speech/3',
         changed: true,
-        ambiguousTerms: ['k', 'bh'],
+        ambiguousTerms: ['bh'],
       });
+      expect(s.items[0].automaticNormalization?.ttsInputHash).toMatch(
+        /^[a-f0-9]{64}$/,
+      );
+      expect(
+        s.items[0].automaticNormalization?.normalizationChanges?.length,
+      ).toBeGreaterThan(0);
       expect(s.scriptProposals?.[0]).toMatchObject({
         approval: 'ACCEPTED',
         decisionSource: 'AUTOMATIC_POLICY',
@@ -260,7 +264,7 @@ describe('normalization and metadata', () => {
       s = await service.normalizeAutomaticDraft(s.id, s.revision);
       expect(s.scriptProposals).toHaveLength(proposalCount!);
       expect(s.items[0].spokenText).toBe(
-        'công ty tuyển văn phòng nhưng k biết bh',
+        'công ty tuyển văn phòng nhưng không biết bh',
       );
     } finally {
       await fs.rm(root, { recursive: true, force: true });

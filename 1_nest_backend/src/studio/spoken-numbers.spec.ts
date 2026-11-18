@@ -11,7 +11,7 @@ describe('Vietnamese TTS number golden cases — OFFLINE', () => {
       'Ngày 08/08/2026',
       'Ngày tám tháng tám năm hai nghìn không trăm hai mươi sáu',
     ],
-    ['5,6%', 'năm phẩy sáu%'],
+    ['5,6%', 'năm phẩy sáu phần trăm'],
     ['5,6 triệu', 'năm phẩy sáu triệu'],
     ['t clm cmn ko', 't clm cmn ko'],
   ])('%s → %s', (input, expected) => expect(n(input).text).toBe(expected));

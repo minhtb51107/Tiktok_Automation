@@ -1,7 +1,13 @@
 import { randomUUID } from 'crypto';
 import type { TextProposal } from './normalization.types';
 import { realNormalizationCases } from './real-normalization-cases';
-import { SPEECH_DICTIONARY } from './speech-dictionary';
+import { normalizeSpeech } from './speech-normalizer';
+
+/**
+ * OFFLINE script normalization. Thin adapter over the single V3 engine in
+ * `speech-normalizer.ts` (SCRIPT mode: teencode/abbreviations/pronunciations; digits
+ * and units are read later at TTS time so captions keep the numerals).
+ */
 export function offlineNormalize(item: {
   id: string;
   revision: number;
@@ -10,69 +16,24 @@ export function offlineNormalize(item: {
 }): TextProposal {
   const started = Date.now();
   const input = item.spokenText;
-  const labels: NonNullable<TextProposal['labels']> = [];
-  let text = input;
-  const expand = (term: string, replacement: string, allow = true) => {
-    const re = new RegExp(
-      `(?<![\\p{L}\\p{N}_])${term}(?![\\p{L}\\p{N}_])`,
-      'giu',
-    );
-    text = text.replace(re, (match) => {
-      labels.push({
-        term: match,
-        replacement: allow ? replacement : match,
-        category: allow ? 'EXPAND' : 'REVIEW_AMBIGUOUS',
-        reason: allow
-          ? 'Conservative whole-word mapping in supplied context'
-          : 'Insufficient context to expand safely',
-      });
-      return allow ? replacement : match;
-    });
-  };
-  expand('tphcm', 'Thành phố Hồ Chí Minh');
-  expand('ko', 'không');
-  expand('cty', 'công ty');
-  expand(
-    'vp',
-    'văn phòng',
-    /việc|job|làm|công|tuyển|ứng tuyển|văn phòng/iu.test(input),
+  const result = normalizeSpeech(input, { mode: 'SCRIPT' });
+  const labels: NonNullable<TextProposal['labels']> = result.changes.map(
+    (change) => ({
+      term: change.before.trim(),
+      replacement: change.after,
+      category: change.stage === 'SYMBOL' ? 'OMIT_SPOKEN' : 'EXPAND',
+      reason:
+        change.stage === 'SYMBOL'
+          ? `Visual emoticon/arrow omitted only from spoken proposal (${change.ruleId})`
+          : `Rule ${change.ruleId} (${change.category})`,
+    }),
   );
-  expand('ĐH', 'đại học', /bằng|học|trường|tốt nghiệp|sinh viên/iu.test(input));
-  for (const row of SPEECH_DICTIONARY) {
-    const re = new RegExp(
-      `(?<![\\p{L}\\p{N}_])${row.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`,
-      row.caseSensitive ? 'gu' : 'giu',
-    );
-    text = text.replace(re, (term) => {
-      labels.push({
-        term,
-        replacement: row.spoken,
-        category: 'EXPAND',
-        reason: `Versioned speech dictionary (${row.category})`,
-      });
-      return row.spoken;
-    });
-  }
-  text = text.replace(
-    /(?:[:;=8xX][-^']?[)(]+|→|←|↔|⇒|⇐|⟶|->|=>|<--?)/g,
-    (term) => {
-      labels.push({
-        term,
-        replacement: '',
-        category: 'OMIT_SPOKEN',
-        reason: 'Visual emoticon/arrow omitted only from spoken proposal',
-      });
-      return '';
-    },
-  );
-  for (const m of input.matchAll(
-    /(?<![\p{L}\p{N}_])(t|k|bh|đcđ|clm|cmn)(?![\p{L}\p{N}_])/giu,
-  ))
+  for (const term of result.ambiguousTerms)
     labels.push({
-      term: m[1],
-      replacement: m[1],
+      term: term.term,
+      replacement: term.term,
       category: 'REVIEW_AMBIGUOUS',
-      reason: 'Keep expressive/ambiguous slang unchanged for user review',
+      reason: term.reason,
     });
   for (const m of input.matchAll(/\b(?:TOEIC\s*\d+|N[124]|Fresher)\b/gi))
     labels.push({
@@ -81,38 +42,43 @@ export function offlineNormalize(item: {
       category: 'KEEP',
       reason: 'Preserve qualification or job terminology',
     });
-  for (const m of input.matchAll(/\b\d+,\d+\s+quán\b/giu))
+  const ambiguous = result.ambiguousTerms.map((l) => ({
+    term: l.term,
+    reason: l.reason,
+  }));
+  for (const m of input.matchAll(/\b\d+,\d+\s+quán\b/giu)) {
+    const reason =
+      'Likely enumeration/range; not automatically interpreted as decimal';
     labels.push({
       term: m[0],
       replacement: m[0],
       category: 'REVIEW_AMBIGUOUS',
-      reason:
-        'Likely enumeration/range; not automatically interpreted as decimal',
+      reason,
     });
-  text = text.replace(/[ \t]{2,}/g, ' ').trim();
-  const ambiguous = labels
-    .filter((l) => l.category === 'REVIEW_AMBIGUOUS')
-    .map((l) => ({ term: l.term, reason: l.reason }));
+  }
   return {
     runId: randomUUID(),
     itemId: item.id,
     baseRevision: item.revision,
     inputText: input,
     originalText: item.originalText,
-    proposedSpokenText: text,
-    changes: labels
-      .filter((l) => l.replacement !== l.term)
-      .map((l) => ({ before: l.term, after: l.replacement, reason: l.reason })),
+    proposedSpokenText: result.spokenText,
+    changes: result.changes.map((c) => ({
+      before: c.before,
+      after: c.after,
+      reason: `${c.ruleId} @${c.start}-${c.end}`,
+    })),
     labels,
     ambiguousTerms: ambiguous,
     warnings: [
       'OFFLINE deterministic mappings, not AI output. Review context and omitted symbols before accepting.',
+      ...result.warnings,
     ],
     error: null,
     approval: 'PENDING',
     decidedAt: null,
     provider: 'OFFLINE rules',
-    model: 'conservative-vi-v1',
+    model: 'conservative-vi-v3',
     mode: 'OFFLINE',
     executionStatus: 'SUCCESS',
     startedAt: new Date(started).toISOString(),
@@ -120,6 +86,11 @@ export function offlineNormalize(item: {
     latencyMs: Date.now() - started,
     tokenUsage: { input: null, output: null, total: null },
     estimatedCost: 0,
+    normalization: {
+      normalizationVersion: result.normalizationVersion,
+      ttsInputHash: result.ttsInputHash,
+      changes: result.changes,
+    },
   };
 }
 export function qualityCases() {

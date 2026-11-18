@@ -12,10 +12,14 @@ export interface StudioItem {
   pronunciationOverrides?: Record<string, string>;
   automaticNormalization?: {
     policyVersion: string;
+    dictionaryVersion?: string;
+    normalizationVersion?: string;
     inputHash: string;
     outputHash: string;
+    ttsInputHash?: string;
     appliedAt: string;
     changed: boolean;
+    normalizationChanges?: import('./speech-normalizer').SpeechChange[];
     ambiguousTerms: string[];
   };
   localSourceMedia?: NonNullable<

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { replaceFile } from './atomic-file';
+import { prepareTtsInput } from './speech-normalizer';
 import type { StudioSession } from './studio.contracts';
 import type { RenderManifest } from './render.types';
 import { StudioService } from './studio.service';
@@ -223,12 +224,18 @@ function threadsUrl(value: unknown) {
 
 const currentAudio = (session: StudioSession, itemId: string) => {
   const item = session.items.find((row) => row.id === itemId);
+  const spokenHash = createHash('sha256')
+    .update(item?.spokenText || '')
+    .digest('hex');
+  const ttsHash = item
+    ? prepareTtsInput(item.spokenText, item.pronunciationOverrides).ttsInputHash
+    : null;
   return session.voiceAssets?.some(
     (asset) =>
       asset.itemId === itemId &&
       asset.status !== 'STALE' &&
-      asset.textHash ===
-        createHash('sha256').update(item?.spokenText || '').digest('hex') &&
+      asset.textHash === spokenHash &&
+      (!asset.ttsInputHash || asset.ttsInputHash === ttsHash) &&
       asset.durationMs > 0,
   );
 };

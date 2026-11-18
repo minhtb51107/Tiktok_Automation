@@ -29,8 +29,8 @@ export const realNormalizationCases = [
     input:
       'T 28t, có tiếng Nhật, có kn CSKH Nhật, điều phối cv nội bộ, kn assitant manager... ứng tuyển vô vị trí Thư ký Giám đốc nhưng tạch vì cv tuyển đến 26t :)))))',
     expected:
-      'T 28t, có tiếng Nhật, có kn CSKH Nhật, điều phối cv nội bộ, kn assitant manager... ứng tuyển vô vị trí Thư ký Giám đốc nhưng tạch vì cv tuyển đến 26t',
-    category: 'OMIT_SPOKEN / REVIEW_AMBIGUOUS',
+      'T 28t, có tiếng Nhật, có kinh nghiệm chăm sóc khách hàng Nhật, điều phối công việc nội bộ, kn assitant manager... ứng tuyển vô vị trí Thư ký Giám đốc nhưng tạch vì công việc tuyển đến 26t',
+    category: 'EXPAND / OMIT_SPOKEN / REVIEW_AMBIGUOUS',
   },
   {
     targetId: 'Db-99ClkxJW',

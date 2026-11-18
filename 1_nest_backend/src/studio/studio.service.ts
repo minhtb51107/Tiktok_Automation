@@ -6,17 +6,14 @@ import { ttsFailureCategory, LocalTtsExecution } from './tts-resource-policy';
 import { localOcr, imageNarration } from './media-ocr';
 import { conversationMediaFile } from '../data-engine/conversation-media';
 import {
-  speechProjection,
   validatePronunciations,
   SPEECH_DICTIONARY_VERSION,
 } from './speech-dictionary';
+import { prepareTtsInput } from './speech-normalizer';
+import { SPEECH_POLICY_VERSION } from './speech-rules';
 import { editorialScriptHash } from '../data-engine/editorial-script-state';
 import { uploadSignature, probeUpload, validCategory } from './uploaded-media';
 import { replaceFile } from './atomic-file';
-import {
-  normalizeSpokenNumbers,
-  NUMBER_READING_VERSION,
-} from './spoken-numbers';
 import { cacheSourceImage } from './source-images';
 import { RenderStore } from './render-store';
 import {
@@ -945,12 +942,8 @@ export class StudioService {
         a.textHash !== textHash(item.spokenText) ||
         (!!a.ttsInputHash &&
           a.ttsInputHash !==
-            textHash(
-              normalizeSpokenNumbers(
-                speechProjection(item.spokenText, item.pronunciationOverrides)
-                  .text,
-              ).text,
-            )) ||
+            prepareTtsInput(item.spokenText, item.pronunciationOverrides)
+              .ttsInputHash) ||
         a.voice !== item.voiceSettings?.voice ||
         a.speed !== item.voiceSettings?.speed
       )
@@ -1887,21 +1880,19 @@ export class StudioService {
       const settings = item.voiceSettings;
       if (!settings?.voice)
         throw Error('Select a locally available Kokoro voice');
-      const speech = speechProjection(
+      const normalizedInput = prepareTtsInput(
         item.spokenText,
         item.pronunciationOverrides,
       );
-      const normalizedInput = normalizeSpokenNumbers(speech.text);
-      job.inputCharacters = normalizedInput.text.length;
-      job.ttsInputHash = textHash(normalizedInput.text);
-      const normalizationVersion =
-        NUMBER_READING_VERSION + ' / ' + SPEECH_DICTIONARY_VERSION;
+      job.inputCharacters = normalizedInput.spokenText.length;
+      job.ttsInputHash = normalizedInput.ttsInputHash;
+      const normalizationVersion = normalizedInput.normalizationVersion;
       if (normalizedInput.warnings.length)
         throw Error(normalizedInput.warnings.join('; '));
       const oldAsset = this.currentAsset(s, item);
-      const inputStale =
-        oldAsset?.numberReadingVersion !== normalizationVersion ||
-        oldAsset?.ttsInputHash !== textHash(normalizedInput.text);
+      const inputStale = oldAsset?.ttsInputHash
+        ? oldAsset.ttsInputHash !== normalizedInput.ttsInputHash
+        : oldAsset?.numberReadingVersion !== normalizationVersion;
       const modelStale =
         oldAsset &&
         oldAsset.modelVersion !==
@@ -1922,7 +1913,7 @@ export class StudioService {
       } else {
         const result = await this.voice.generate(
           s.id,
-          normalizedInput.text,
+          normalizedInput.spokenText,
           settings.voice,
           settings.speed,
           s.voiceRuntime,
@@ -1938,6 +1929,8 @@ export class StudioService {
             (a) =>
               a.itemId === item.id &&
               a.textHash === textHash(item.spokenText) &&
+              (!a.ttsInputHash ||
+                a.ttsInputHash === normalizedInput.ttsInputHash) &&
               a.voice === settings.voice &&
               a.speed === settings.speed &&
               a.filePath === result.filePath,
@@ -1965,8 +1958,8 @@ export class StudioService {
             itemRevision: item.revision,
             textHash: textHash(item.spokenText),
             spokenText: item.spokenText,
-            ttsInputText: normalizedInput.text,
-            ttsInputHash: textHash(normalizedInput.text),
+            ttsInputText: normalizedInput.spokenText,
+            ttsInputHash: normalizedInput.ttsInputHash,
             numberReadingVersion: normalizationVersion,
             voice: settings.voice,
             speed: settings.speed,
@@ -2209,9 +2202,13 @@ export class StudioService {
         );
       for (const item of s.items.filter((row) => row.selected)) {
         const currentHash = textHash(item.spokenText);
+        const currentTts = prepareTtsInput(
+          item.spokenText,
+          item.pronunciationOverrides,
+        );
         if (
-          item.automaticNormalization?.policyVersion ===
-            SPEECH_DICTIONARY_VERSION &&
+          item.automaticNormalization?.normalizationVersion ===
+            currentTts.normalizationVersion &&
           item.automaticNormalization.outputHash === currentHash
         )
           continue;
@@ -2238,12 +2235,19 @@ export class StudioService {
           item.spokenText = proposed;
           item.revision++;
         }
+        const finalTts = changed
+          ? prepareTtsInput(item.spokenText, item.pronunciationOverrides)
+          : currentTts;
         item.automaticNormalization = {
-          policyVersion: SPEECH_DICTIONARY_VERSION,
+          policyVersion: SPEECH_POLICY_VERSION,
+          dictionaryVersion: SPEECH_DICTIONARY_VERSION,
+          normalizationVersion: finalTts.normalizationVersion,
           inputHash: currentHash,
           outputHash: textHash(item.spokenText),
+          ttsInputHash: finalTts.ttsInputHash,
           appliedAt: run.decidedAt,
           changed,
+          normalizationChanges: run.normalization?.changes || [],
           ambiguousTerms: [
             ...new Set(run.ambiguousTerms.map((term) => term.term)),
           ],
