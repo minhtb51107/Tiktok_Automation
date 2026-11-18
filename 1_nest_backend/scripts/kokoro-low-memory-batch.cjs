@@ -16,6 +16,7 @@ if(fs.existsSync(runtimeFile)){
 const args=Object.fromEntries(process.argv.slice(2).map(value=>{const [key,...rest]=value.split('=');return [key.replace(/^--/,''),rest.join('=')]}));
 if(!/^[a-f0-9-]{36}$/.test(args.session||''))throw Error('Usage: --session=<uuid> --root=<isolated-store>');
 if(!args.root)throw Error('Isolated --root is required');
+if(args.draft!==undefined&&!['true','false'].includes(args.draft))throw Error('--draft must be true or false');
 process.env.STUDIO_DATA_ROOT=path.resolve(args.root);
 process.env.OMP_NUM_THREADS='1';
 process.env.OPENBLAS_NUM_THREADS='1';
@@ -34,7 +35,7 @@ const {ScraperService}=require('../dist/modules/core/scraper/scraper.service.js'
       session=await service.load(args.session);
       const item=session.items.find(row=>row.id===selected[index].id);
       process.stdout.write(JSON.stringify({event:'scene-start',index:index+1,total:selected.length,itemId:item.id,characters:item.spokenText.length})+'\n');
-      session=await service.voiceAction(args.session,item.id,{revision:session.revision,action:'GENERATE',regenerate:false,draft:false});
+      session=await service.voiceAction(args.session,item.id,{revision:session.revision,action:'GENERATE',regenerate:false,draft:args.draft==='true'});
       const job=session.voiceJobs[session.voiceJobs.length-1];
       const asset=(session.voiceAssets||[]).find(row=>row.id===job.assetId);
       process.stdout.write(JSON.stringify({event:'scene',index:index+1,total:selected.length,itemId:item.id,outcome:job.status,error:job.error||null,durationMs:asset?.durationMs||null,metrics:asset?.synthesisMetrics||job.resourceDiagnostics||null})+'\n');

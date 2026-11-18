@@ -25,6 +25,7 @@ describe('low-memory Kokoro execution adapter', () => {
     expect(batch).toContain('new StudioService(new ScraperService())');
     expect(batch).toContain('service.voiceAction(');
     expect(batch).toContain("action:'GENERATE'");
+    expect(batch).toContain("draft:args.draft==='true'");
     expect(batch).toContain('service.onModuleDestroy()');
     expect(batch).not.toContain('fetch(');
   });
