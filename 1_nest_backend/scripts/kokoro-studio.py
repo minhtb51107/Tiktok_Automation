@@ -1,5 +1,5 @@
 """Local-only Kokoro bridge. Preflight never loads a model; worker forbids network."""
-import sys, os, json, ast, pathlib, importlib.util, importlib.metadata, threading, time, contextlib, re
+import sys, os, json, ast, pathlib, importlib.util, importlib.metadata, threading, time, contextlib, re, tempfile, subprocess, gc
 from kokoro_memory import memory_sample, allocation_failure
 os.environ['HF_HUB_OFFLINE']='1'
 os.environ['TRANSFORMERS_OFFLINE']='1'
@@ -99,6 +99,83 @@ def observe_memory():
 threading.Thread(target=observe_memory,daemon=True).start()
 def stage(name):
     emit({'stage':name,'resource':memory_sample()})
+
+@contextlib.contextmanager
+def low_memory_torch_loading(torch):
+    """Map local weights and assign tensors instead of keeping a second full copy."""
+    original_load=torch.load
+    original_load_state_dict=torch.nn.Module.load_state_dict
+    def mapped_load(file,*args,**kwargs):
+        if isinstance(file,(str,os.PathLike)):
+            kwargs.setdefault('mmap',True)
+        return original_load(file,*args,**kwargs)
+    def assigned_state_dict(module,state_dict,strict=True,assign=False):
+        return original_load_state_dict(module,state_dict,strict=strict,assign=True)
+    torch.load=mapped_load
+    torch.nn.Module.load_state_dict=assigned_state_dict
+    try:
+        yield
+    finally:
+        torch.load=original_load
+        torch.nn.Module.load_state_dict=original_load_state_dict
+
+def low_memory_chunks(text, max_chars=120):
+    """Split only at authored punctuation/whitespace; never rewrite spoken text."""
+    from kokoro_vietnamese.core import split_text
+    result=[]
+    for sentence in split_text(text):
+        pending=[sentence]
+        while pending:
+            value=pending.pop(0).strip()
+            if not value:
+                continue
+            if len(value)<=max_chars:
+                result.append(value)
+                continue
+            cuts=[m.end() for m in re.finditer(r'[,;:]\s+',value) if m.end()<=max_chars]
+            if cuts:
+                cut=cuts[-1]
+            else:
+                spaces=[m.start() for m in re.finditer(r'\s+',value) if m.start()<=max_chars]
+                cut=spaces[-1] if spaces else max_chars
+            result.append(value[:cut].strip())
+            pending.insert(0,value[cut:].strip())
+    return result
+
+def synthesize_streaming(tts, text, output):
+    """Keep only one inference audio buffer in memory and concatenate on disk."""
+    import soundfile as sf
+    chunks=low_memory_chunks(text)
+    if not chunks:
+        raise RuntimeError('EMPTY_TEXT_CHUNKS')
+    output_path=pathlib.Path(output)
+    output_path.parent.mkdir(parents=True,exist_ok=True)
+    samples=[]
+    with tempfile.TemporaryDirectory(prefix='kokoro-chunks-',dir=str(output_path.parent)) as temp_name:
+        temp=pathlib.Path(temp_name)
+        parts=[]
+        for index,chunk in enumerate(chunks,1):
+            stage(f'Synthesizing chunk {index}/{len(chunks)}')
+            chunk_before=memory_sample()
+            audio,phonemes=tts.synthesize(chunk,speed=1.0,crossfade_ms=0)
+            if len(audio)==0:
+                raise RuntimeError('EMPTY_AUDIO_CHUNK')
+            part=temp/f'{index:03d}.wav'
+            sf.write(part,audio,24000)
+            with part.open('rb+') as saved:
+                os.fsync(saved.fileno())
+            del audio,phonemes
+            gc.collect()
+            chunk_after=memory_sample()
+            samples.append({'index':index,'characters':len(chunk),'before':chunk_before,'after':chunk_after})
+            parts.append(part)
+        listing=temp/'concat.txt'
+        listing.write_text(''.join("file '"+str(part.resolve()).replace('\\','/').replace("'","'\\''")+"'\n" for part in parts),encoding='utf-8')
+        subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','concat','-safe','0','-i',str(listing),'-c:a','pcm_s16le',str(output_path)],check=True)
+        with output_path.open('rb+') as saved:
+            os.fsync(saved.fileno())
+    return chunks,samples
+
 for line in sys.stdin:
     try:
         req=json.loads(line);cfg=config();key=(cfg['model'],cfg['config'],cfg.get('device','cpu'));active=True;measurements=[];started=time.monotonic();before=None;after=None;runtime_before=None;runtime_after=None
@@ -109,7 +186,8 @@ for line in sys.stdin:
                 tts=None
                 from kokoro_vietnamese import KokoroVietnamese
                 runtime_after=memory_sample();stage('Loading model');before=memory_sample()
-                tts=KokoroVietnamese(model_path=cfg['model'],config_path=cfg['config'],voicepack_path=str(pathlib.Path(cfg['voiceDir'])/(req['voice']+'.pt')),voice=req['voice'],device=cfg.get('device','cpu'))
+                with low_memory_torch_loading(torch):
+                    tts=KokoroVietnamese(model_path=cfg['model'],config_path=cfg['config'],voicepack_path=str(pathlib.Path(cfg['voiceDir'])/(req['voice']+'.pt')),voice=req['voice'],device=cfg.get('device','cpu'))
                 current=key
                 current_voice=req['voice']
                 after=memory_sample()
@@ -122,20 +200,15 @@ for line in sys.stdin:
                 tts.voicepack=torch.load(pack,map_location='cpu',weights_only=True)
                 tts.voicepack_path=pack
                 current_voice=req['voice']
-            import soundfile as sf
             stage('Synthesizing')
             inference_before=memory_sample()
             if re.search(r'\d',req['text']): raise RuntimeError('UNNORMALIZED_NUMERIC_INPUT')
-            audio,phonemes=tts.synthesize(req['text'],speed=1.0)
+            chunks,chunk_samples=synthesize_streaming(tts,req['text'],req['output'])
             inference_after=memory_sample()
-            if len(audio)==0: raise RuntimeError('EMPTY_AUDIO')
-            sf.write(req['output'],audio,24000)
-        from kokoro_vietnamese.core import split_text
-        chunks=split_text(req['text'])
         final=memory_sample()
         if final: measurements.append(final)
         active=False
-        metrics={'inputCharacters':len(req['text']),'sentenceChunks':len(chunks),'maxSentenceCharacters':max(map(len,chunks),default=0),'elapsedMs':round((time.monotonic()-started)*1000),'peakRssMiB':max((m['peakRssMiB'] for m in measurements),default=None),'peakPrivateMiB':max((m['privateMiB'] for m in measurements),default=None),'minimumAvailableMiB':min((m['availableMiB'] for m in measurements),default=None),'modelBefore':before,'modelAfter':after}
+        metrics={'inputCharacters':len(req['text']),'sentenceChunks':len(chunks),'maxSentenceCharacters':max(map(len,chunks),default=0),'elapsedMs':round((time.monotonic()-started)*1000),'peakRssMiB':max((m['peakRssMiB'] for m in measurements),default=None),'peakPrivateMiB':max((m['privateMiB'] for m in measurements),default=None),'minimumAvailableMiB':min((m['availableMiB'] for m in measurements),default=None),'modelBefore':before,'modelAfter':after,'modelLoadStrategy':'MMAP_ASSIGN','chunkSamples':chunk_samples}
         metrics.update({'runtimeBefore':runtime_before,'runtimeAfter':runtime_after,'inferenceBefore':inference_before,'inferenceAfter':inference_after})
         emit({'ok':True,'metrics':metrics})
     except Exception as e:

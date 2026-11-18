@@ -39,4 +39,6 @@ export interface SynthesisMetrics {
  elapsedMs:number; peakRssMiB:number|null; peakPrivateMiB:number|null; minimumAvailableMiB:number|null;
  modelBefore?:unknown; modelAfter?:unknown;
  runtimeBefore?:unknown;runtimeAfter?:unknown;inferenceBefore?:unknown;inferenceAfter?:unknown;
+  chunkSamples?:Array<{index:number;characters:number;before:unknown;after:unknown}>;
+  modelLoadStrategy?:'MMAP_ASSIGN';
 }
