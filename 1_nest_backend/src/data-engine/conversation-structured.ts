@@ -160,13 +160,12 @@ export function targetDirectReplyContainerEvidence(
   const relationshipCandidates: RelationshipCandidate[] = [],
     membershipEvidence: MembershipEvidence[] = [];
   for (const post of posts) {
+    const branchMatch=post.pointer.match(/^\/data\/media\/text_post_app_info\/direct_replies\/edges\/\d+\/node\/posts\/edges\/(\d+)\/node$/u);
     if (
       post.source !== 'NETWORK' ||
       !/^\/api\/graphql\/?$/u.test(post.endpointPath) ||
       post.collectionKind !== 'CONVERSATION' ||
-      !/^\/data\/media\/text_post_app_info\/direct_replies\/edges\/\d+\/node\/posts\/edges\/0\/node$/u.test(
-        post.pointer,
-      ) ||
+      !branchMatch ||
       !/^\/data\/media\/text_post_app_info\/direct_replies\/edges\/\d+\/node$/u.test(
         post.containerReference ?? '',
       )
@@ -175,7 +174,10 @@ export function targetDirectReplyContainerEvidence(
     const observedAt =
         diagnostics.find((row) => row.payloadHash === post.payloadHash)
           ?.observedAt ?? new Date(0).toISOString(),
-      evidenceType = 'STRUCTURED_TARGET_DIRECT_REPLIES_CONTAINER';
+      direct=branchMatch[1]==='0',
+      evidenceType = direct
+        ? 'STRUCTURED_TARGET_DIRECT_REPLIES_CONTAINER'
+        : 'STRUCTURED_TARGET_CONVERSATION_BRANCH';
     membershipEvidence.push({
       rootId: root.id,
       subjectId: post.code,
@@ -185,7 +187,10 @@ export function targetDirectReplyContainerEvidence(
       containerReference: post.containerReference,
       observedAt,
     });
-    if (!post.originalText) continue;
+    // The first post in an observed direct_replies branch is explicitly the
+    // root's direct reply. Later posts are confirmed conversation members, but
+    // without an explicit parent field their direct parent remains unknown.
+    if (!direct || !post.originalText) continue;
     relationshipCandidates.push({
       kind: 'STRUCTURED_PUBLIC_PARENT',
       rootUrl: root.url,

@@ -416,6 +416,15 @@ describe('passive Threads structured response extraction', () => {
     expect(JSON.stringify(observer.telemetry())).not.toContain('secret');
   });
 
+  test('keeps later posts in a direct-reply branch as confirmed members without inventing parent edges',()=>{
+    const extraction=extractStructuredEvidence([{...input({data:{media:{...post('100','ROOT','root','root'),text_post_app_info:{direct_replies:{edges:[{node:{posts:{edges:[{node:post('101','R1','one','direct')},{node:post('102','R2','two','nested without parent')}],page_info:{has_next_page:false}}}}]}}}}}),source:'NETWORK',endpointPath:'/api/graphql',responseType:'NETWORK_JSON'}],rootUrl);
+    expect(extraction.relationshipCandidates).toEqual([expect.objectContaining({subjectUrl:'https://www.threads.com/@one/post/R1',parentUrl:rootUrl})]);
+    expect(extraction.membershipEvidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({subjectId:'R1',status:'THREAD_UI_CONFIRMED',evidenceType:'STRUCTURED_TARGET_DIRECT_REPLIES_CONTAINER'}),
+      expect.objectContaining({subjectId:'R2',status:'THREAD_UI_CONFIRMED',evidenceType:'STRUCTURED_TARGET_CONVERSATION_BRANCH'}),
+    ]));
+  });
+
   test('redacts non-HTTP data URLs from telemetry paths', async () => {
     const observer = new PassiveStructuredResponseObserver(),
       request = {
