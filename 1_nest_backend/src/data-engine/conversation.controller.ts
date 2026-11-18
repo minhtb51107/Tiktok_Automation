@@ -73,15 +73,29 @@ export class ConversationStudioService {
           };
     if (body?.confirmDraft !== true || body?.revision !== review.revision)
       throw Error('CONVERSATION_DRAFT_REVISION_REQUIRED');
+    const requestId =
+      body?.requestId === undefined
+        ? undefined
+        : typeof body.requestId === 'string' &&
+            /^[\w-]{1,100}$/.test(body.requestId)
+          ? body.requestId
+          : null;
+    if (requestId === null) throw Error('CONVERSATION_INVALID_REQUEST');
     if (
       !effectiveReview.selectedReplyIds.length &&
       !effectiveReview.selectedObservedUrls.length
     )
       throw Error('CONVERSATION_NOT_ENOUGH_CONTENT');
-    return this.data.studio.createConversationDraft(
-      record.collection,
-      effectiveReview,
-    );
+    return requestId
+      ? this.data.studio.createConversationDraft(
+          record.collection,
+          effectiveReview,
+          requestId,
+        )
+      : this.data.studio.createConversationDraft(
+          record.collection,
+          effectiveReview,
+        );
   }
   async report(id: string) {
     const run = await this.engine.get(id),

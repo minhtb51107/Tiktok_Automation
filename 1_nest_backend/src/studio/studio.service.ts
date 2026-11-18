@@ -1083,12 +1083,94 @@ export class StudioService {
   async createConversationDraft(
     collection: ThreadCollection,
     review: ConversationReview,
+    requestId?: string,
   ) {
-    const created = await this.create();
     return this.exclusive(async () => {
-      const s = await this.load(created.id),
-        root = collection.root,
-        source = collection.sourceCapture?.records[0];
+      const root = collection.root,
+        derivedFrom = 'conversation:' + review.collectionId,
+        selectedObserved = new Set(review.selectedObservedUrls || []),
+        selectedReplies = new Set(review.selectedReplyIds),
+        expectedSelectedUrls = [
+          ...new Set(
+            [
+              canonicalPost(root.url)?.url ?? root.url,
+              ...Array.from(selectedObserved, (u) => canonicalPost(u)?.url ?? u),
+              ...collection.replies
+                .filter((r) => selectedReplies.has(r.id))
+                .map((r) => canonicalPost(r.url)?.url ?? r.url),
+            ].filter(Boolean),
+          ),
+        ].sort(),
+        selectionSignature = JSON.stringify(expectedSelectedUrls);
+      await fs.mkdir(this.root, { recursive: true });
+      for (const f of await fs.readdir(this.root)) {
+        if (!/^[a-f0-9-]{36}\.json$/.test(f)) continue;
+        const existing = await this.load(f.slice(0, -5));
+        if (existing.derivedFrom !== derivedFrom) continue;
+        if (
+          requestId &&
+          existing.draftProvenance?.requestId &&
+          existing.draftProvenance.requestId === requestId
+        ) {
+          if (
+            existing.draftProvenance.reviewRevision !== review.revision ||
+            existing.draftProvenance.selectionSignature !== selectionSignature
+          )
+            throw new ConflictException('CONVERSATION_DRAFT_IDEMPOTENCY_CONFLICT');
+          return existing;
+        }
+        const existingRevision = existing.draftProvenance?.reviewRevision ?? 0;
+        if (existingRevision !== review.revision) continue;
+        const existingSelectionSignature =
+          existing.draftProvenance?.selectionSignature ??
+          JSON.stringify(
+            [
+              ...new Set(
+                existing.items
+                  .filter((item) => item.selected)
+                  .map(
+                    (item) =>
+                      canonicalPost(item.sourceUrl)?.url ?? item.sourceUrl,
+                  )
+                  .filter(Boolean),
+              ),
+            ].sort(),
+          );
+        if (existingSelectionSignature === selectionSignature) return existing;
+      }
+      const id = randomUUID();
+      const project: VideoProject = {
+        contractVersion: '1.0',
+        id,
+        style: 'SERIOUS',
+        title: 'Threads Draft · @' + root.author.handle,
+        sources: [],
+        posts: [],
+        comments: [],
+        candidates: [],
+        storyboard: [],
+        audioAssets: [],
+        mediaAssets: [],
+        publishing: {
+          title: '',
+          caption: '',
+          hashtags: [],
+          language: 'vi',
+          manualApprovalRequired: true,
+        },
+      };
+      const s: StudioSession = {
+        id,
+        title: project.title,
+        revision: 0,
+        updatedAt: '',
+        status: 'IDLE',
+        scope: 'TARGET_ONLY',
+        errors: [],
+        project,
+        items: [],
+      };
+      const source = collection.sourceCapture?.records[0];
       const rootRaw: any = source ?? {
         url: root.url,
         text: root.originalText,
@@ -1118,11 +1200,15 @@ export class StudioService {
         if (!records.some((x) => canonicalPost(x.url)?.id === reply.id))
           records.push(this.replyRecord(reply));
       this.append(s, root.url, rootRaw, records);
-      s.derivedFrom = 'conversation:' + review.collectionId;
+      s.derivedFrom = derivedFrom;
+      s.draftProvenance = {
+        collectionId: review.collectionId,
+        reviewRevision: review.revision,
+        ...(requestId ? { requestId } : {}),
+        selectionSignature,
+      };
       s.title = 'Threads Draft · @' + root.author.handle;
       s.project.title = s.title;
-      const selectedObserved = new Set(review.selectedObservedUrls || []),
-        selectedReplies = new Set(review.selectedReplyIds);
       for (const item of s.items) {
         const raw = item.order === 0 ? rootRaw : records[item.order - 1],
           own = canonicalPost(raw.url);

@@ -935,7 +935,7 @@ export async function discoverConversations(
   audit?: (event: PublicAccessAudit) => void,
   limit = 6,
 ): Promise<PopularityCandidate[]> {
-  if (!Number.isInteger(limit) || limit < 1 || limit > 10)
+  if (!Number.isInteger(limit) || limit < 1 || limit > 30)
     throw Error('CONVERSATION_INVALID_LIMIT');
   const url = discoveryUrl('SEARCH', keyword);
   return withTransientPublicRetry((attempt) =>

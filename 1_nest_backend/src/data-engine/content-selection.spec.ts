@@ -5,9 +5,12 @@ import * as os from 'os';
 import * as path from 'path';
 import {editorialFixture,TEST_COMMENTARY} from './editorial-test.fixture';
 import {diversityAwareOrder,selectConversation,rankConversations} from './content-selection';
-import {ContentDiscovery,qualityRequest} from './content-discovery';
+import {ContentDiscovery,contentSearchRequest,qualityRequest} from './content-discovery';
 import {DataEngine} from './engine';
 import {DataStore} from './store';
+import {ContentQualityController,ContentQualityService} from './content-quality.controller';
+import {StudioService} from '../studio/studio.service';
+import {ForbiddenException} from '@nestjs/common';
 import type {PublicRecord} from '../studio/public-types';
 function capture(c:ReturnType<typeof editorialFixture>['collection'],context:PublicRecord[]=[]){const r:PublicRecord={text:c.root.originalText,bodyText:c.root.originalText,author:c.root.author.handle,handle:c.root.author.handle,avatar:null,createdAt:null,type:c.root.itemType??'UNKNOWN',parentReference:null,media:[],likeCount:null,replyCount:null,repostCount:null,provenance:{text:'SYNTHETIC TEST DATA'},url:c.root.url};c.sourceCapture={originalUrl:c.root.url,resolvedUrl:c.root.url,canonicalUrl:c.root.url,status:'SUCCESS',scope:'TARGET_ONLY',matchedTargetId:c.root.id,matchMethod:'DOM_PERMALINK',elapsedMs:1,diagnostics:[],redirects:[],records:[r],contextCandidates:context,retrievedAt:c.root.provenance.observedAt};return c}
 const at='2026-11-09T00:00:00Z';
@@ -32,6 +35,10 @@ describe('DATA-QUALITY-01 source planning (SYNTHETIC)',()=>{
  test('exact/near duplicate roots are retained with explicit duplicate reference',()=>{const c=fixture(),d=structuredClone(c);d.root.id='ROOT2';d.root.url=d.root.url.replace('/ROOT','/ROOT2');d.replies=[];const r=rankConversations([c,d],'SERIOUS',at);expect(r.ranked).toHaveLength(2);expect(r.ranked.find(x=>x.sourceUrl===d.root.url)?.reasons.some(x=>x.startsWith('DUPLICATE_ROOT_OF'))).toBe(true)});
  test('FUNNY/SERIOUS profiles differ without activating legacy workflows',()=>{const c=fixture();expect(selectConversation(c,'FUNNY',at).breakdown).not.toEqual(selectConversation(c,'SERIOUS',at).breakdown)});
  test('separates discovery and enrichment budgets and rejects malformed requests',()=>{expect(()=>qualityRequest({requestId:'x',style:'SERIOUS',topic:'WORK',keywords:['a'],maxPosts:51,maxRunMs:30000})).toThrow('QUALITY_INVALID_REQUEST');expect(()=>qualityRequest({requestId:'x',style:'SERIOUS',topic:'WORK',keywords:['a'],maxPosts:30,maxEnrich:11,maxRunMs:30000})).toThrow('QUALITY_INVALID_REQUEST');expect(qualityRequest({requestId:'x',style:'SERIOUS',topic:'WORK',keywords:['a'],maxPosts:30,maxEnrich:10,priority:'HOT',minInteractions:5,maxRunMs:3600000})).toMatchObject({maxPosts:30,maxEnrich:10,priority:'HOT',minInteractions:5})});
+ test('arbitrary search request has no implicit WORK taxonomy',()=>{expect(contentSearchRequest({requestId:'search-1',query:'trường giang',limit:20,priority:'BALANCED',minInteractions:0,maxRunMs:120000})).toEqual({requestId:'search-1',query:'trường giang',limit:20,priority:'BALANCED',minInteractions:0,maxRunMs:120000});expect(contentSearchRequest({requestId:'search-2',query:'concert',limit:10} as any).query).toBe('concert')});
+ test('search-only uses the exact user query, filters unrelated cards, and never enriches',async()=>{const data=new DataEngine(new DataStore(await mkdtemp(path.join(os.tmpdir(),'quality-search-')))),related=fixture(),unrelated=structuredClone(related),queries:string[]=[];related.root.originalText='Trường Giang chia sẻ câu chuyện mới cùng khán giả';unrelated.root.id='OTHER';unrelated.root.url='https://www.threads.com/@other/post/OTHER';unrelated.root.author={handle:'other',name:null};unrelated.root.originalText='Đồng nghiệp trong công ty trao đổi về công việc';let enrichCalls=0;const provider={execution:'SYNTHETIC' as const,discover:async(query:string)=>{queries.push(query);return[{url:related.root.url,observedOrder:0,post:related.root},{url:unrelated.root.url,observedOrder:1,post:unrelated.root}]},enrich:async()=>{enrichCalls++;return related}},engine=new ContentDiscovery(data,provider),run=await engine.search({requestId:'truong-giang',query:'trường giang',limit:10,priority:'BALANCED',minInteractions:0,maxRunMs:60000});expect(queries).toEqual(['trường giang']);expect(enrichCalls).toBe(0);expect(run.results.map(x=>x.url)).toEqual([related.root.url]);expect(run.results[0].relevanceMatchedTerms).toEqual(expect.arrayContaining(['trường','giang']));expect((await engine.listSearches())[0]).toMatchObject({results:1,collected:0})});
+ test('concert and công việc searches are forwarded unchanged without WORK expansion',async()=>{const data=new DataEngine(new DataStore(await mkdtemp(path.join(os.tmpdir(),'quality-arbitrary-search-')))),queries:string[]=[];const provider={execution:'SYNTHETIC' as const,discover:async(query:string)=>{queries.push(query);return[]},enrich:async()=>{throw Error('SEARCH_ONLY_MUST_NOT_ENRICH')}},engine=new ContentDiscovery(data,provider);await engine.search({requestId:'concert-search',query:'concert',limit:10,priority:'BALANCED',minInteractions:0,maxRunMs:60000});await engine.search({requestId:'work-search-exact',query:'công việc',limit:30,priority:'RECENT',minInteractions:0,maxRunMs:60000});expect(queries).toEqual(['concert','công việc'])});
+ test('collect selected search result reuses V3 enrichment and persists idempotently',async()=>{const data=new DataEngine(new DataStore(await mkdtemp(path.join(os.tmpdir(),'quality-search-collect-')))),collection=fixture();collection.root.originalText='Kinh nghiệm công việc và lựa chọn nghề nghiệp';let enrichCalls=0;const provider={execution:'SYNTHETIC' as const,discover:async()=>[{url:collection.root.url,observedOrder:0,post:collection.root}],enrich:async()=>{enrichCalls++;return collection}},engine=new ContentDiscovery(data,provider),search=await engine.search({requestId:'work-search',query:'công việc',limit:10,priority:'BALANCED',minInteractions:0,maxRunMs:60000});expect(search.results).toHaveLength(1);const first=await engine.collectSearch(search.id,collection.root.url),second=await engine.collectSearch(search.id,collection.root.url);expect(first.collection.root.url).toBe(collection.root.url);expect(second.collection.root.url).toBe(collection.root.url);expect(enrichCalls).toBe(1);expect((await engine.getSearch(search.id)).collections).toHaveLength(1)});
  test('persistent idempotency, recovery and parameter conflict do not duplicate enrichment',async()=>{const store=new DataStore(await mkdtemp(path.join(os.tmpdir(),'quality-test-'))),data=new DataEngine(store),c=fixture();let calls=0,fail=true;const provider={execution:'SYNTHETIC' as const,discover:async(_keyword:string,audit?:any)=>{audit?.({url:c.root.url,stage:'DISCOVERY',requests:1,navigations:1,scrolls:0,elapsedMs:1,minimumAvailableMiB:900,outcome:'COMPLETED'});return[{url:c.root.url,observedOrder:0,post:c.root}]},enrich:async()=>{calls++;if(fail)throw Error('TEST_INTERRUPTION');return c}},request={requestId:'test',style:'SERIOUS',topic:'WORK',keywords:['công việc'],maxPosts:30,maxEnrich:10,priority:'HOT' as const,minInteractions:0,maxRunMs:60000};const e=new ContentDiscovery(data,provider),first=await e.start(request);expect(first.status).toBe('PARTIAL');expect(first.accessAudits).toHaveLength(1);fail=false;const resumed=await new ContentDiscovery(data,provider).resume(first.id);expect(resumed.status).toBe('COMPLETED');expect(resumed.collections).toHaveLength(1);await e.start(request);expect(calls).toBe(2);await expect(e.start({...request,style:'FUNNY'})).rejects.toThrow('QUALITY_IDEMPOTENCY_CONFLICT');expect((await e.get(first.id)).result?.topCandidates).toHaveLength(1);expect(await data.store.read('production-jobs/'+first.id+'.json')).toBeNull()});
  test('DATA01/Gold import remains unreviewed and replay-safe',async()=>{const data=new DataEngine(new DataStore(await mkdtemp(path.join(os.tmpdir(),'quality-import-')))),c=capture(fixture()),provider={execution:'SYNTHETIC' as const,discover:async()=>[{url:c.root.url,observedOrder:0,post:c.root}],enrich:async()=>c},e=new ContentDiscovery(data,provider),req={requestId:'import',style:'SERIOUS',topic:'WORK',keywords:['công việc'],maxPosts:1,maxRunMs:60000};const r=await e.start(req);expect(r.status).toBe('COMPLETED');expect(r.imports).toHaveLength(1);const catalog=await data.catalog();expect(catalog.total).toBe(1);expect(catalog.reviewSummary.accepted).toBe(0);await e.start(req);expect((await data.catalog()).total).toBe(1);const changed=await e.get(r.id);changed.collections[0].root.originalText+='tamper';await data.store.write('content-quality-runs/'+r.id+'.json',changed);await expect(e.get(r.id)).rejects.toThrow('QUALITY_CAPTURE_INTEGRITY')});
  test('selects exact-root THREAD_UI_CONFIRMED without fabricating parentId, and rejects wrong-root, recommendation, and UNKNOWN', () => {
@@ -120,5 +127,60 @@ describe('DATA-QUALITY-01 source planning (SYNTHETIC)',()=>{
      ]),
    );
    expect(run.result?.ranked).toHaveLength(1);
+ });
+ test('createConversationDraft is idempotent for same revision/request without duplicating sessions or mutating originalText', async () => {
+   const dir = await mkdtemp(path.join(os.tmpdir(), 'quality-draft-idem-'));
+   const studio = new StudioService({} as any);
+   Object.assign(studio, { root: dir });
+   const c = fixture();
+   const review = {
+     schemaVersion: 'threads-data/1' as const,
+     collectionId: 'col-idem-1',
+     revision: 0,
+     selectedReplyIds: [c.replies[0].id],
+     selectedObservedUrls: [] as string[],
+     replyLabels: {},
+     decision: 'NEEDS_REVIEW' as const,
+     reason: 'TEST',
+     history: [],
+   };
+   const first = await studio.createConversationDraft(c, review, 'draft-req-1');
+   const second = await studio.createConversationDraft(c, review, 'draft-req-1');
+   const third = await studio.createConversationDraft(c, review);
+   expect(second.id).toBe(first.id);
+   expect(third.id).toBe(first.id);
+   expect(await studio.list()).toHaveLength(1);
+   expect(first.items[0].originalText).toBe(c.root.originalText);
+   expect(first.project.audioAssets).toEqual([]);
+   const updated = await studio.createConversationDraft(
+     c,
+     { ...review, revision: 1, selectedReplyIds: [] },
+     'draft-req-2',
+   );
+   expect(updated.id).not.toBe(first.id);
+   expect(await studio.list()).toHaveLength(2);
+ });
+ test('ContentQualityController preserves 403 Forbidden on unapproved LIVE search/collect', async () => {
+   const prev = process.env.STUDIO_DATA_QUALITY_LIVE_ENABLED;
+   process.env.STUDIO_DATA_QUALITY_LIVE_ENABLED = '0';
+   try {
+     const data = new DataEngine(
+       new DataStore(await mkdtemp(path.join(os.tmpdir(), 'quality-ctrl-'))),
+     );
+     const service = new ContentQualityService(
+       { engine: data, studio: { withControlledCollection: (fn: any) => fn() } } as any,
+       { engine: {} } as any,
+     );
+     const controller = new ContentQualityController(service);
+     await expect(
+       controller.startSearch({ requestId: 'r1', query: 'trường giang', liveApproved: true }),
+     ).rejects.toBeInstanceOf(ForbiddenException);
+     await expect(
+       controller.collect('a'.repeat(64), { url: 'https://www.threads.com/@a/post/1', liveApproved: true }),
+     ).rejects.toBeInstanceOf(ForbiddenException);
+   } finally {
+     if (prev === undefined) delete process.env.STUDIO_DATA_QUALITY_LIVE_ENABLED;
+     else process.env.STUDIO_DATA_QUALITY_LIVE_ENABLED = prev;
+   }
  });
 });

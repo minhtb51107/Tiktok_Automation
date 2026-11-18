@@ -99,6 +99,12 @@ export interface StudioSession {
   scriptProposals?: import('./normalization.types').TextProposal[];
   scope?: 'TARGET_ONLY' | 'WITH_CONTEXT';
   derivedFrom?: string;
+  draftProvenance?: {
+    collectionId: string;
+    reviewRevision: number;
+    requestId?: string;
+    selectionSignature: string;
+  };
   archivedItems?: StudioItem[];
   sourceRun?: {
     runId: string;
