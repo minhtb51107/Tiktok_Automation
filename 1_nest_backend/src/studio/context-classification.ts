@@ -16,7 +16,7 @@ export interface DomReplyEvidence {
 }
 export interface ContextAssessment {
   version:'context-classification/1';classification:ContextClass;
-  basis:'PUBLIC_DOM_REGION'|'CONTENT_RISK_HEURISTIC'|'NO_SCOPED_REGION_EVIDENCE'|'VALIDATED_PARENT_CHAIN';
+  basis:'PUBLIC_DOM_REGION'|'CONTENT_RISK_HEURISTIC'|'NO_SCOPED_REGION_EVIDENCE'|'VALIDATED_PARENT_CHAIN'|'EXACT_ROOT_CONVERSATION_MEMBERSHIP';
   reasons:string[];parentId:string|null;manualDraftAllowed:true;
 }
 /** Risk classification, never a parent assertion. Caller validates verified chains separately. */

@@ -42,13 +42,27 @@ export class ContentDiscovery {
     while(r.keywordCursor<r.request.keywords.length&&r.candidates.length<r.request.maxPosts){budget();r.stage='DISCOVERY';await this.save(r);const rows=await this.provider.discover(r.request.keywords[r.keywordCursor],audit);
       for(const row of rows){const link=canonicalPost(row.url);if(link&&!r.candidates.some(x=>canonicalPost(x.url)?.id===link.id)&&r.candidates.length<r.request.maxPosts)r.candidates.push({...row,url:link.url,observedOrder:r.candidates.length})}r.keywordCursor++;await this.save(r);
     }
-    if(!r.urls)r.urls=rankCandidates(r.candidates,maxEnrich,new Date(this.now()).toISOString(),{priority,minInteractions,queryTerms:[r.request.topic,...r.request.keywords]}).selected;
+    const topicTerms=[...new Set([r.request.topic,...r.request.keywords,...Object.entries(DISCOVERY_TOPICS).filter(([key,value])=>r.request.topic.includes(key)||r.request.keywords.includes(value.keyword)).flatMap(([,value])=>[...value.terms])])];
+    if(!r.urls)r.urls=rankCandidates(r.candidates,maxEnrich,new Date(this.now()).toISOString(),{priority,minInteractions,queryTerms:topicTerms}).selected;
     while(r.targetCursor<r.urls.length){budget();const url=r.urls[r.targetCursor];let collection=r.collections.find(c=>c.root.url===url);r.stage='EXACT_ROOT_AND_REPLIES';await this.save(r);
-      if(!collection){collection=await this.provider.enrich(url,audit,r.request.collectionBudget);if(canonicalPost(collection.root.url)?.url!==url)throw Error('QUALITY_WRONG_TARGET');if(collection.root.provenance.synthetic!==(this.provider.execution==='SYNTHETIC'))throw Error('QUALITY_PROVENANCE_MISMATCH');r.collections.push(collection);r.captureHashes[url]=hash(collection);await this.save(r)}
+      if(!collection){
+        try{
+          collection=await this.provider.enrich(url,audit,r.request.collectionBudget);
+          if(canonicalPost(collection.root.url)?.url!==url)throw Error('QUALITY_WRONG_TARGET');
+          if(collection.root.provenance.synthetic!==(this.provider.execution==='SYNTHETIC'))throw Error('QUALITY_PROVENANCE_MISMATCH');
+          r.collections.push(collection);r.captureHashes[url]=hash(collection);await this.save(r);
+        }catch(rootError){
+          const code=rootError instanceof Error?rootError.message:'QUALITY_FAILED';
+          const perRootRecoverable=/^CONVERSATION_(?:EXACT_ROOT_BODY_UNVERIFIED|ROOT_IDENTITY_MISMATCH|NAVIGATION_TIMEOUT|HTTP_404|HTTP_410)$|^QUALITY_WRONG_TARGET$/.test(code);
+          if(!perRootRecoverable)throw rootError;
+          r.errors.push(`ROOT_SKIPPED_${code}`);
+          r.targetCursor++;await this.save(r);continue;
+        }
+      }
       if(collection.sourceCapture){const input=crawlerInput(collection.sourceCapture,r.id,this.provider.execution==='SYNTHETIC');if(input){const imported=await this.data.import([input],collection.root.provenance.observedAt);if(!r.imports.includes(imported.id))r.imports.push(imported.id);await new GoldShadowEngine(this.data).evaluateImport(imported.id);}}
       r.targetCursor++;await this.save(r);
     }
-    r.status='COMPLETED';r.stage='WAITING_HUMAN_REVIEW';
+    r.status=r.errors.length&&!r.collections.length?'PARTIAL':'COMPLETED';r.stage='WAITING_HUMAN_REVIEW';
   }catch(e){r.diagnosis={stage:r.stage,outcome:discoveryFailure(e)};const code=e instanceof Error?e.message:'QUALITY_FAILED';r.errors.push(/^[A-Z0-9_]+$/.test(code)?code:'QUALITY_FAILED');r.status=/ACCESS|HTTP_(401|403|429)|RESOURCE|BROWSER_MISSING/.test(code)?'BLOCKED':'PARTIAL';r.stage='STOPPED_NO_AUTOMATIC_RETRY';}
   finally{try{try{const terms=[...r.request.keywords,...Object.entries(DISCOVERY_TOPICS).filter(([key,value])=>r.request.topic.includes(key)||r.request.keywords.includes(value.keyword)).flatMap(([,value])=>[...value.terms])];r.result=rankConversations(r.collections,r.request.style,new Date(this.now()).toISOString(),terms)}catch{r.result=null;r.status='PARTIAL';r.errors.push('QUALITY_SCORING_FAILED')}r.completedAt=new Date(this.now()).toISOString();await this.save(r)}finally{this.busy=false}}return r}
 }

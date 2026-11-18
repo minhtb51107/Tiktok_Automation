@@ -92,13 +92,21 @@ const usefulDiagnosticField = (field: string) =>
     field,
   );
 
+const idVariants = (raw: string | null): string[] => {
+  if (!raw) return [];
+  const prefix = raw.match(/^(\d+)_\d+$/u)?.[1];
+  return prefix ? [raw, prefix] : [raw];
+};
+
 function postFromObject(
   row: Record<string, unknown>,
   pointer: string,
   input: StructuredPayloadInput,
-): StructuredPostObservation | null {
+): (StructuredPostObservation & { altIds?: string[] }) | null {
   const code = scalar(row.code),
-    id = scalar(row.pk) ?? scalar(row.id),
+    pk = scalar(row.pk),
+    rawId = scalar(row.id),
+    id = pk ?? rawId,
     user = object(row.user) ?? object(row.author),
     authorHandle = scalar(user?.username) ?? scalar(user?.handle);
   if (!code || !id || !authorHandle || !/^[\w-]+$/u.test(code)) return null;
@@ -107,6 +115,7 @@ function postFromObject(
   );
   if (!url) return null;
   const caption = object(row.caption),
+    appInfo = object(row.text_post_app_info),
     originalText =
       scalar(caption?.text) ??
       scalar(row.text) ??
@@ -114,16 +123,26 @@ function postFromObject(
       scalar(row.body),
     parentPostId =
       nestedId(row.reply_to_post_id) ??
+      nestedId(appInfo?.reply_to_post_id) ??
       nestedId(row.parent_post_id) ??
+      nestedId(appInfo?.parent_post_id) ??
       nestedId(row.parent_id) ??
+      nestedId(appInfo?.parent_id) ??
       nestedId(row.reply_to_post) ??
-      nestedId(row.parent_post),
+      nestedId(appInfo?.reply_to_post) ??
+      nestedId(row.parent_post) ??
+      nestedId(appInfo?.parent_post),
     rootPostId =
       nestedId(row.root_post_id) ??
+      nestedId(appInfo?.root_post_id) ??
       nestedId(row.root_id) ??
-      nestedId(row.root_post);
+      nestedId(appInfo?.root_id) ??
+      nestedId(row.root_post) ??
+      nestedId(appInfo?.root_post);
+  const altIds = [...new Set([...idVariants(pk), ...idVariants(rawId)])];
   return {
     id,
+    altIds,
     code,
     url: url.url,
     authorHandle: url.handle,
@@ -145,8 +164,8 @@ function postFromObject(
 }
 
 /**
- * Evidence observed in the public target GraphQL response: each direct reply is
- * wrapped by data.media.text_post_app_info.direct_replies.edges[*].node.posts.
+ * Evidence observed in the public target GraphQL/SSR response: each direct reply is
+ * wrapped by (data.)media.text_post_app_info.direct_replies.edges[*].node.posts.
  * The edge index only identifies the wrapper; it never defines reply order or a
  * nested parent. The named direct_replies container is the root relationship.
  */
@@ -159,14 +178,32 @@ export function targetDirectReplyContainerEvidence(
   if (!root) throw Error('CONVERSATION_INVALID_ROOT');
   const relationshipCandidates: RelationshipCandidate[] = [],
     membershipEvidence: MembershipEvidence[] = [];
+  // Reject any payload that explicitly declares a different root media object.
+  const wrongRootPayloads = new Set<string>();
   for (const post of posts) {
-    const branchMatch=post.pointer.match(/^\/data\/media\/text_post_app_info\/direct_replies\/edges\/\d+\/node\/posts\/edges\/(\d+)\/node$/u);
     if (
-      post.source !== 'NETWORK' ||
-      !/^\/api\/graphql\/?$/u.test(post.endpointPath) ||
+      /^\/(?:data\/)?media$/u.test(post.pointer) &&
+      post.url !== root.url
+    )
+      wrongRootPayloads.add(post.payloadHash);
+  }
+  for (const post of posts) {
+    if (wrongRootPayloads.has(post.payloadHash)) continue;
+    const isTargetNetwork =
+        post.source === 'NETWORK' && /^\/api\/graphql\/?$/u.test(post.endpointPath),
+      isTargetSsr =
+        post.source === 'SSR' &&
+        post.responseType === 'SSR_RELAY' &&
+        canonicalPost(`https://www.threads.com${post.endpointPath}`)?.url ===
+          root.url;
+    const branchMatch = post.pointer.match(
+      /^\/(?:data\/)?media\/text_post_app_info\/direct_replies\/edges\/\d+\/node\/posts\/edges\/(\d+)\/node$/u,
+    );
+    if (
+      (!isTargetNetwork && !isTargetSsr) ||
       post.collectionKind !== 'CONVERSATION' ||
       !branchMatch ||
-      !/^\/data\/media\/text_post_app_info\/direct_replies\/edges\/\d+\/node$/u.test(
+      !/^\/(?:data\/)?media\/text_post_app_info\/direct_replies\/edges\/\d+\/node$/u.test(
         post.containerReference ?? '',
       )
     )
@@ -174,7 +211,7 @@ export function targetDirectReplyContainerEvidence(
     const observedAt =
         diagnostics.find((row) => row.payloadHash === post.payloadHash)
           ?.observedAt ?? new Date(0).toISOString(),
-      direct=branchMatch[1]==='0',
+      direct = branchMatch[1] === '0',
       evidenceType = direct
         ? 'STRUCTURED_TARGET_DIRECT_REPLIES_CONTAINER'
         : 'STRUCTURED_TARGET_CONVERSATION_BRANCH';
@@ -224,10 +261,15 @@ export function extractStructuredEvidence(
   const root = canonicalPost(rootUrl);
   if (!root) throw Error('CONVERSATION_INVALID_ROOT');
   const diagnostics: StructuredPayloadDiagnostic[] = [],
-    allPosts: StructuredPostObservation[] = [],
+    allPosts: Array<StructuredPostObservation & { altIds?: string[] }> = [],
     conflicts: string[] = [];
-  for (const input of inputs.slice(0, 40)) {
-    const posts: StructuredPostObservation[] = [],
+  const inputPriority = (row: StructuredPayloadInput) =>
+    row.source === 'NETWORK' ? 0 : row.responseType === 'SSR_RELAY' ? 1 : 2;
+  const prioritizedInputs = [...inputs]
+    .sort((a, b) => inputPriority(a) - inputPriority(b))
+    .slice(0, 80);
+  for (const input of prioritizedInputs) {
+    const posts: Array<StructuredPostObservation & { altIds?: string[] }> = [],
       fields = new Set<string>(),
       relationships = new Set<string>(),
       pagination: StructuredPayloadDiagnostic['pagination'] = [];
@@ -287,31 +329,44 @@ export function extractStructuredEvidence(
     });
     allPosts.push(...posts);
   }
-  const exact = new Map<string, StructuredPostObservation>();
+  const exact = new Map<
+    string,
+    StructuredPostObservation & { altIds?: string[] }
+  >();
   for (const post of allPosts) {
     const key = `${post.url}|${post.payloadHash}|${post.pointer}`;
     exact.set(key, post);
   }
-  const posts = [...exact.values()],
+  const rawPosts = [...exact.values()],
     idToUrls = new Map<string, Set<string>>();
-  for (const post of posts) {
-    const values = idToUrls.get(post.id) ?? new Set<string>();
-    values.add(post.url);
-    idToUrls.set(post.id, values);
+  for (const post of rawPosts) {
+    const keys = post.altIds?.length ? post.altIds : idVariants(post.id);
+    for (const idKey of keys) {
+      const values = idToUrls.get(idKey) ?? new Set<string>();
+      values.add(post.url);
+      idToUrls.set(idKey, values);
+    }
   }
   for (const [id, urls] of idToUrls)
     if (urls.size > 1) conflicts.push(`CONFLICTING_STRUCTURED_ID:${id}`);
-  const rootPosts = posts.filter((post) => post.url === root.url),
+  const posts: StructuredPostObservation[] = rawPosts.map(
+      ({ altIds: _alt, ...clean }) => clean,
+    ),
+    rootPosts = rawPosts.filter((post) => post.url === root.url),
     rootIdsByPayload = new Map<string, Set<string>>(),
     uniqueUrlForId = (id: string | null) => {
       if (!id) return null;
-      const urls = idToUrls.get(id);
-      return urls?.size === 1 ? [...urls][0] : null;
+      for (const key of idVariants(id)) {
+        const urls = idToUrls.get(key);
+        if (urls?.size === 1) return [...urls][0];
+      }
+      return null;
     },
     containerCounts = new Map<string, number>();
   for (const post of rootPosts) {
     const ids = rootIdsByPayload.get(post.payloadHash) ?? new Set<string>();
-    ids.add(post.id);
+    for (const idKey of post.altIds?.length ? post.altIds : idVariants(post.id))
+      ids.add(idKey);
     rootIdsByPayload.set(post.payloadHash, ids);
   }
   for (const post of posts)
@@ -329,7 +384,9 @@ export function extractStructuredEvidence(
     const explicitParent = uniqueUrlForId(post.parentPostId),
       explicitRootMatches =
         !!post.rootPostId &&
-        !!rootIdsByPayload.get(post.payloadHash)?.has(post.rootPostId),
+        idVariants(post.rootPostId).some((k) =>
+          rootIdsByPayload.get(post.payloadHash)?.has(k),
+        ),
       singletonDirect =
         post.collectionKind === 'CONVERSATION' &&
         /direct_replies|reply_threads/iu.test(post.containerReference ?? '') &&
@@ -464,24 +521,34 @@ export function extractStructuredEvidence(
   };
 }
 
-/** Browser-evaluated SSR observation. It returns bounded script text only. */
+/**
+ * Browser-evaluated SSR observation. Scans all data-sjs script tags (up to 150) and
+ * prioritizes scripts carrying Relay/conversation markers so late-streamed replies
+ * are never dropped behind unrelated head config scripts. Strict byte cap retained.
+ */
 export function observeStructuredSsrScripts() {
-  let total = 0;
-  return [
+  const markerRe =
+    /"(?:RelayPrefetchedStreamCache|direct_replies|reply_threads|containing_thread|thread_items|reply_to_post_id|text_post_app_info|BarcelonaPostPage)"/u;
+  const raw = [
     ...document.querySelectorAll('script[type="application/json"][data-sjs]'),
   ]
-    .slice(0, 30)
-    .map((script, index) => ({ index, text: script.textContent || '' }))
+    .slice(0, 150)
+    .map((script, index) => ({
+      index,
+      text: script.textContent || '',
+      hasMarker: markerRe.test(script.textContent || ''),
+    }))
+    .filter((row) => !!row.text && row.text.length <= 2000000);
+  raw.sort((a, b) => Number(b.hasMarker) - Number(a.hasMarker) || a.index - b.index);
+  let total = 0;
+  return raw
     .filter((row) => {
-      if (
-        !row.text ||
-        row.text.length > 2000000 ||
-        total + row.text.length > 5000000
-      )
-        return false;
+      if (total + row.text.length > 5000000) return false;
       total += row.text.length;
       return true;
-    });
+    })
+    .slice(0, 80)
+    .map(({ index, text }) => ({ index, text }));
 }
 
 export function parseSsrRelayScripts(
@@ -715,36 +782,55 @@ export class PassiveStructuredResponseObserver {
       'reply_to_post_id',
       'root_post_id',
     ].filter((marker) => body.includes(`"${marker}"`));
-    let payload: unknown;
+    const payloads: unknown[] = [];
     try {
-      payload = JSON.parse(body);
+      payloads.push(JSON.parse(body));
     } catch {
-      diagnostic.parserDecision = 'SKIPPED_JSON_PARSE_FAILED';
-      return;
+      const lines = body
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (lines.length >= 2 && lines.length <= 20 && url.pathname.includes('graphql')) {
+        try {
+          for (const line of lines) payloads.push(JSON.parse(line));
+        } catch {
+          payloads.length = 0;
+        }
+      }
+      if (!payloads.length) {
+        diagnostic.parserDecision = 'SKIPPED_JSON_PARSE_FAILED';
+        return;
+      }
     }
     if (!jsonContentType && !parseableJavascriptResponse) {
       diagnostic.parserDecision = 'SKIPPED_CONTENT_TYPE_JSON_PARSEABLE';
       return;
     }
-    const payloadHash = hash(payload);
-    if (this.seen.has(payloadHash)) {
-      diagnostic.parserDecision = 'SKIPPED_DUPLICATE_PAYLOAD';
-      return;
+    let acceptedAny = false,
+      hitLimit = false;
+    for (const payload of payloads) {
+      const payloadHash = hash(payload);
+      if (this.seen.has(payloadHash)) continue;
+      if (this.captured.length >= 30) {
+        hitLimit = true;
+        break;
+      }
+      this.seen.add(payloadHash);
+      acceptedAny = true;
+      this.captured.push({
+        source: 'NETWORK',
+        endpointPath: url.pathname,
+        responseType: 'NETWORK_JSON',
+        queryName: null,
+        observedAt: new Date().toISOString(),
+        payload,
+      });
     }
-    if (this.captured.length >= 30) {
-      diagnostic.parserDecision = 'SKIPPED_CAPTURE_LIMIT';
-      return;
-    }
-    this.seen.add(payloadHash);
-    diagnostic.parserDecision = 'ACCEPTED_JSON';
-    this.captured.push({
-      source: 'NETWORK',
-      endpointPath: url.pathname,
-      responseType: 'NETWORK_JSON',
-      queryName: null,
-      observedAt: new Date().toISOString(),
-      payload,
-    });
+    diagnostic.parserDecision = acceptedAny
+      ? 'ACCEPTED_JSON'
+      : hitLimit
+        ? 'SKIPPED_CAPTURE_LIMIT'
+        : 'SKIPPED_DUPLICATE_PAYLOAD';
   }
   async settle() {
     await Promise.allSettled([...this.pending]);

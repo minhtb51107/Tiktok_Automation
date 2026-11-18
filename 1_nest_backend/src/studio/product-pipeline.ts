@@ -1032,12 +1032,23 @@ export class ProductPipelineService {
         new Date().toISOString(),
         terms,
       ),
-      ruleIds = initial.comments
+      eligibleComments = initial.comments
         .filter(
           (row) =>
-            row.useful && row.relationship === 'PARENT_VERIFIED',
+            row.useful &&
+            (row.relationship === 'PARENT_VERIFIED' ||
+              (row.membershipStatus === 'THREAD_UI_CONFIRMED' &&
+                row.context.classification === 'OBSERVED_RELATIONSHIP_UNVERIFIED')),
         )
-        .map((row) => row.id),
+        .sort(
+          (a, b) =>
+            Number(b.relationship === 'PARENT_VERIFIED') -
+              Number(a.relationship === 'PARENT_VERIFIED') ||
+            b.score - a.score ||
+            a.id.localeCompare(b.id),
+        )
+        .slice(0, 8),
+      ruleIds = eligibleComments.map((row) => row.id),
       eligible = ruleIds.length
         ? selectConversation(
             collection,
@@ -1115,13 +1126,19 @@ export class ProductPipelineService {
     batch.stage = 'NORMALIZING';
     await this.saveAuto(batch);
     const persistedReview = await this.conversations.engine.review(collectionId),
+      verifiedIdSet = new Set(collection.replies.map((reply) => reply.id)),
+      selectedReplyIds = selectedIds.filter((id) => verifiedIdSet.has(id)),
+      selectedObservedUrls = selectedIds
+        .filter((id) => !verifiedIdSet.has(id))
+        .map((id) => selected.comments.find((row) => row.id === id)?.url)
+        .filter((url): url is string => !!url),
       draftReview: ConversationReview = {
         ...persistedReview,
-        selectedReplyIds: selectedIds,
-        selectedObservedUrls: [],
+        selectedReplyIds,
+        selectedObservedUrls,
         decision: 'NEEDS_REVIEW',
         reason:
-          'AUTOMATIC_VERIFIED_SOURCE_SELECTION_FOR_DRAFT_NOT_USER_APPROVAL',
+          'AUTOMATIC_VERIFIED_AND_CONFIRMED_SOURCE_SELECTION_FOR_DRAFT_NOT_USER_APPROVAL',
       },
       draft = await this.studio.createConversationDraft(collection, draftReview);
     result.sessionId = draft.id;

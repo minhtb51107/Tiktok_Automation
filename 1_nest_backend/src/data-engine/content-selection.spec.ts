@@ -34,4 +34,91 @@ describe('DATA-QUALITY-01 source planning (SYNTHETIC)',()=>{
  test('separates discovery and enrichment budgets and rejects malformed requests',()=>{expect(()=>qualityRequest({requestId:'x',style:'SERIOUS',topic:'WORK',keywords:['a'],maxPosts:51,maxRunMs:30000})).toThrow('QUALITY_INVALID_REQUEST');expect(()=>qualityRequest({requestId:'x',style:'SERIOUS',topic:'WORK',keywords:['a'],maxPosts:30,maxEnrich:11,maxRunMs:30000})).toThrow('QUALITY_INVALID_REQUEST');expect(qualityRequest({requestId:'x',style:'SERIOUS',topic:'WORK',keywords:['a'],maxPosts:30,maxEnrich:10,priority:'HOT',minInteractions:5,maxRunMs:3600000})).toMatchObject({maxPosts:30,maxEnrich:10,priority:'HOT',minInteractions:5})});
  test('persistent idempotency, recovery and parameter conflict do not duplicate enrichment',async()=>{const store=new DataStore(await mkdtemp(path.join(os.tmpdir(),'quality-test-'))),data=new DataEngine(store),c=fixture();let calls=0,fail=true;const provider={execution:'SYNTHETIC' as const,discover:async(_keyword:string,audit?:any)=>{audit?.({url:c.root.url,stage:'DISCOVERY',requests:1,navigations:1,scrolls:0,elapsedMs:1,minimumAvailableMiB:900,outcome:'COMPLETED'});return[{url:c.root.url,observedOrder:0,post:c.root}]},enrich:async()=>{calls++;if(fail)throw Error('TEST_INTERRUPTION');return c}},request={requestId:'test',style:'SERIOUS',topic:'WORK',keywords:['công việc'],maxPosts:30,maxEnrich:10,priority:'HOT' as const,minInteractions:0,maxRunMs:60000};const e=new ContentDiscovery(data,provider),first=await e.start(request);expect(first.status).toBe('PARTIAL');expect(first.accessAudits).toHaveLength(1);fail=false;const resumed=await new ContentDiscovery(data,provider).resume(first.id);expect(resumed.status).toBe('COMPLETED');expect(resumed.collections).toHaveLength(1);await e.start(request);expect(calls).toBe(2);await expect(e.start({...request,style:'FUNNY'})).rejects.toThrow('QUALITY_IDEMPOTENCY_CONFLICT');expect((await e.get(first.id)).result?.topCandidates).toHaveLength(1);expect(await data.store.read('production-jobs/'+first.id+'.json')).toBeNull()});
  test('DATA01/Gold import remains unreviewed and replay-safe',async()=>{const data=new DataEngine(new DataStore(await mkdtemp(path.join(os.tmpdir(),'quality-import-')))),c=capture(fixture()),provider={execution:'SYNTHETIC' as const,discover:async()=>[{url:c.root.url,observedOrder:0,post:c.root}],enrich:async()=>c},e=new ContentDiscovery(data,provider),req={requestId:'import',style:'SERIOUS',topic:'WORK',keywords:['công việc'],maxPosts:1,maxRunMs:60000};const r=await e.start(req);expect(r.status).toBe('COMPLETED');expect(r.imports).toHaveLength(1);const catalog=await data.catalog();expect(catalog.total).toBe(1);expect(catalog.reviewSummary.accepted).toBe(0);await e.start(req);expect((await data.catalog()).total).toBe(1);const changed=await e.get(r.id);changed.collections[0].root.originalText+='tamper';await data.store.write('content-quality-runs/'+r.id+'.json',changed);await expect(e.get(r.id)).rejects.toThrow('QUALITY_CAPTURE_INTEGRITY')});
+ test('selects exact-root THREAD_UI_CONFIRMED without fabricating parentId, and rejects wrong-root, recommendation, and UNKNOWN', () => {
+   const c = fixture('Tôi chia sẻ kinh nghiệm thực tế về quản lý thời gian làm việc rõ ràng.');
+   const confirmedUrl = 'https://www.threads.com/@member/post/CONF1';
+   const wrongRootUrl = 'https://www.threads.com/@wrong/post/WRONG1';
+   const recUrl = 'https://www.threads.com/@rec/post/REC1';
+   const unkUrl = 'https://www.threads.com/@unk/post/UNK1';
+   const body = 'Kinh nghiệm làm việc tại công ty cho thấy nếu trao đổi rõ ràng với quản lý về thời gian làm việc thì hiệu quả cao hơn nhiều.';
+   c.observedCards = [
+     { text: body, bodyText: body, author: 'member', handle: 'member', avatar: null, createdAt: at, type: 'UNKNOWN', parentReference: null, media: [], likeCount: 5, replyCount: null, repostCount: null, shareCount: null, provenance: { text: 'test' }, url: confirmedUrl },
+     { text: body + ' khác', bodyText: body + ' khác', author: 'wrong', handle: 'wrong', avatar: null, createdAt: at, type: 'UNKNOWN', parentReference: null, media: [], likeCount: 5, replyCount: null, repostCount: null, shareCount: null, provenance: { text: 'test' }, url: wrongRootUrl },
+     { text: body + ' đề xuất', bodyText: body + ' đề xuất', author: 'rec', handle: 'rec', avatar: null, createdAt: at, type: 'UNKNOWN', parentReference: null, media: [], likeCount: 5, replyCount: null, repostCount: null, shareCount: null, provenance: { text: 'test' }, url: recUrl },
+     { text: body + ' chưa rõ', bodyText: body + ' chưa rõ', author: 'unk', handle: 'unk', avatar: null, createdAt: at, type: 'UNKNOWN', parentReference: null, media: [], likeCount: 5, replyCount: null, repostCount: null, shareCount: null, provenance: { text: 'test' }, url: unkUrl },
+   ];
+   c.membershipEvidence = [
+     { rootId: c.root.id, subjectId: 'CONF1', status: 'THREAD_UI_CONFIRMED', evidenceType: 'STRUCTURED_TARGET_CONVERSATION_BRANCH', sourceActionId: null, containerReference: '/data/media/text_post_app_info/direct_replies/edges/0/node', observedAt: at },
+     { rootId: 'WRONG_ROOT_ID', subjectId: 'WRONG1', status: 'THREAD_UI_CONFIRMED', evidenceType: 'STRUCTURED_TARGET_CONVERSATION_BRANCH', sourceActionId: null, containerReference: '/data/media/text_post_app_info/direct_replies/edges/0/node', observedAt: at },
+     { rootId: c.root.id, subjectId: 'REC1', status: 'THREAD_UI_CONFIRMED', evidenceType: 'STRUCTURED_TARGET_CONVERSATION_BRANCH', sourceActionId: null, containerReference: null, observedAt: at },
+     { rootId: c.root.id, subjectId: 'REC1', status: 'RECOMMENDED_POST', evidenceType: 'STRUCTURED_RELATED_COLLECTION', sourceActionId: null, containerReference: null, observedAt: at },
+     { rootId: c.root.id, subjectId: 'UNK1', status: 'UNKNOWN', evidenceType: 'NO_EXPLICIT_CONVERSATION_SURFACE_EVIDENCE', sourceActionId: null, containerReference: null, observedAt: at },
+   ];
+   const r = selectConversation(c, 'SERIOUS', at);
+   const conf = r.comments.find((x) => x.id === 'CONF1')!;
+   const wrong = r.comments.find((x) => x.id === 'WRONG1')!;
+   const rec = r.comments.find((x) => x.id === 'REC1')!;
+   const unk = r.comments.find((x) => x.id === 'UNK1')!;
+   expect(conf.selected).toBe(true);
+   expect(conf.parentId).toBeNull();
+   expect(conf.relationship).toBe('OBSERVED_ON_TARGET_PAGE');
+   expect(conf.context.reasons).toContain('THREAD_UI_CONFIRMED_NOT_DIRECT_REPLY');
+   expect(wrong.selected).toBe(false);
+   expect(wrong.context.classification).toBe('UNKNOWN');
+   expect(rec.selected).toBe(false);
+   expect(rec.context.classification).toBe('RELATED_OR_RECOMMENDED');
+   expect(unk.selected).toBe(false);
+   expect(unk.context.classification).toBe('UNKNOWN');
+   expect(r.confirmedConversationMembers).toBe(1);
+   expect(r.verifiedDirectReplies).toBe(1);
+   expect(r.verifiedNestedReplies).toBe(0);
+ });
+ test('isolates single-root failures while preserving completed collections and honoring resource stops', async () => {
+   const store = new DataStore(await mkdtemp(path.join(os.tmpdir(), 'quality-iso-'))),
+     data = new DataEngine(store),
+     c1 = fixture(),
+     c2 = fixture(),
+     c3 = fixture();
+   c2.root.id = 'ROOT2';
+   c2.root.url = 'https://www.threads.com/@two/post/ROOT2';
+   c2.root.author = { handle: 'two', name: null };
+   c3.root.id = 'ROOT3';
+   c3.root.url = 'https://www.threads.com/@three/post/ROOT3';
+   c3.root.author = { handle: 'three', name: null };
+   const provider = {
+     execution: 'SYNTHETIC' as const,
+     discover: async () => [
+       { url: c1.root.url, observedOrder: 0, post: c1.root },
+       { url: c2.root.url, observedOrder: 1, post: c2.root },
+       { url: c3.root.url, observedOrder: 2, post: c3.root },
+     ],
+     enrich: async (url: string) => {
+       if (url === c1.root.url) return c1;
+       if (url === c2.root.url) throw Error('CONVERSATION_EXACT_ROOT_BODY_UNVERIFIED');
+       throw Error('CONVERSATION_RESOURCE_GUARD_STOP_PHYSICAL');
+     },
+   };
+   const e = new ContentDiscovery(data, provider);
+   const run = await e.start({
+     requestId: 'iso-1',
+     style: 'SERIOUS',
+     topic: 'WORK',
+     keywords: ['công việc'],
+     maxPosts: 5,
+     maxEnrich: 3,
+     priority: 'BALANCED',
+     minInteractions: 0,
+     maxRunMs: 60000,
+   });
+   expect(run.status).toBe('BLOCKED');
+   expect(run.collections).toHaveLength(1);
+   expect(run.collections[0].root.url).toBe(c1.root.url);
+   expect(run.errors).toEqual(
+     expect.arrayContaining([
+       'ROOT_SKIPPED_CONVERSATION_EXACT_ROOT_BODY_UNVERIFIED',
+       'CONVERSATION_RESOURCE_GUARD_STOP_PHYSICAL',
+     ]),
+   );
+   expect(run.result?.ranked).toHaveLength(1);
+ });
 });

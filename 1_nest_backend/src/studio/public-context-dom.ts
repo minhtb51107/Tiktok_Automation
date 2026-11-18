@@ -300,12 +300,28 @@ export function performPublicConversationAction(input: {
           controlSignature=`${exactSubject(card) ?? 'NO_SUBJECT'}|${nodePath(element)}|${label}`;
         return {element:element as HTMLElement,label,controlSignature};
       })
-      .filter(({ label,controlSignature }) => {
-        if(input.excludedControlSignatures?.includes(controlSignature))return false;
-        if (/^(reply|trả lời)$/iu.test(label)) return false;
+      .filter(({ label, controlSignature }) => {
+        if (input.excludedControlSignatures?.includes(controlSignature))
+          return false;
+        if (
+          /^(?:reply|trả lời|bình luận|like|thích|repost|đăng lại|share|chia sẻ)$/iu.test(
+            label,
+          )
+        )
+          return false;
+        if (
+          /(?:log\s*in|sign\s*up|đăng\s*nhập|đăng\s*ký|open\s*app|mở\s*ứng\s*dụng|install|tải\s*ứng\s*dụng|continue\s*(?:in|with)|tiếp\s*tục\s*(?:bằng|trong))/iu.test(
+            label,
+          )
+        )
+          return false;
         return (
-          /\b(view|show|see|load)\b.*\b(repl(?:y|ies))\b/iu.test(label) ||
-          /\b(xem|hiển thị|tải)\b.*\b(trả lời)\b/iu.test(label)
+          /\b(?:view|show|see|load)\b.*\b(?:repl(?:y|ies)|comments?)\b/iu.test(
+            label,
+          ) ||
+          /\b(?:xem|hiển thị|tải)\b.*\b(?:trả lời|bình luận|phản hồi|toàn bộ)\b/iu.test(
+            label,
+          )
         );
       });
     if (candidates.length) {
@@ -313,7 +329,7 @@ export function performPublicConversationAction(input: {
         card = selected.element.closest(
           'div[data-pressable-container="true"],article',
         ),
-        kind = /\b(more|all|load|thêm|tất cả)\b/iu.test(selected.label)
+        kind = /\b(more|all|load|thêm|tất cả|toàn bộ)\b/iu.test(selected.label)
           ? ('LOAD_MORE' as const)
           : ('EXPAND_NESTED' as const);
       selected.element.click();
@@ -323,25 +339,29 @@ export function performPublicConversationAction(input: {
         label: selected.label,
         containerIdentity: nodePath(card || selected.element.parentElement),
         containerSubjectUrl: exactSubject(card),
-        controlSignature:selected.controlSignature,
+        controlSignature: selected.controlSignature,
         documentHeightBefore,
+        scrollChanged: true,
+        reachedBottom: false,
       };
     }
   }
   const before = window.scrollY;
   window.scrollBy({
-    top: Math.max(window.innerHeight * 0.85, 480),
+    top: Math.max(window.innerHeight * 1.6, 1200),
     behavior: 'auto',
   });
+  const scrollHeightAfter = document.documentElement.scrollHeight;
   return {
     actionId: input.actionId,
     kind: 'SCROLL' as const,
     label: null,
     containerIdentity: null,
     containerSubjectUrl: null,
-    controlSignature:null,
+    controlSignature: null,
     documentHeightBefore,
     scrollChanged: window.scrollY !== before,
+    reachedBottom: window.scrollY + window.innerHeight >= scrollHeightAfter - 40,
   };
 }
 

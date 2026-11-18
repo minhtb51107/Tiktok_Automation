@@ -77,4 +77,40 @@ describe('DATA04 popularity — synthetic', () => {
     expect(ranked.ranked.find(row=>row.url===relevant.url)?.relevanceScore).toBeGreaterThan(0);
     expect(observedQueryRelevance(relevant,['ngành IT thất nghiệp'])?.method).toBe('OBSERVED_TEXT_LEXICAL_RELEVANCE');
   });
+  test('prefers substantive discussion roots with high reply density over viral 1-5 word captions', () => {
+    const shortViral = p('SHORT', 10200);
+    shortViral.author = { handle: 'viral_meme', name: null };
+    shortViral.originalText = '19/05/2026\nChủ động trong công việc:))';
+    shortViral.engagement = { likes: 10200, replies: 64, reposts: 500, shares: 300 };
+
+    const substantive = p('RICH', 430);
+    substantive.author = { handle: 'gnrtth', name: null };
+    substantive.originalText =
+      '06/10/2026\nCó ai vào khu công nghiệp làm trong khối văn phòng hay việc khác ngoài công nhân sản xuất dây chuyền hong? Công việc là gì và có yêu cầu gì hong?';
+    substantive.engagement = { likes: 430, replies: 128, reposts: 26, shares: 26 };
+
+    const dateOnly = p('EMPTY', 6);
+    dateOnly.author = { handle: 'empty_post', name: null };
+    dateOnly.originalText = '05/11/2026';
+    dateOnly.engagement = { likes: 6, replies: null, reposts: null, shares: null };
+
+    const ranked = rankCandidates(
+      [
+        { url: shortViral.url, post: shortViral, observedOrder: 0 },
+        { url: dateOnly.url, post: dateOnly, observedOrder: 1 },
+        { url: substantive.url, post: substantive, observedOrder: 2 },
+      ],
+      2,
+      '2026-11-18T00:00:00Z',
+      { priority: 'BALANCED', queryTerms: ['công việc', 'khu công nghiệp', 'văn phòng'] },
+    );
+    expect(ranked.selected[0]).toBe(substantive.url);
+    const richRow = ranked.ranked.find((row) => row.url === substantive.url)!;
+    const shortRow = ranked.ranked.find((row) => row.url === shortViral.url)!;
+    const emptyRow = ranked.ranked.find((row) => row.url === dateOnly.url)!;
+    expect(richRow.supplyScore!).toBeGreaterThan(shortRow.supplyScore!);
+    expect(shortRow.supplyReasons).toContain('SHORT_CAPTION_ROOT_PENALIZED');
+    expect(emptyRow.rootWords).toBe(0);
+    expect(emptyRow.reportedReplies).toBeNull();
+  });
 });

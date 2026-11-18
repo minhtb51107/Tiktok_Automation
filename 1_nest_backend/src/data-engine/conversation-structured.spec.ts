@@ -570,4 +570,156 @@ describe('passive Threads structured response extraction', () => {
       }),
     ).toBe('INCONCLUSIVE');
   });
+
+  test('extracts nested text_post_app_info.reply_to_post_id (pk and pk_userid) for verified direct and nested replies', () => {
+    const payload = {
+      data: {
+        media: {
+          pk: '100',
+          id: '100_1',
+          code: 'ROOT',
+          user: { username: 'root' },
+          caption: { text: 'TEST DATA root post' },
+          text_post_app_info: {
+            direct_replies: {
+              edges: [
+                {
+                  node: {
+                    posts: {
+                      edges: [
+                        {
+                          node: {
+                            pk: '201',
+                            id: '201_2',
+                            code: 'R1',
+                            user: { username: 'one' },
+                            caption: { text: 'Direct reply to root' },
+                            text_post_app_info: { reply_to_post_id: '100_1' },
+                          },
+                        },
+                        {
+                          node: {
+                            pk: '202',
+                            id: '202_3',
+                            code: 'R2',
+                            user: { username: 'two' },
+                            caption: { text: 'Nested reply to R1' },
+                            text_post_app_info: { reply_to_post_id: '201' },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+    const extracted = extractStructuredEvidence(
+      [
+        {
+          source: 'NETWORK',
+          endpointPath: '/api/graphql',
+          responseType: 'NETWORK_JSON',
+          queryName: null,
+          observedAt: root.provenance.observedAt,
+          payload,
+        },
+      ],
+      rootUrl,
+    );
+    const graph = collectEvidence(root, {
+      url: rootUrl,
+      observedAt: root.provenance.observedAt,
+      synthetic: true,
+      visibleUrls: [],
+      structuredVisibleUrls: extracted.structuredVisibleUrls,
+      jsonLd: [],
+      relationshipCandidates: extracted.relationshipCandidates,
+    });
+    expect(graph.replies.map((r) => [r.id, r.parentId, r.rootId])).toEqual([
+      ['R1', 'ROOT', 'ROOT'],
+      ['R2', 'R1', 'ROOT'],
+    ]);
+  });
+
+  test('rejects wrong-root direct_replies container in SSR_RELAY and supports NDJSON GraphQL responses', async () => {
+    const wrongRoot = extractStructuredEvidence(
+      [
+        {
+          source: 'SSR',
+          endpointPath: '/@root/post/ROOT',
+          responseType: 'SSR_RELAY',
+          queryName: 'BarcelonaPostPageDownwardQuery',
+          observedAt: root.provenance.observedAt,
+          payload: {
+            media: {
+              ...post('999', 'OTHER_ROOT', 'other', 'wrong root'),
+              text_post_app_info: {
+                direct_replies: {
+                  edges: [
+                    {
+                      node: {
+                        posts: {
+                          edges: [{ node: post('201', 'R1', 'one', 'reply') }],
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      ],
+      rootUrl,
+    );
+    expect(wrongRoot.relationshipCandidates).toEqual([]);
+    expect(
+      wrongRoot.membershipEvidence.find((m) => m.subjectId === 'R1')?.status,
+    ).toBe('UNKNOWN');
+
+    const observer = new PassiveStructuredResponseObserver();
+    const request = {
+      url: () => 'https://www.threads.com/api/graphql',
+      method: () => 'POST',
+      resourceType: () => 'xhr',
+      failure: () => null,
+    } as any;
+    observer.recordRequest(request, { admitted: true, reason: 'ADMITTED' });
+    observer.observe({
+      status: () => 200,
+      url: request.url,
+      request: () => request,
+      headers: () => ({ 'content-type': 'text/javascript; charset=utf-8' }),
+      text: async () =>
+        [
+          JSON.stringify({ data: { media: post('100', 'ROOT', 'root', 'root') } }),
+          JSON.stringify({
+            data: {
+              media: {
+                text_post_app_info: {
+                  direct_replies: {
+                    edges: [
+                      {
+                        node: {
+                          posts: {
+                            edges: [{ node: post('201', 'R1', 'one', 'ndjson reply') }],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          }),
+        ].join('\n'),
+    } as any);
+    const captured = await observer.settle();
+    expect(captured).toHaveLength(2);
+    expect(observer.telemetry().responses[0].parserDecision).toBe('ACCEPTED_JSON');
+  });
 });

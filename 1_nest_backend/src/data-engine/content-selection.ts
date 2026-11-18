@@ -33,6 +33,21 @@ export function diversityAwareOrder<T extends {id:string;displayText:string;auth
 function record(text:string,author:string,url:string|null):PublicRecord {
   return {text,bodyText:text,author,handle:author,avatar:null,createdAt:null,type:'UNKNOWN',parentReference:null,media:[],likeCount:null,replyCount:null,repostCount:null,shareCount:null,provenance:{text:'persisted conversation observation'},...(url?{url}:{})};
 }
+const CONFIRMED_MEMBERSHIP_EVIDENCE_TYPES = new Set([
+  'STRUCTURED_TARGET_DIRECT_REPLIES_CONTAINER',
+  'STRUCTURED_TARGET_CONVERSATION_BRANCH',
+  'STRUCTURED_EXPLICIT_ROOT_FIELD',
+  'STRUCTURED_EXPLICIT_PARENT_FIELD',
+  'STRUCTURED_SINGLETON_DIRECT_REPLY_CONTAINER',
+  'EXPLICIT_DISCUSSION_REGION',
+  'EXPLICIT_PUBLIC_REPLY_RELATIONSHIP',
+  'EXPANDED_FROM_CONFIRMED_CONVERSATION_CONTAINER',
+]);
+const membershipPriority: Record<'UNKNOWN' | 'THREAD_UI_CONFIRMED' | 'RECOMMENDED_POST', number> = {
+  UNKNOWN: 0,
+  THREAD_UI_CONFIRMED: 1,
+  RECOMMENDED_POST: 2,
+};
 /** Source quotes only. This planner cannot approve, persist a project, synthesize or render. */
 export function selectConversation(c:ThreadCollection,style:ContentStyle,asOf:string,topicTerms:string[]=[],editorial:EditorialSelection={}){
   const mode=editorial.mode??'THREAD_DISCUSSION';
@@ -46,11 +61,23 @@ export function selectConversation(c:ThreadCollection,style:ContentStyle,asOf:st
   const rootText=cleanSourceProjection(rootRecord).text;
   const imageNarration=(c.root.imageNarration??[]).filter(x=>['USER','AGENT_VISUAL'].includes(x.reviewer??'')&&x.text.trim()&&c.root.attachments?.some(a=>a.sha256===x.imageHash&&a.status==='DOWNLOADED'));
   const rootNarration=[rootText,...imageNarration.map(x=>x.text)].filter(Boolean).join('\n\n');
+  // Strict exact-root membership index: wrong-root evidence is ignored; RECOMMENDED_POST wins conflicts.
+  const membershipBySubject=new Map<string,NonNullable<ThreadCollection['membershipEvidence']>[number]>();
+  for(const row of c.membershipEvidence??[]){
+    if(row.rootId!==identity.id)continue;
+    const prev=membershipBySubject.get(row.subjectId);
+    if(!prev||membershipPriority[row.status]>membershipPriority[prev.status])membershipBySubject.set(row.subjectId,row);
+  }
   const observed=(capture?.contextCandidates??[]).filter(r=>canonicalPost(r.url)?.url!==identity.url);
   const observedUrls=new Set(observed.map(r=>canonicalPost(r.url)?.url).filter(Boolean));
   for(const u of c.unverified)if(u.observation?.level==='OBSERVED_ON_TARGET_PAGE'&&canonicalPost(u.observation.targetUrl)?.url===identity.url){const url=canonicalPost(u.url)?.url;if(url)observedUrls.add(url)}
+  for(const card of c.observedCards??[]){
+    const own=canonicalPost(card.url);
+    if(own&&own.url!==identity.url)observedUrls.add(own.url);
+  }
   const records=[...observed];
   for(const r of c.replies)if(!records.some(x=>canonicalPost(x.url)?.id===r.id))records.push({...record(r.originalText,r.author.handle,r.url),type:'COMMENT',likeCount:r.engagement.likes,replyCount:r.engagement.replies,repostCount:r.engagement.reposts,shareCount:r.engagement.shares,fields:Object.fromEntries(Object.entries(r.engagement).map(([key,value])=>[({likes:'likeCount',replies:'replyCount',reposts:'repostCount',shares:'shareCount'} as Record<string,string>)[key],{value,status:value===null?'UNAVAILABLE' as const:'AVAILABLE' as const,raw:null,source:'Persisted verified reply engagement observation'}]))});
+  for(const card of c.observedCards??[]){const own=canonicalPost(card.url);if(own&&own.url!==identity.url&&!records.some(x=>canonicalPost(x.url)?.url===own.url))records.push(card);}
   for(const u of c.unverified){const own=canonicalPost(u.url);if(own&&own.url!==identity.url&&!records.some(x=>canonicalPost(x.url)?.url===own.url))records.push({...record(u.observation?.originalText??'',u.observation?.author.handle??own.handle,u.url),contextEvidence:u.observation?.contextEvidence});}
   const q=analyzeSourceCardsV2(records,rootNarration,style),seen=new Set<string>();
   const comments=records.map((raw,n)=>{
@@ -60,8 +87,19 @@ export function selectConversation(c:ThreadCollection,style:ContentStyle,asOf:st
     const duplicate=!!key&&(seen.has(key)||key===normalize(rootText))||q[n].duplicateOf!==null||q[n].nearDuplicateOf!==null;seen.add(key);
     const hasMedia=!!raw.media?.length,words=tokens(text),shortArgument=words.length>=4&&q[n].lexicalOverlap>0&&/(không|nhưng|vì|nên)/iu.test(text);
     const low=(!words.length||words.length<5)&&!hasMedia&&!shortArgument,advertisement=spam(text);
+    const membership=own?membershipBySubject.get(own.id):undefined;
+    const domContext=verified?null:classifyContext(raw,identity.url);
+    const recommendedContamination=membership?.status==='RECOMMENDED_POST'||domContext?.classification==='RELATED_OR_RECOMMENDED';
+    const exactRootConfirmed=!verified&&!recommendedContamination&&membership?.status==='THREAD_UI_CONFIRMED'&&membership.rootId===identity.id&&CONFIRMED_MEMBERSHIP_EVIDENCE_TYPES.has(membership.evidenceType);
     const relationship=verified?'PARENT_VERIFIED' as const:observedUrls.has(own?.url)?'OBSERVED_ON_TARGET_PAGE' as const:'UNKNOWN' as const;
-    const context:ContextAssessment=verified?{version:'context-classification/1',classification:'PARENT_VERIFIED',basis:'VALIDATED_PARENT_CHAIN',reasons:['VALIDATED_EXACT_ROOT_PARENT_CHAIN'],parentId,manualDraftAllowed:true}:classifyContext(raw,identity.url);
+    const context:ContextAssessment=verified
+      ?{version:'context-classification/1',classification:'PARENT_VERIFIED',basis:'VALIDATED_PARENT_CHAIN',reasons:['VALIDATED_EXACT_ROOT_PARENT_CHAIN'],parentId,manualDraftAllowed:true}
+      :recommendedContamination
+        ?{version:'context-classification/1',classification:'RELATED_OR_RECOMMENDED',basis:membership?.status==='RECOMMENDED_POST'?'EXACT_ROOT_CONVERSATION_MEMBERSHIP':domContext!.basis,reasons:[...new Set([...(domContext?.reasons??[]),...(membership?.status==='RECOMMENDED_POST'?['STRUCTURED_RECOMMENDED_POST_EXCLUDED',membership.evidenceType]:[])])],parentId:null,manualDraftAllowed:true}
+        :exactRootConfirmed
+          ?{version:'context-classification/1',classification:'OBSERVED_RELATIONSHIP_UNVERIFIED',basis:'EXACT_ROOT_CONVERSATION_MEMBERSHIP',reasons:['THREAD_UI_CONFIRMED_EXACT_ROOT','THREAD_UI_CONFIRMED_NOT_DIRECT_REPLY','DIRECT_PARENT_NOT_PROVEN',membership!.evidenceType],parentId:null,manualDraftAllowed:true}
+          :domContext!;
+    const membershipStatus=verified?'THREAD_UI_CONFIRMED' as const:recommendedContamination?'RECOMMENDED_POST' as const:exactRootConfirmed?'THREAD_UI_CONFIRMED' as const:(membership?.status??'UNKNOWN' as const);
     reasons.push(...context.reasons);
     const authorMatches=!raw.handle||raw.handle.replace(/^@/,'')===own?.handle;
     const useful=!duplicate&&!low&&!advertisement&&!repetitive(text)&&!!own&&authorMatches&&relationship!=='UNKNOWN';
@@ -71,14 +109,14 @@ export function selectConversation(c:ThreadCollection,style:ContentStyle,asOf:st
     if(hasMedia)reasons.push('MEDIA_CONTENT_NOT_TRANSCRIBED_NOT_COUNTED_IN_DURATION');
     if(!verified)reasons.push('OBSERVED_CONTEXT_NOT_A_VERIFIED_REPLY');
     return {id:own?.id??hash({url:raw.url,text,author:raw.author}),url:own?.url??null,author:raw.author,originalText:raw.text,displayText:text,raw,
-      parentId,relationship,context,
+      parentId,relationship,membershipStatus,membershipEvidenceType:membership?.evidenceType??null,context,
       score:useful?q[n].score+(shortArgument?10:0):0,useful,relevance:q[n].lexicalOverlap,reasons,
       engagement:q[n].engagement,selected:false};
   });
-  const suggestions=comments.filter(x=>x.useful&&(x.relevance>0||x.raw.media.length>0)).sort((a,b)=>b.score-a.score||a.id.localeCompare(b.id));
+  const suggestions=comments.filter(x=>x.useful&&(x.relevance>0||x.raw.media.length>0||(x.relationship==='PARENT_VERIFIED'&&tokens(x.displayText).length>=12&&(x.reasons.includes('MULTI_CLAUSE_REASONING_SIGNAL')||x.score>=15)))).sort((a,b)=>b.score-a.score||a.id.localeCompare(b.id));
   let eligible=suggestions.filter(x=>mode==='TOPIC_COMPILATION'||['PARENT_VERIFIED','OBSERVED_RELATIONSHIP_UNVERIFIED'].includes(x.context.classification));
   if(editorial.selectedIds)eligible=editorial.selectedIds.map(id=>{const item=comments.find(x=>x.id===id);if(!item?.useful)throw Error('QUALITY_UNUSABLE_EXPLICIT_SELECTION');return item});
-  else eligible=diversityAwareOrder(eligible);
+  else eligible=[...diversityAwareOrder(eligible.filter(x=>x.relationship==='PARENT_VERIFIED')),...diversityAwareOrder(eligible.filter(x=>x.relationship!=='PARENT_VERIFIED'))];
   let narration=rootNarration;
   for(const r of eligible){if(comments.filter(x=>x.selected).length>=CONTENT_SELECTION.maxSelectedComments)break;
     const next=[narration,r.displayText].filter(Boolean).join('\n\n'),estimate=estimatedDuration(next,CONTENT_SELECTION.readingSpeed);
@@ -124,7 +162,7 @@ export function selectConversation(c:ThreadCollection,style:ContentStyle,asOf:st
   const projectProposal:VideoProject|null=typed?{contractVersion:'1.0',id:candidate.id,style,title:rootText.slice(0,100),sources:[{id:identity.id,platform:'THREADS',canonicalUrl:identity.url,retrievedAt:c.root.provenance.observedAt,synthetic:c.root.provenance.synthetic}],posts:[{id:identity.id,sourceId:identity.id,author:{displayName:c.root.author.name??identity.handle,handle:identity.handle},text:rootRecord.text,mediaAssetIds:[],commentIds:selected.map(x=>x.id)}],comments:selected.map(x=>({id:x.id,sourceId:identity.id,postId:identity.id,...(x.parentId&&x.parentId!==identity.id?{parentCommentId:x.parentId}:{}),author:{displayName:x.author},text:x.originalText,relationshipStatus:x.relationship,observedTargetUrl:identity.url,mediaAssetIds:[]})),candidates:[candidate],storyboard,audioAssets:[],mediaAssets:[],publishing:{title:'',caption:'',hashtags:[],language:'vi',manualApprovalRequired:true}}:null;
   if(projectProposal){projectProposal.mediaAssets=mediaAssets;projectProposal.posts[0].mediaAssetIds=storyboard[0].mediaAssetIds;for(const comment of projectProposal.comments)comment.mediaAssetIds=storyboard.find(x=>x.id===comment.id)!.mediaAssetIds}
   return {version:CONTENT_SELECTION.version,configHash:hash({policy:CONTENT_SELECTION,topicTerms,mode}),mode,selectionOrigin:editorial.selectedIds?'EXPLICIT_DRAFT_SELECTION_NOT_APPROVAL':'RULE_SUGGESTION_NOT_APPROVAL',sourceUrl:identity.url,root:structuredClone(c.root),rootType,rightsStatus:'UNKNOWN' as const,style,status,score:Math.round(Object.values(breakdown).reduce<number>((a,b)=>a+(b??0),0)),breakdown,selectionDiversity,topicRelevance:{method:'LEXICAL_ONLY',matchedTerms:matchedTopicTerms,status:topicTerms.length?(matchedTopicTerms.length?'OBSERVED_LEXICAL_MATCH':'UNCERTAIN'):'UNKNOWN'},reasons,estimate,
-    reportedReplies:c.reportedReplyCount,observedReplies:c.observedReplyCount,verifiedReplies:comments.filter(x=>x.relationship==='PARENT_VERIFIED').length,completeness:c.status,comments,quotes,scriptDraft:narration,candidate,storyboard,projectProposal,conversation:quality,accuracy:'NOT_MEASURED',productionApproved:false};
+    reportedReplies:c.reportedReplyCount,observedReplies:c.observedReplyCount,verifiedReplies:comments.filter(x=>x.relationship==='PARENT_VERIFIED').length,verifiedDirectReplies:comments.filter(x=>x.relationship==='PARENT_VERIFIED'&&x.parentId===identity.id).length,verifiedNestedReplies:comments.filter(x=>x.relationship==='PARENT_VERIFIED'&&!!x.parentId&&x.parentId!==identity.id).length,confirmedConversationMembers:comments.filter(x=>x.relationship!=='PARENT_VERIFIED'&&x.membershipStatus==='THREAD_UI_CONFIRMED'&&x.context.classification==='OBSERVED_RELATIONSHIP_UNVERIFIED').length,unknownMembers:comments.filter(x=>x.context.classification==='UNKNOWN').length,completeness:c.status,comments,quotes,scriptDraft:narration,candidate,storyboard,projectProposal,conversation:quality,accuracy:'NOT_MEASURED',productionApproved:false};
 }
 export function rankConversations(collections:ThreadCollection[],style:ContentStyle,asOf:string,topicTerms:string[]=[]){
   const rows=collections.map(c=>selectConversation(c,style,asOf,topicTerms));

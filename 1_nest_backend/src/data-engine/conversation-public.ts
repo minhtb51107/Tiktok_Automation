@@ -579,7 +579,7 @@ export async function drivePublicConversation(
       subjectCards: observed?.diagnostics.subjectPermalinks ?? 0,
       fullBodyCards: observed?.diagnostics.materializedCards ?? 0,
     });
-  const capture = async (actionId: string) => {
+  const capture = async (actionId: string, captureSsr = true) => {
     const [observed, context] = await Promise.all([
       page.evaluate(observePublicDocument),
       page.evaluate(observePublicContext),
@@ -590,7 +590,7 @@ export async function drivePublicConversation(
       observed,
       context,
     });
-    if (structured)
+    if (structured && captureSsr)
       structured.observeSsr(
         actionId === 'initial' ? 'BEFORE_ACTIONS' : `AFTER_${actionId}`,
         await page.evaluate(observeStructuredSsrScripts),
@@ -657,12 +657,18 @@ export async function drivePublicConversation(
         action.documentHeightBefore,
       )
       .catch(() => {});
-    latest = await capture(id);
+    latest = await capture(id, false);
     const afterIdentities = new Set(
         latest.observed.rows.map((row) => row.subjectUrl).filter(Boolean),
       ),
       afterSubjects = afterIdentities.size,
       changed = [...afterIdentities].some(identity=>!beforeIdentities.has(identity));
+    if (changed && structured)
+      structured.observeSsr(
+        `AFTER_${id}`,
+        await page.evaluate(observeStructuredSsrScripts),
+        new URL(page.url()).pathname,
+      );
     actions.push({
       id,
       kind: action.kind,
@@ -680,7 +686,11 @@ export async function drivePublicConversation(
       id,
       latest.observed,
     );
-    unchanged = changed ? 0 : unchanged + 1;
+    const stillScrollingToBottom =
+      action.kind === 'SCROLL' &&
+      action.scrollChanged === true &&
+      action.reachedBottom === false;
+    unchanged = changed ? 0 : stillScrollingToBottom ? unchanged : unchanged + 1;
     if(!changed&&action.controlSignature)exhaustedControls.add(action.controlSignature);
     const uniqueAcrossSnapshots = new Set(
       snapshots.flatMap((snapshot) =>
@@ -787,7 +797,11 @@ async function visit<T>(
         headless: true,
         args: [
           '--disable-background-networking',
+          '--disable-dev-shm-usage',
           '--disable-extensions',
+          '--disable-gpu',
+          '--mute-audio',
+          '--no-first-run',
           '--renderer-process-limit=1',
         ],
       }),

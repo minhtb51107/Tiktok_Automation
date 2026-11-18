@@ -131,4 +131,48 @@ describe('browser-driven conversation acquisition', () => {
     expect(result.context.replies).toEqual([]);
     expect(result.trace.transitions.some((entry) => entry.state === 'EXPANDING_NESTED')).toBe(true);
   });
+
+  test('continues bounded scrolling until bottom fold before counting unchanged pagination actions', async () => {
+    const snapshots = [
+      observed([row('A', 'one')]),
+      observed([row('A', 'one')]),
+      observed([row('A', 'one')]),
+      observed([row('A', 'one'), row('B', 'loaded at bottom')]),
+      observed([row('A', 'one'), row('B', 'loaded at bottom')]),
+      observed([row('A', 'one'), row('B', 'loaded at bottom')]),
+    ];
+    let observedIndex = 0,
+      actionIndex = 0;
+    const page = {
+      url: () => target,
+      evaluate: jest.fn(async (fn: unknown) => {
+        if (fn === observePublicDocument)
+          return snapshots[Math.min(observedIndex++, snapshots.length - 1)];
+        if (fn === observePublicContext) return context;
+        if (fn === performPublicConversationAction) {
+          actionIndex++;
+          return {
+            actionId: `action-${actionIndex}`,
+            kind: 'SCROLL',
+            label: null,
+            containerIdentity: null,
+            containerSubjectUrl: null,
+            documentHeightBefore: 5000,
+            scrollChanged: actionIndex <= 3,
+            reachedBottom: actionIndex >= 3,
+          };
+        }
+        throw Error('UNEXPECTED_EVALUATE');
+      }),
+      waitForFunction: jest.fn(async () => true),
+    } as any;
+    const result = await drivePublicConversation(page, target, 6, undefined, {
+      maxUnchangedActions: 2,
+    });
+    expect(result.observed.rows.map((r) => r.text)).toEqual([
+      'one',
+      'loaded at bottom',
+    ]);
+    expect(result.trace.actions.length).toBe(5);
+  });
 });
