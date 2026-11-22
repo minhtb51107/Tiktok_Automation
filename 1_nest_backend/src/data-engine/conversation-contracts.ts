@@ -18,7 +18,7 @@ export interface PublicPost {
   imageNarration?: import('../video-pipeline/contracts').StoryboardScene['imageNarration'];
   id: string;
   url: string;
-  author: { handle: string; name: string | null };
+  author: { handle: string; name: string | null; avatarUrl?: string | null };
   originalText: string;
   publishedAt: string | null;
   topic?: string | null;
@@ -224,6 +224,7 @@ export interface StructuredPostObservation {
   code: string;
   url: string;
   authorHandle: string;
+  authorAvatarUrl?: string | null;
   originalText: string | null;
   publishedAt: string | null;
   parentPostId: string | null;

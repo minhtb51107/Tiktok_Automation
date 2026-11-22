@@ -427,6 +427,78 @@ export const SPEECH_RULES: SpeechRule[] = [
     caseMode: 'lower',
   },
   {
+    id: 'CTX-VD',
+    terms: ['vd'],
+    spoken: (c) =>
+      has(
+        set('thấy', 'xem', 'coi', 'quay', 'đăng', 'up', 'clip', 'cái', 'mấy', 'lướt'),
+        p(c),
+      )
+        ? 'video'
+        : 'ví dụ',
+    category: 'ABBREVIATION',
+    caseMode: 'any',
+    when: (c) => !!(c.prev || c.next) && !gluedPunct(c),
+    note: 'vd -> video after watch/media verbs (e.g. thấy vd trên tiktok), ví dụ otherwise.',
+  },
+  {
+    id: 'ABBR-BSI',
+    terms: ['bsi', 'bsĩ'],
+    spoken: 'bác sĩ',
+    category: 'ABBREVIATION',
+    caseMode: 'any',
+    when: (c) => !gluedPunct(c),
+  },
+  {
+    id: 'CTX-BS',
+    terms: ['bs'],
+    spoken: 'bác sĩ',
+    category: 'ABBREVIATION',
+    caseMode: 'any',
+    when: (c) =>
+      !gluedPunct(c) &&
+      (has(
+        c.sentenceWords,
+        'mổ',
+        'phẫu',
+        'thuật',
+        'pt',
+        'bệnh',
+        'viện',
+        'khám',
+        'thuốc',
+        'ca',
+        'trực',
+        'phụ',
+      ) ||
+        has(
+          set('ông', 'bà', 'anh', 'chị', 'cô', 'chú', 'mấy', 'các', 'để', 'mà', 'nếu', 'hỏi', 'gặp'),
+          p(c),
+        )),
+  },
+  {
+    id: 'CTX-PT-SURGERY',
+    terms: ['pt'],
+    spoken: 'phẫu thuật',
+    category: 'ABBREVIATION',
+    caseMode: 'lower',
+    when: (c) =>
+      !gluedPunct(c) &&
+      has(
+        c.sentenceWords,
+        'mổ',
+        'bác',
+        'sĩ',
+        'bs',
+        'bsi',
+        'bệnh',
+        'viện',
+        'phòng',
+        'ca',
+        'trực',
+      ),
+  },
+  {
     id: 'TEEN-CX',
     terms: ['cx'],
     spoken: 'cũng',
@@ -1168,6 +1240,12 @@ export const SPEECH_PHRASES: PhraseRule[] = [
     words: ['tp', 'hn'],
     spoken: 'thành phố Hà Nội',
     category: 'PLACE',
+  },
+  {
+    id: 'PHRASE-VAN-VAN',
+    words: ['v', 'v'],
+    spoken: 'vân vân',
+    category: 'ABBREVIATION',
   },
 ];
 /** Social register kept as written (Kokoro already reads these naturally). */

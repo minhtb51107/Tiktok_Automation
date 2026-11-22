@@ -61,5 +61,25 @@ export function renderValidation(s: StudioSession, props: VideoPreviewProps) {
   }
   if((props.backgroundTracks||[]).some(c=>c.enabled)&&covered+1000/props.timeline.fps<props.timeline.totalFrames*1000/props.timeline.fps)
     warnings.push(`Saved global background covers ${covered}ms from start; timeline is ${(props.timeline.totalFrames*1000/props.timeline.fps).toFixed(0)}ms. Scene fallback/background gaps are preserved; extend in Editor if desired.`);
+  for (const c of (props.backgroundTracks || []).filter((c) => c.enabled)) {
+    const a = props.mediaAssets.find((a) => a.id === c.assetId);
+    if (
+      a &&
+      a.kind === 'VIDEO' &&
+      typeof a.width === 'number' &&
+      typeof a.height === 'number' &&
+      (a.width < props.timeline.width || a.height < props.timeline.height)
+    ) {
+      warnings.push(
+        `SOURCE_RESOLUTION_LIMIT: background asset ${a.id} is ${a.width}x${a.height} (below ${props.timeline.width}x${props.timeline.height} target); output sharpness is bounded by source media resolution.`,
+      );
+    }
+  }
+  const totalSec = props.timeline.totalFrames / props.timeline.fps;
+  if (!s.project?.editorialPlan && totalSec > 90) {
+    warnings.push(
+      `MANUAL_DURATION_ADVISORY: total timeline is ${totalSec.toFixed(1)}s (>90s standard TikTok target); allowed in manual mode.`,
+    );
+  }
   return {warnings,blockers,finalBlockers};
 }

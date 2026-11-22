@@ -3,8 +3,10 @@ import { AnimatedGif } from './AnimatedGif';
 import {
   AbsoluteFill,
   Img,
+  OffthreadVideo,
   Video,
   useCurrentFrame,
+  useRemotionEnvironment,
   useVideoConfig,
 } from "remotion";
 import type {
@@ -16,6 +18,37 @@ import {
   dateLabel,
   normalizeVisual,
 } from "../../../1_nest_backend/src/video-pipeline/scene-visual";
+const AvatarFallback: React.FC<{
+  style: React.CSSProperties;
+  label?: string | null;
+}> = ({ style }) => (
+  <div
+    title="Avatar unavailable"
+    data-testid="avatar-fallback"
+    data-avatar-status="AVATAR_UNAVAILABLE"
+    style={{
+      ...style,
+      background: style.background ?? "#343946",
+      display: "grid",
+      placeItems: "center",
+      overflow: "hidden",
+    }}
+  >
+    <svg
+      width="34"
+      height="34"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="8.5" r="4" fill="#9aa3b5" />
+      <path
+        d="M4.5 19.5c0-3.6 3.3-6.2 7.5-6.2s7.5 2.6 7.5 6.2"
+        fill="#9aa3b5"
+      />
+    </svg>
+  </div>
+);
 const Image: React.FC<{
   uri: string;
   style: React.CSSProperties;
@@ -26,10 +59,19 @@ const Image: React.FC<{
   const [failed, setFailed] = React.useState(false);
   return failed ? (
     avatar ? (
-      <div title="Avatar unavailable" style={{ ...style, background: style.background ?? "#edf0f4",display:'grid',placeItems:'center',fontSize:30 }}>?</div>
+      <AvatarFallback style={style} />
     ) : null
   ) : (
-    animated ? <AnimatedGif key={uri} uri={uri} style={style} startMs={startMs}/> : <Img src={uri} style={style} onError={() => setFailed(true)} />
+    animated ? (
+      <AnimatedGif key={uri} uri={uri} style={style} startMs={startMs}/>
+    ) : (
+      <Img
+        src={uri}
+        data-avatar-status={avatar ? "READY" : undefined}
+        style={style}
+        onError={() => setFailed(true)}
+      />
+    )
   );
 };
 export const ThreadsVisual: React.FC<{
@@ -39,6 +81,7 @@ export const ThreadsVisual: React.FC<{
   transparent?:boolean;
 }> = ({ item, mediaAssets, background, transparent }) => {
   const frame = useCurrentFrame(),
+    env = useRemotionEnvironment(),
     { fps } = useVideoConfig(),
     v = normalizeVisual(item.scene.visual),
     c = v.card,
@@ -91,19 +134,33 @@ export const ThreadsVisual: React.FC<{
       {background && (
         <AbsoluteFill data-editor-object="BACKGROUND">
           {background.kind === "VIDEO" ? (
-            <Video
-              data-testid="video-background"
-              src={background.uri}
-              muted
-              loop
-              preload="metadata"
-              style={{
-                position: "absolute",
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-              }}
-            />
+            env.isRendering ? (
+              <OffthreadVideo
+                data-testid="video-background"
+                src={background.uri}
+                muted
+                style={{
+                  position: "absolute",
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                }}
+              />
+            ) : (
+              <Video
+                data-testid="video-background"
+                src={background.uri}
+                muted
+                loop
+                preload="metadata"
+                style={{
+                  position: "absolute",
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                }}
+              />
+            )
           ) : (
             <Image
               uri={background.uri}
@@ -160,17 +217,16 @@ export const ThreadsVisual: React.FC<{
               }}
             />
           ) : (
-            <div
-              title="Avatar unavailable"
+            <AvatarFallback
+              label={card.handle || card.author}
               style={{
                 width: 64,
                 height: 64,
                 minWidth: 64,
                 borderRadius: "50%",
                 background: palette.avatar,
-                display:'grid',placeItems:'center',fontSize:30,
               }}
-            >?</div>
+            />
           )}
           <div style={{ flex: 1, minWidth: 0, display:"flex",alignItems:"flex-start",gap:6,flexDirection:"column" }}>
             <div

@@ -601,9 +601,8 @@ export function DiscoveryWorkspace({
                 <span className="s2-eyebrow-tag">PHƯƠNG THỨC CHÍNH</span>
                 <h3>Dán Liên kết Bài viết Threads</h3>
                 <p>
-                  Nhập tối đa 5 liên kết bài đăng hoặc link chia sẻ công khai.
-                  Hệ thống sẽ tải tuần tự nội dung gốc, tên tác giả và ảnh đại
-                  diện.
+                  Nhập hoặc dán hàng loạt không giới hạn liên kết bài đăng/link chia sẻ công khai, hoặc nhập trực tiếp từ ThreadCollection.
+                  Hệ thống xử lý hàng đợi tuần tự (concurrency = 1), tải nội dung gốc, tên tác giả và cache ảnh đại diện thật.
                 </p>
               </div>
               <span className="v3-prov-pill prov-real">HOẠT ĐỘNG NGAY</span>

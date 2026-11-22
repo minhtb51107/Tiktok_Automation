@@ -148,4 +148,43 @@ export class PublishingController {
   ) {
     return this.publishing.status(id, job);
   }
+  @Get('sessions/:id/publishing/upload-queue') listUploadQueue(
+    @Param('id') id: string,
+  ) {
+    return this.publishing.listUploadQueue(id);
+  }
+  @Post('sessions/:id/publishing/upload-queue') enqueueUpload(
+    @Param('id') id: string,
+    @Body() b: any,
+    @Headers('origin') o?: string,
+  ) {
+    this.origin(o);
+    return this.publishing.enqueueBrowserUpload(id, b);
+  }
+  @Post('sessions/:id/publishing/upload-queue/:uploadId/prepare') prepareUpload(
+    @Param('id') id: string,
+    @Param('uploadId') uploadId: string,
+    @Body() b: any,
+    @Headers('origin') o?: string,
+  ) {
+    this.origin(o);
+    return this.publishing.prepareBrowserUpload(id, uploadId, b);
+  }
+  @Post('sessions/:id/publishing/upload-queue/:uploadId/confirm') confirmUpload(
+    @Param('id') id: string,
+    @Param('uploadId') uploadId: string,
+    @Body() b: any,
+    @Headers('origin') o?: string,
+  ) {
+    this.origin(o);
+    return this.publishing.confirmBrowserUpload(id, uploadId, b);
+  }
+  @Post('sessions/:id/publishing/upload-queue/:uploadId/retry') retryUpload(
+    @Param('id') id: string,
+    @Param('uploadId') uploadId: string,
+    @Headers('origin') o?: string,
+  ) {
+    this.origin(o);
+    return this.publishing.retryBrowserUpload(id, uploadId);
+  }
 }

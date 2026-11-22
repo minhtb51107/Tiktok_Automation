@@ -1,5 +1,5 @@
 // Local isolated worker. No credential loading, browser downloads or production imports.
-const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
+const fs=require('node:fs/promises'),fsSync=require('node:fs'),http=require('node:http'),path=require('node:path'),crypto=require('node:crypto');
 const {createRequire}=require('node:module'),{execFile}=require('node:child_process');
 const dir=path.resolve(process.argv[2]),project=path.resolve('../2_Remotion_Video');
 const requireVideo=createRequire(path.join(project,'package.json'));
@@ -18,7 +18,7 @@ const redact=s=>s.replace(/[A-Z]:[\\/][^\s"']+/gi,'[local path]').replace(/(?:hf
 async function fingerprint(root){const parts=[];for(const e of (await fs.readdir(root,{withFileTypes:true})).sort((a,b)=>a.name.localeCompare(b.name))){const p=path.join(root,e.name);if(e.isDirectory())parts.push(await fingerprint(p));else if(/\.(tsx?|css)$/.test(e.name))parts.push(e.name,await fs.readFile(p));}return hash(Buffer.concat(parts.map(p=>Buffer.from(p))));}
 async function main(){
  const snapshot=JSON.parse(await fs.readFile(path.join(dir,'snapshot.json'),'utf8')),m=snapshot.manifest;
- let browser,monitor,monitoring=false;const started=Date.now(),metrics={samples:[],workerPeakRssBytes:0};
+ let browser,monitor,sliceServer,monitoring=false;const started=Date.now(),metrics={samples:[],workerPeakRssBytes:0},sliceFiles={};
  const save=async()=>{const f=path.join(dir,'manifest.json');await fs.writeFile(f+'.tmp',JSON.stringify(m,null,2));await replaceFile(f+'.tmp',f);};
  const sample=async()=>{if(monitoring)return;monitoring=true;try{metrics.workerPeakRssBytes=Math.max(metrics.workerPeakRssBytes,process.memoryUsage().rss);
    if(process.platform==='win32'){
@@ -40,6 +40,50 @@ async function main(){
    }else throw Error(`Nonlocal required media: ${a.id}`);
   }
   for(const t of props.timeline.scenes){const c=t.scene.threadsCard;if(c?.avatarUrl){const uri=local(c.avatarUrl);if(uri)c.avatarUrl=uri;else{c.avatarUrl=null;m.warnings.push(`${t.scene.id}: remote avatar unavailable to offline render`);}}}
+  // Pre-normalize active background video slices to short 12-frame GOPs so OffthreadVideo
+  // extracts every frame deterministically within a bounded 48 MiB frame cache.
+  for(const c of (props.backgroundTracks||[]).filter(x=>x.enabled)){
+   const a=props.mediaAssets.find(x=>x.id===c.assetId);
+   if(a&&a.kind==='VIDEO'&&typeof a.uri==='string'){
+    const before=Math.floor((c.sourceInMs*m.fps)/1000),after=Math.ceil((c.sourceOutMs*m.fps)/1000),span=Math.max(1,after-before);
+    const sliceName=`bg-slice-${c.id}.mp4`,slicePath=path.join(dir,sliceName);
+    tick('Normalizing background video GOP for frame-exact OffthreadVideo');
+    await command('ffmpeg',['-v','error','-y','-ss',(before/m.fps).toFixed(6),'-i',a.uri,'-frames:v',String(span),'-r',String(m.fps),'-c:v','libx264','-preset','ultrafast','-crf','17','-g','12','-keyint_min','12','-sc_threshold','0','-pix_fmt','yuv420p','-an',slicePath],true);
+    sliceFiles['/'+sliceName]=slicePath;
+   }
+  }
+  if(Object.keys(sliceFiles).length){
+   sliceServer=http.createServer((req,res)=>{
+    const file=sliceFiles[new URL(req.url,'http://127.0.0.1').pathname];
+    if(!file||!fsSync.existsSync(file)){res.statusCode=404;res.end();return;}
+    const stat=fsSync.statSync(file);
+    res.setHeader('Content-Type','video/mp4');
+    res.setHeader('Accept-Ranges','bytes');
+    const range=req.headers.range;
+    if(range){
+     const parts=range.replace(/bytes=/,'').split('-'),start=parseInt(parts[0],10),end=parts[1]?parseInt(parts[1],10):stat.size-1;
+     res.statusCode=206;res.setHeader('Content-Range',`bytes ${start}-${end}/${stat.size}`);res.setHeader('Content-Length',end-start+1);
+     if(req.method==='HEAD'){res.end();return;}
+     fsSync.createReadStream(file,{start,end}).pipe(res);
+    }else{
+     res.setHeader('Content-Length',stat.size);
+     if(req.method==='HEAD'){res.end();return;}
+     fsSync.createReadStream(file).pipe(res);
+    }
+   });
+   await new Promise(r=>sliceServer.listen(0,'127.0.0.1',r));
+   const port=sliceServer.address().port;
+   for(const c of (props.backgroundTracks||[]).filter(x=>x.enabled)){
+    const sliceName=`bg-slice-${c.id}.mp4`;
+    if(sliceFiles['/'+sliceName]){
+     const before=Math.floor((c.sourceInMs*m.fps)/1000),after=Math.ceil((c.sourceOutMs*m.fps)/1000),span=Math.max(1,after-before);
+     const baseAsset=props.mediaAssets.find(x=>x.id===c.assetId);
+     const clonedId=`${c.assetId}-${c.id}`;
+     props.mediaAssets.push({...baseAsset,id:clonedId,uri:`http://127.0.0.1:${port}/${sliceName}`,durationMs:Math.round((span*1000)/m.fps)});
+     c.assetId=clonedId;c.sourceInMs=0;c.sourceOutMs=Math.round((span*1000)/m.fps);
+    }
+   }
+  }
   metrics.resolvedPropsHash=hash(JSON.stringify(props));
   const cacheKey=hash((await fingerprint(path.join(project,'src/video-pipeline')))+(await fingerprint(path.join(project,'src/render')))+(await fingerprint(path.resolve('src/video-pipeline')))+requireVideo('remotion/package.json').version);
   const bundleDir=path.resolve('.studio-data/render-bundles',cacheKey),empty=path.resolve('.studio-data/render-public-empty');
@@ -56,7 +100,7 @@ async function main(){
   if(composition.durationInFrames!==m.totalFrames||composition.fps!==m.fps)throw Error('Composition metadata differs from saved timeline');
   const rendering=Date.now();let last=0;
   tick('Rendering frames',0,m.frameRange[1]-m.frameRange[0]+1);
-  await renderer.renderMedia({serveUrl,composition,inputProps:props,codec:'h264',audioCodec:'pcm-16',separateAudioTo:path.join(dir,'mix.wav'),pixelFormat:'yuv420p',outputLocation:path.join(dir,'video-silent.mp4'),overwrite:false,concurrency:1,scale:m.width/props.timeline.width,frameRange:m.frameRange,puppeteerInstance:browser,browserExecutable:snapshot.browserExecutable,onBrowserDownload:noDownload,cancelSignal:signal.cancelSignal,timeoutInMilliseconds:60000,offthreadVideoThreads:1,offthreadVideoCacheSizeInBytes:32*1024*1024,mediaCacheSizeInBytes:32*1024*1024,disallowParallelEncoding:true,x264Preset:'ultrafast',crf:23,logLevel:'error',metadata:{comment:`${m.mode}; session=${m.sessionId}; revision=${m.revision}; timeline=${m.timelineHash}`},onProgress:p=>{metrics.renderedDoneIn=p.renderedDoneIn;metrics.encodedDoneIn=p.encodedDoneIn;if(Date.now()-last>=1000||p.progress===1){last=Date.now();tick(p.renderedDoneIn===null?'Rendering frames':p.stitchStage==='muxing'?'Muxing audio/video':'Encoding',p.renderedFrames,m.frameRange[1]-m.frameRange[0]+1);}}});
+  await renderer.renderMedia({serveUrl,composition,inputProps:props,codec:'h264',audioCodec:'pcm-16',separateAudioTo:path.join(dir,'mix.wav'),pixelFormat:'yuv420p',outputLocation:path.join(dir,'video-silent.mp4'),overwrite:false,concurrency:1,scale:m.width/props.timeline.width,frameRange:m.frameRange,puppeteerInstance:browser,browserExecutable:snapshot.browserExecutable,onBrowserDownload:noDownload,cancelSignal:signal.cancelSignal,timeoutInMilliseconds:60000,offthreadVideoThreads:1,offthreadVideoCacheSizeInBytes:48*1024*1024,mediaCacheSizeInBytes:48*1024*1024,disallowParallelEncoding:true,x264Preset:m.mode==='FINAL'?'fast':'veryfast',crf:m.mode==='FINAL'?19:20,logLevel:'error',metadata:{comment:`${m.mode}; session=${m.sessionId}; revision=${m.revision}; timeline=${m.timelineHash}`},onProgress:p=>{metrics.renderedDoneIn=p.renderedDoneIn;metrics.encodedDoneIn=p.encodedDoneIn;if(Date.now()-last>=1000||p.progress===1){last=Date.now();tick(p.renderedDoneIn===null?'Rendering frames':p.stitchStage==='muxing'?'Muxing audio/video':'Encoding',p.renderedFrames,m.frameRange[1]-m.frameRange[0]+1);}}});
   check();metrics.renderMediaMs=Date.now()-rendering;metrics.averageRenderedFps=(m.frameRange[1]-m.frameRange[0]+1)/(metrics.renderMediaMs/1000);
   tick('Encoding AAC and muxing MP4');const muxStart=Date.now();
   // Remotion's ADTS AAC intermediate loses libfdk's priming metadata (measured
@@ -71,6 +115,6 @@ async function main(){
   // DRAFT never becomes publishable. FINAL still requires the publishing stage's own gate.
   m.publishable=false;tick('Completed',frames,frames);
  }catch(e){m.status=cancelled||(typeof renderer.isUserCancelledRender==='function'&&renderer.isUserCancelledRender(e))?'CANCELLED':'FAILED';m.error=m.status==='CANCELLED'?null:redact(e.message||String(e));if(m.error)console.error(m.error);process.exitCode=m.status==='CANCELLED'?0:1;}
- finally{clearInterval(monitor);await browser?.close({silent:true}).catch(()=>{});m.completedAt=new Date().toISOString();metrics.endToEndMs=Date.now()-started;m.metrics=metrics;m.warnings=[...new Set(m.warnings)];await save();if(process.connected)process.disconnect();}
+ finally{clearInterval(monitor);await browser?.close({silent:true}).catch(()=>{});for(const f of Object.values(sliceFiles))await fs.unlink(f).catch(()=>{});if(sliceServer)await new Promise(r=>sliceServer.close(r));m.completedAt=new Date().toISOString();metrics.endToEndMs=Date.now()-started;m.metrics=metrics;m.warnings=[...new Set(m.warnings)];await save();if(process.connected)process.disconnect();}
 }
 main().catch(e=>{console.error(redact(e.message));process.exitCode=1;if(process.connected)process.disconnect();});

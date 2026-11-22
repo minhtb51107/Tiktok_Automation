@@ -14,7 +14,7 @@ import { SPEECH_POLICY_VERSION } from './speech-rules';
 import { editorialScriptHash } from '../data-engine/editorial-script-state';
 import { uploadSignature, probeUpload, validCategory } from './uploaded-media';
 import { replaceFile } from './atomic-file';
-import { cacheSourceImage } from './source-images';
+import { cacheSourceImage, isPlaceholderAvatarUrl } from './source-images';
 import { RenderStore } from './render-store';
 import {
   renderValidation,
@@ -46,7 +46,8 @@ import {
   qualityCases,
   realQualityCases,
 } from './offline-normalization';
-import { KokoroRuntime, textHash } from './kokoro-runtime';
+import { KokoroRuntime, textHash, resolveStudioDataRoot } from './kokoro-runtime';
+import { analyzeWavBuffer, buildSceneTtsDiagnostic } from './tts-diagnostics';
 import { voiceReport } from './voice-report';
 import { StudioJobs, ProgressSink } from './progress';
 import { PublicAssets, seriousDraftAssets } from './public-assets';
@@ -203,34 +204,59 @@ export class StudioService {
       return this.persist(s);
     });
   }
+  private async ensureCachedAvatars(s: StudioSession, forceAll = false) {
+    s.sourceImages ??= {};
+    for (const i of s.items.filter((i) => i.selected)) {
+      const url =
+        i.metadata?.avatar ?? i.rawExtraction?.avatar ?? i.author.avatarUrl;
+      if (!url) continue;
+      if (isPlaceholderAvatarUrl(url)) {
+        s.sourceImages[i.id] = {
+          itemId: i.id,
+          sourceUrl: url,
+          status: 'UNAVAILABLE',
+          uri: null,
+          error: 'AVATAR_UNAVAILABLE: generic static placeholder sprite',
+          provenance: 'PUBLIC_CDN',
+          checkedAt: new Date().toISOString(),
+        };
+        continue;
+      }
+      let supportedCdn = false;
+      try {
+        const parsed = new URL(url);
+        supportedCdn =
+          parsed.protocol === 'https:' &&
+          /(^|\.)(cdninstagram\.com|fbcdn\.net)$/i.test(parsed.hostname);
+      } catch {}
+      if (!supportedCdn && !forceAll) continue;
+      const old = s.sourceImages[i.id];
+      if (
+        old?.status === 'READY' &&
+        old.sourceUrl === url &&
+        old.fileName &&
+        (
+          await fs
+            .stat(path.join(this.root, 'source-images', s.id, old.fileName))
+            .catch(() => null)
+        )?.size
+      )
+        continue;
+      await this.tick('Caching original avatar: ' + i.author.displayName);
+      s.sourceImages[i.id] = await cacheSourceImage(
+        s.id,
+        i.id,
+        url,
+        path.join(this.root, 'source-images'),
+      );
+    }
+  }
   async cacheAvatars(id: string, revision: number) {
     return this.exclusive(async () => {
       const s = await this.load(id);
       if (s.revision !== revision)
         throw new ConflictException('Session changed');
-      s.sourceImages ??= {};
-      for (const i of s.items.filter((i) => i.selected)) {
-        const url = i.metadata?.avatar ?? i.author.avatarUrl;
-        if (!url) continue;
-        const old = s.sourceImages[i.id];
-        if (
-          old?.status === 'READY' &&
-          old.sourceUrl === url &&
-          (
-            await fs
-              .stat(path.join(this.root, 'source-images', id, old.fileName!))
-              .catch(() => null)
-          )?.size
-        )
-          continue;
-        await this.tick('Caching original avatar: ' + i.author.displayName);
-        s.sourceImages[i.id] = await cacheSourceImage(
-          id,
-          i.id,
-          url,
-          path.join(this.root, 'source-images'),
-        );
-      }
+      await this.ensureCachedAvatars(s, true);
       return this.persist(s);
     });
   }
@@ -269,6 +295,7 @@ export class StudioService {
         throw new ConflictException(
           'Project changed; reload Render before exporting',
         );
+      await this.ensureCachedAvatars(s);
       const built = prepareEditor(s, await this.visualAssets(s)),
         props = renderBackground(
           built.preview.request.inputProps,
@@ -730,6 +757,7 @@ export class StudioService {
         throw new ConflictException(
           'Project changed; reopen before preparing preview',
         );
+      await this.ensureCachedAvatars(s);
       await this.tick('Building deterministic timeline');
       const built = prepareEditor(s, await this.visualAssets(s));
       for (const a of built.project.audioAssets)
@@ -1198,7 +1226,7 @@ export class StudioService {
         records: any[] = [...observed.map((x) => x.raw)];
       for (const reply of collection.replies)
         if (!records.some((x) => canonicalPost(x.url)?.id === reply.id))
-          records.push(this.replyRecord(reply));
+          records.push(this.replyRecord(reply, collection));
       this.append(s, root.url, rootRaw, records);
       s.derivedFrom = derivedFrom;
       s.draftProvenance = {
@@ -1257,21 +1285,43 @@ export class StudioService {
       }
       s.status = 'READY';
       s.errors = [];
+      await this.ensureCachedAvatars(s);
       return this.persist(s);
     });
   }
-  private replyRecord(reply: VerifiedReply): any {
+  private replyRecord(reply: VerifiedReply, collection?: ThreadCollection): any {
+    const candidates = collection?.sourceCapture?.contextCandidates || [];
+    const matchedCandidate = candidates.find(
+      (c) =>
+        canonicalPost(c.url)?.id === reply.id ||
+        (!!c.handle && c.handle === reply.author.handle),
+    );
+    const rootRecord = collection?.sourceCapture?.records?.[0];
+    const candidateAvatar =
+      reply.author.avatarUrl ??
+      matchedCandidate?.avatar ??
+      (reply.author.handle === collection?.root.author.handle
+        ? rootRecord?.avatar
+        : null) ??
+      null;
+    const avatar =
+      candidateAvatar && !isPlaceholderAvatarUrl(candidateAvatar)
+        ? candidateAvatar
+        : null;
     return {
       url: reply.url,
       text: reply.originalText,
       bodyText: reply.originalText,
       author: reply.author.name ?? reply.author.handle,
       handle: reply.author.handle,
-      avatar: null,
+      avatar,
       createdAt: reply.publishedAt,
       type: 'COMMENT',
       parentReference: reply.evidence.parentUrl,
-      media: [],
+      media: (reply.attachments || []).map((a) => ({
+        url: a.sourceUrl,
+        kind: a.kind,
+      })),
       likeCount: reply.engagement.likes,
       replyCount: reply.engagement.replies,
       repostCount: reply.engagement.reposts,
@@ -1362,18 +1412,110 @@ export class StudioService {
         )
           throw new BadRequestException('Invalid extraction scope');
         s.scope = body.scope || s.scope || 'TARGET_ONLY';
+        if (!Array.isArray(body.urls) || !body.urls.length)
+          throw new BadRequestException(
+            'Enter at least one HTTPS Threads permalink or /share/ link',
+          );
+        const rawEntries = body.urls
+          .map((u: unknown) => String(u ?? '').trim())
+          .filter(Boolean);
+        if (!rawEntries.length)
+          throw new BadRequestException(
+            'Enter at least one HTTPS Threads permalink or /share/ link',
+          );
+        const seenValid = new Set<string>();
+        const urls: string[] = [];
+        const malformedEntries: string[] = [];
+        let duplicateCount = 0;
+        for (const rawEntry of rawEntries) {
+          try {
+            const normalized = threadsUrl(rawEntry);
+            if (seenValid.has(normalized)) {
+              duplicateCount++;
+            } else {
+              seenValid.add(normalized);
+              urls.push(normalized);
+            }
+          } catch {
+            malformedEntries.push(rawEntry);
+          }
+        }
         if (
-          !Array.isArray(body.urls) ||
-          !body.urls.length ||
-          body.urls.length > 5
+          !urls.length &&
+          malformedEntries.length === 1 &&
+          body.allowPartialBatch !== true
         )
-          throw new BadRequestException('Enter 1–5 Threads URLs');
-        const urls = [...new Set<string>(body.urls.map(threadsUrl))];
+          throw new BadRequestException(
+            'Enter an HTTPS Threads permalink or /share/ link.',
+          );
         const start = Date.now();
-        s.errors = [];
+        const resumeOnly = body.resumeOnly === true;
+        if (!resumeOnly) s.errors = [];
+        else
+          s.errors = (s.errors || []).filter(
+            (err) => !urls.some((u) => err.startsWith(u + ':') || err.includes(' ' + u + ':')),
+          );
+        // Close any idle Kokoro worker before launching browser extraction in batches.
+        this.voice.close();
+        for (const bad of malformedEntries) {
+          const retrievedAt = new Date().toISOString();
+          const badAttempt = {
+            originalUrl: bad,
+            resolvedUrl: null,
+            canonicalUrl: null,
+            matchedTargetId: null,
+            matchMethod: 'UNVERIFIED' as const,
+            contextCandidates: [],
+            browserNavigations: 0,
+            domCandidates: 0,
+            status: 'ERROR' as const,
+            elapsedMs: 0,
+            retrievedAt,
+            redirects: [],
+            records: [],
+            diagnostics: [
+              {
+                stage: 'validation',
+                code: 'MALFORMED_THREADS_URL',
+                message:
+                  'Invalid HTTPS Threads permalink or /share/ link; skipped in batch',
+              },
+            ],
+          };
+          s.attempts = [
+            ...(s.attempts || []).filter((x) => x.originalUrl !== bad),
+            badAttempt,
+          ];
+          s.errors.push(
+            `${bad}: Invalid HTTPS Threads permalink or /share/ link; skipped in batch`,
+          );
+        }
+        let processedCount = 0,
+          succeededCount = 0,
+          failedCount = malformedEntries.length,
+          skippedReadyCount = 0;
         for (const url of urls) {
+          const priorAttempt = (s.attempts || []).find(
+            (a) => a.originalUrl === url || a.canonicalUrl === url,
+          );
+          const alreadyImported =
+            priorAttempt &&
+            priorAttempt.status !== 'ERROR' &&
+            !!priorAttempt.matchedTargetId &&
+            s.items.some(
+              (i) =>
+                i.sourceUrl === (priorAttempt.canonicalUrl || url) ||
+                canonicalPost(i.sourceUrl)?.url ===
+                  canonicalPost(priorAttempt.canonicalUrl || url)?.url,
+            );
+          if (resumeOnly && alreadyImported) {
+            skippedReadyCount++;
+            succeededCount++;
+            continue;
+          }
+          processedCount++;
           await this.tick(
-            'Threads extraction: resolving exact target',
+            `Threads batch extraction (${processedCount}/${urls.length}): resolving exact target`,
             urls.indexOf(url),
             urls.length,
           );
@@ -1384,6 +1526,7 @@ export class StudioService {
               attempt,
             ];
             if (attempt.records.length && attempt.matchedTargetId) {
+              succeededCount++;
               const canonical =
                 attempt.canonicalUrl || attempt.resolvedUrl || url;
               if (
@@ -1425,10 +1568,15 @@ export class StudioService {
                   if (index > 0)
                     item.contextAssessment = classifyContext(raw, canonical);
                   item.metadata = structuredClone(raw);
+                  const cleanAvatar =
+                    raw.avatar && !isPlaceholderAvatarUrl(raw.avatar)
+                      ? raw.avatar
+                      : null;
+                  item.metadata.avatar = cleanAvatar;
                   item.author = {
                     displayName: raw.author,
                     ...(raw.handle ? { handle: raw.handle } : {}),
-                    ...(raw.avatar ? { avatarUrl: raw.avatar } : {}),
+                    ...(cleanAvatar ? { avatarUrl: cleanAvatar } : {}),
                   };
                   item.mediaReferences = raw.media.map((m) => m.url);
                   const previous = s.archivedItems?.find(
@@ -1448,6 +1596,8 @@ export class StudioService {
                   }
                 });
               }
+            } else {
+              failedCount++;
             }
             if (attempt.status === 'ERROR')
               s.errors.push(
@@ -1456,6 +1606,7 @@ export class StudioService {
                   .map((d) => url + ': ' + d.message),
               );
           } catch (e) {
+            failedCount++;
             s.errors.push(
               'Extraction failed for ' +
                 url +
@@ -1465,6 +1616,19 @@ export class StudioService {
             );
           }
         }
+        s.urlQueue = {
+          submittedCount: rawEntries.length,
+          uniqueValidCount: urls.length,
+          duplicateCount,
+          malformedCount: malformedEntries.length,
+          processedCount,
+          succeededCount,
+          failedCount,
+          skippedReadyCount,
+          concurrency: 1,
+          updatedAt: new Date().toISOString(),
+        };
+        await this.ensureCachedAvatars(s);
         s.elapsedMs = Date.now() - start;
         s.sourceRun = {
           runId: randomUUID(),
@@ -1678,6 +1842,15 @@ export class StudioService {
                   author: {
                     displayName: metadata.author,
                     ...(metadata.handle ? { handle: metadata.handle } : {}),
+                    ...((metadata.avatar ?? original.author.avatarUrl) &&
+                    !isPlaceholderAvatarUrl(
+                      metadata.avatar ?? original.author.avatarUrl,
+                    )
+                      ? {
+                          avatarUrl: (metadata.avatar ??
+                            original.author.avatarUrl)!,
+                        }
+                      : {}),
                   },
                   mediaReferences: metadata.media.map((m) => m.url),
                 }
@@ -1866,6 +2039,22 @@ export class StudioService {
         }
         a.status = 'APPROVED';
         a.approvedAt = new Date().toISOString();
+      } else if (body.action === 'FLAG_REGENERATE') {
+        item.regenerateFlagged = body.flagged !== false;
+        item.regenerateFlagReason =
+          typeof body.reason === 'string' && body.reason.trim()
+            ? body.reason.trim()
+            : null;
+        if (body.regenerateNow === true && item.regenerateFlagged) {
+          await this.generateItem(
+            s,
+            item,
+            true,
+            undefined,
+            body.draft === true,
+            execution,
+          );
+        }
       } else if (body.action === 'GENERATE') {
         if (body.voice !== undefined || body.speed !== undefined)
           this.applySettings(
@@ -2035,6 +2224,28 @@ export class StudioService {
         for (const a of s.voiceAssets || [])
           if (a.itemId === item.id) a.status = 'STALE';
         const assetId = randomUUID();
+        let wavWaveform: ReturnType<typeof analyzeWavBuffer> | null = null;
+        try {
+          const absWav = path.resolve(resolveStudioDataRoot(), result.filePath);
+          wavWaveform = analyzeWavBuffer(await fs.readFile(absWav));
+        } catch {}
+        const chunkMeta = Array.isArray(result.synthesisMetrics?.chunkSamples)
+          ? (result.synthesisMetrics!.chunkSamples as any[])
+          : undefined;
+        const ttsDiagnostics = buildSceneTtsDiagnostic({
+          itemId: item.id,
+          originalText: item.originalText,
+          displayText: item.displayText,
+          spokenText: item.spokenText,
+          ttsInputText: normalizedInput.spokenText,
+          normalizationVersion,
+          ttsChanges: normalizedInput.changes,
+          chunkSamples: chunkMeta,
+          waveform: wavWaveform,
+          wavDurationMs: result.durationMs,
+        });
+        item.regenerateFlagged = false;
+        item.regenerateFlagReason = null;
         s.voiceAssets = [
           ...(s.voiceAssets || []),
           {
@@ -2065,6 +2276,7 @@ export class StudioService {
             baseCacheHit: result.baseCacheHit,
             synthesisPerformed: result.synthesisPerformed,
             synthesisMetrics: result.synthesisMetrics,
+            ttsDiagnostics,
           },
         ];
         job.assetId = assetId;
@@ -2482,13 +2694,217 @@ export class StudioService {
     await this.exclusive(() => this.persist(created));
     const urls = (old.attempts || []).map((a) => a.originalUrl);
     if (!urls.length) return created;
-    if (urls.length > 5)
-      throw new BadRequestException('Copy supports up to five input URLs');
     return this.mutate(
       created.id,
       { revision: created.revision, urls, scope: 'TARGET_ONLY' },
       true,
     );
+  }
+  async listSavedCollections() {
+    const dir = path.join(this.root, 'data-engine', 'thread-collections');
+    const files = await fs.readdir(dir).catch(() => [] as string[]);
+    const out: Array<{
+      id: string;
+      rootUrl: string;
+      authorHandle: string;
+      textPreview: string;
+      verifiedReplyCount: number;
+      observedCardCount: number;
+      collectedAt: string;
+    }> = [];
+    for (const f of files) {
+      if (!/^[a-f0-9]{64}\.json$/.test(f)) continue;
+      try {
+        const parsed = JSON.parse(await fs.readFile(path.join(dir, f), 'utf8'));
+        const raw: ThreadCollection = parsed?.collection ?? parsed;
+        if (!raw?.root?.url) continue;
+        out.push({
+          id: parsed?.id || f.slice(0, -5),
+          rootUrl: raw.root.url,
+          authorHandle: raw.root.author.handle,
+          textPreview: (raw.root.originalText || '').slice(0, 140),
+          verifiedReplyCount: Array.isArray(raw.replies) ? raw.replies.length : 0,
+          observedCardCount: Array.isArray(raw.sourceCapture?.contextCandidates)
+            ? raw.sourceCapture!.contextCandidates!.length
+            : 0,
+          collectedAt: raw.root.provenance?.observedAt || '',
+        });
+      } catch {}
+    }
+    return out.sort((a, b) => b.collectedAt.localeCompare(a.collectedAt));
+  }
+  async importCollectionItems(
+    id: string,
+    body: {
+      revision: number;
+      collectionId: string;
+      replyIds?: string[];
+      observedUrls?: string[];
+      includeAllVerified?: boolean;
+    },
+  ) {
+    return this.exclusive(async () => {
+      const s = await this.load(id);
+      if (s.revision !== body?.revision)
+        throw new ConflictException(
+          'Session changed. Reopen before importing collection items.',
+        );
+      if (
+        typeof body?.collectionId !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(body.collectionId)
+      )
+        throw new BadRequestException('Invalid ThreadCollection ID');
+      const file = path.join(
+        this.root,
+        'data-engine',
+        'thread-collections',
+        body.collectionId + '.json',
+      );
+      let collection: ThreadCollection;
+      try {
+        const parsed = JSON.parse(await fs.readFile(file, 'utf8'));
+        collection = parsed?.collection ?? parsed;
+      } catch {
+        throw new BadRequestException('ThreadCollection not found on disk');
+      }
+      const root = collection.root;
+      const source = collection.sourceCapture?.records?.[0];
+      const rootRaw: any = source ?? {
+        url: root.url,
+        text: root.originalText,
+        bodyText: root.originalText,
+        author: root.author.name ?? root.author.handle,
+        handle: root.author.handle,
+        avatar:
+          root.author.avatarUrl && !isPlaceholderAvatarUrl(root.author.avatarUrl)
+            ? root.author.avatarUrl
+            : null,
+        createdAt: root.publishedAt,
+        type: root.itemType ?? 'POST',
+        parentReference: null,
+        media: (root.attachments || []).map((a) => ({
+          url: a.sourceUrl,
+          kind: a.kind,
+        })),
+        likeCount: root.engagement.likes,
+        replyCount: root.engagement.replies,
+        repostCount: root.engagement.reposts,
+        shareCount: root.engagement.shares,
+        provenance: {
+          text: root.provenance.method,
+          type: 'catalog type preserved',
+        },
+      };
+      const wantReplies =
+        body.includeAllVerified === true
+          ? new Set(collection.replies.map((r) => r.id))
+          : new Set(Array.isArray(body.replyIds) ? body.replyIds : collection.replies.map((r) => r.id));
+      const wantObserved = new Set(
+        Array.isArray(body.observedUrls) ? body.observedUrls : [],
+      );
+      const observed = observedContextViews(collection);
+      const selectedRecords: any[] = [];
+      for (const reply of collection.replies) {
+        if (!wantReplies.has(reply.id)) continue;
+        selectedRecords.push(this.replyRecord(reply, collection));
+      }
+      for (const obs of observed) {
+        const rawUrl = String(obs.raw.url || '');
+        const canonical = canonicalPost(rawUrl)?.url ?? rawUrl;
+        if (!wantObserved.has(canonical) && !wantObserved.has(rawUrl))
+          continue;
+        if (
+          !selectedRecords.some(
+            (r) => canonicalPost(r.url)?.url === canonical,
+          )
+        )
+          selectedRecords.push(obs.raw);
+      }
+      const existingUrls = new Set(
+        s.items.map((i) => canonicalPost(i.sourceUrl)?.url ?? i.sourceUrl),
+      );
+      const rootCanonical = canonicalPost(root.url)?.url ?? root.url;
+      const newComments = selectedRecords.filter(
+        (r) => !existingUrls.has(canonicalPost(r.url)?.url ?? r.url),
+      );
+      const firstIndex = s.items.length;
+      if (!existingUrls.has(rootCanonical)) {
+        this.append(s, rootCanonical, rootRaw, newComments);
+      } else if (newComments.length) {
+        const target =
+          s.items.find(
+            (i) =>
+              (canonicalPost(i.sourceUrl)?.url ?? i.sourceUrl) === rootCanonical,
+          ) ?? s.items[0];
+        const post =
+          s.project.posts.find(
+            (p) => p.id === target?.sourceReference.entityId,
+          ) ?? s.project.posts[0];
+        for (const raw of newComments) {
+          const itemIdx = s.items.length;
+          this.append(s, canonicalPost(raw.url)?.url ?? rootCanonical, raw, []);
+          const item = s.items[itemIdx];
+          if (post && item) {
+            s.project.posts = s.project.posts.filter((p) => p.id !== item.id);
+            item.sourceReference = { entityType: 'COMMENT', entityId: item.id };
+            s.project.comments.push({
+              id: item.id,
+              sourceId: item.sourceId!,
+              postId: post.id,
+              author: item.author,
+              text: raw.text,
+              mediaAssetIds: [],
+              relationshipStatus: 'OBSERVED_ON_TARGET_PAGE',
+              observedTargetUrl: rootCanonical,
+            });
+            post.commentIds.push(item.id);
+          }
+        }
+      }
+      const rawSequence = !existingUrls.has(rootCanonical)
+        ? [rootRaw, ...newComments]
+        : newComments;
+      s.items.slice(firstIndex).forEach((item, idx) => {
+        const raw = rawSequence[idx];
+        if (!raw) return;
+        const own = canonicalPost(raw.url);
+        const isRootItem = !existingUrls.has(rootCanonical) && idx === 0;
+        item.inclusion = isRootItem ? 'TARGET' : 'EXPLICIT_CONTEXT';
+        item.sourceUrl = own?.url ?? rootCanonical;
+        const cleanAvatar =
+          raw.avatar && !isPlaceholderAvatarUrl(raw.avatar) ? raw.avatar : null;
+        raw.avatar = cleanAvatar;
+        item.rawExtraction = structuredClone(raw);
+        item.metadata = structuredClone(raw);
+        item.originalText = raw.text;
+        item.displayText = cleanSourceProjection(raw).text;
+        item.spokenText = cleanSourceProjection(raw).text;
+        item.author = {
+          displayName: raw.author,
+          ...(raw.handle ? { handle: raw.handle } : {}),
+          ...(cleanAvatar ? { avatarUrl: cleanAvatar } : {}),
+        };
+        item.mediaReferences = (raw.media || []).map((m: any) => m.url);
+        item.selected = true;
+        if (!isRootItem) {
+          const verified = collection.replies.find((r) => r.id === own?.id),
+            membership = collection.membershipEvidence?.find(
+              (ev) => ev.subjectId === own?.id,
+            );
+          item.observationEvidence = {
+            level: verified ? 'PARENT_VERIFIED' : 'OBSERVED_ON_TARGET_PAGE',
+            targetUrl: rootCanonical,
+            observedAt: root.provenance.observedAt,
+            parentId: verified?.parentId ?? null,
+            membership: membership?.status ?? 'UNKNOWN',
+            membershipEvidenceType: membership?.evidenceType ?? null,
+          };
+        }
+      });
+      s.status = 'READY';
+      await this.ensureCachedAvatars(s);
+      return this.persist(s);
+    });
   }
   private append(s: StudioSession, url: string, post: any, comments: any[]) {
     const sourceId = randomUUID(),

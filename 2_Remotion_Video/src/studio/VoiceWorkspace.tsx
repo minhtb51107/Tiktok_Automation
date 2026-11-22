@@ -7,6 +7,7 @@ import type {
 import { StageReportPanel } from "./StageReportPanel";
 import {
   VOICE_SPEED,
+  VOICE_SPEED_PRESETS,
   spokenAmbiguities,
 } from "../../../1_nest_backend/src/studio/voice-settings";
 function VoiceScene({
@@ -137,6 +138,18 @@ function VoiceScene({
             value={speed}
             onChange={(e) => setSpeed(Number(e.target.value))}
           />
+          <span className="actions" style={{ marginTop: 4 }}>
+            {VOICE_SPEED_PRESETS.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                disabled={locked || busy}
+                onClick={() => setSpeed(preset)}
+              >
+                {preset.toFixed(1)}×
+              </button>
+            ))}
+          </span>
         </label>
       </div>
       <div className="actions">
@@ -170,6 +183,21 @@ function VoiceScene({
         >
           Regenerate
         </button>
+        <button
+          type="button"
+          disabled={locked || busy}
+          onClick={() =>
+            void act(item.id, {
+              action: "FLAG_REGENERATE",
+              flagged: !item.regenerateFlagged,
+              reason: "Manual QA flag for single-scene regeneration",
+            })
+          }
+        >
+          {item.regenerateFlagged
+            ? "🚩 Flagged for Regen (Clear)"
+            : "Flag Scene for Regen"}
+        </button>
       </div>
       {blockReason && !generating && <small>Why disabled: {blockReason}</small>}
       {generating && (
@@ -186,6 +214,32 @@ function VoiceScene({
       {asset && (
         <section>
           <audio controls preload="none" src={asset.uri} /><details><summary>Actual TTS input / number reading</summary><p>{asset.ttsInputText||asset.spokenText}</p><small>{asset.numberReadingVersion||"Legacy input"} · {asset.ttsInputHash?.slice(0,12)}</small></details>
+          {asset.ttsDiagnostics && (
+            <details>
+              <summary>
+                TTS QA & Alignment Diagnostics · {asset.ttsDiagnostics.status} ·{" "}
+                {asset.ttsDiagnostics.chunks.length} chunk(s)
+              </summary>
+              <p>
+                Transport text: <code>{asset.ttsDiagnostics.ttsTransportText}</code>
+              </p>
+              {asset.ttsDiagnostics.waveform && (
+                <small>
+                  Speech ratio:{" "}
+                  {(asset.ttsDiagnostics.waveform.speechRatio * 100).toFixed(1)}% ·
+                  Leading silence: {asset.ttsDiagnostics.waveform.leadingSilenceMs}ms ·
+                  Trailing silence: {asset.ttsDiagnostics.waveform.trailingSilenceMs}ms ·
+                  Max internal silence:{" "}
+                  {asset.ttsDiagnostics.waveform.maxInternalSilenceMs}ms
+                </small>
+              )}
+              {asset.ttsDiagnostics.warnings.map((w, idx) => (
+                <p key={idx} className="warning">
+                  {w}
+                </p>
+              ))}
+            </details>
+          )}
           <p>
             {asset.purpose === "DRAFT" ? "DRAFT · chưa duyệt nội dung/audio · " : ""}FFprobe duration: {(asset.durationMs / 1000).toFixed(3)}s ·{" "}
             {asset.voice} · {asset.speed}× ·{" "}

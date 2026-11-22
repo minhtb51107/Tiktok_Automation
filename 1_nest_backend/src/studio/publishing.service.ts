@@ -11,6 +11,10 @@ import { TokenVault } from './token-vault';
 import { TikTokProvider } from './tiktok-provider';
 import { replaceFile } from './atomic-file';
 import {
+  TiktokUploadService,
+  type BrowserUploadQueueItem,
+} from '../modules/core/uploader/tiktok-upload.service';
+import {
   renderBackground,
   snapshotHash,
   renderValidation,
@@ -147,6 +151,7 @@ export class PublishingService {
   private liveAccounts = false; // Recovery gate: no TikTok OAuth/account network activity.
   private provider = new TikTokProvider();
   private vault = new TokenVault();
+  private uploader = new TiktokUploadService();
   private creators = new Map<string, CreatorInfo>();
   private lock: Promise<unknown> = Promise.resolve();
   constructor(private studio: StudioService) {}
@@ -439,9 +444,167 @@ export class PublishingService {
         'jobs/' + sessionId + '.json',
         [],
       ),
+      uploadQueue: await this.read<BrowserUploadQueueItem[]>(
+        'upload-queue/' + sessionId + '.json',
+        [],
+      ),
       rights: s.mediaRights || {},
       requiredRights: requiredRights(s, p),
     };
+  }
+  async listUploadQueue(sessionId: string) {
+    await this.studio.load(uuid(sessionId));
+    return this.read<BrowserUploadQueueItem[]>(
+      'upload-queue/' + sessionId + '.json',
+      [],
+    );
+  }
+  async enqueueBrowserUpload(
+    sessionId: string,
+    body: {
+      renderJobId: string;
+      accountId?: string;
+      accountLabel?: string;
+      profileDirName?: string;
+      caption?: string;
+      hashtags?: string[];
+      mentions?: string[];
+      privacy?: string;
+      expectedSha256?: string;
+    },
+  ) {
+    return this.serial(async () => {
+      const s = await this.studio.load(uuid(sessionId));
+      const renderJobId = uuid(body?.renderJobId || '');
+      const manifest = await this.studio.renders.load(sessionId, renderJobId);
+      if (manifest.status !== 'COMPLETED')
+        throw new BadRequestException(
+          'UPLOAD_REQUIRES_COMPLETED_RENDER: selected render job is not COMPLETED',
+        );
+      const videoPath = await this.studio.renders.output(
+        sessionId,
+        renderJobId,
+      );
+      const caption =
+        typeof body.caption === 'string'
+          ? body.caption.trim()
+          : s.project.publishing?.caption || s.title;
+      const hashtags = Array.isArray(body.hashtags)
+        ? body.hashtags.map((h) => String(h).replace(/^#/, '').trim()).filter(Boolean)
+        : s.project.publishing?.hashtags || [];
+      const mentions = Array.isArray(body.mentions)
+        ? body.mentions.map((m) => String(m).replace(/^@/, '').trim()).filter(Boolean)
+        : [];
+      const formattedCaption = postingText({
+        revision: s.revision,
+        accountId: body.accountId || 'browser-profile-serious',
+        execution: 'MOCK',
+        mode: 'DIRECT_POST',
+        renderJobId,
+        caption,
+        hashtags,
+        mentions,
+        coverMs: 0,
+        privacy: body.privacy || 'SELF_ONLY',
+        allowComment: true,
+        allowDuet: false,
+        allowStitch: false,
+        ownBrand: false,
+        paidPartnership: false,
+        aiDisclosure: 'YES',
+        musicConsent: true,
+        contentConsent: true,
+      });
+      const accounts = await this.accounts();
+      const matchedAccount = accounts.find((a) => a.id === body.accountId);
+      const accountId =
+        matchedAccount?.id || body.accountId || 'browser-profile-serious';
+      const accountLabel =
+        matchedAccount?.nickname ||
+        body.accountLabel ||
+        'SERIOUS_CREATOR_PROFILE';
+      const queue = await this.read<BrowserUploadQueueItem[]>(
+        'upload-queue/' + sessionId + '.json',
+        [],
+      );
+      const item = await this.uploader.createQueueItem({
+        sessionId,
+        projectId: s.project.id,
+        renderJobId,
+        renderMode: manifest.mode,
+        videoPath,
+        expectedSha256: body.expectedSha256,
+        durationSeconds: manifest.expectedDurationSeconds,
+        width: manifest.width,
+        height: manifest.height,
+        accountId,
+        accountLabel,
+        profileDirName: body.profileDirName,
+        caption,
+        hashtags,
+        mentions,
+        privacy: body.privacy || 'SELF_ONLY',
+        formattedCaption,
+      });
+      queue.unshift(item);
+      await this.write('upload-queue/' + sessionId + '.json', queue);
+      return item;
+    });
+  }
+  async prepareBrowserUpload(
+    sessionId: string,
+    uploadId: string,
+    body: { launchBrowser?: boolean } = {},
+  ) {
+    return this.serial(async () => {
+      await this.studio.load(uuid(sessionId));
+      const queue = await this.read<BrowserUploadQueueItem[]>(
+        'upload-queue/' + sessionId + '.json',
+        [],
+      );
+      const item = queue.find((q) => q.id === uuid(uploadId));
+      if (!item) throw new BadRequestException('Unknown browser upload job');
+      await this.uploader.prepareUpload(item, {
+        launchBrowser: body?.launchBrowser === true,
+      });
+      await this.write('upload-queue/' + sessionId + '.json', queue);
+      return item;
+    });
+  }
+  async confirmBrowserUpload(
+    sessionId: string,
+    uploadId: string,
+    body: {
+      confirmationToken: string;
+      action?: 'VERIFY_GATE_ONLY' | 'MARK_PUBLISHED' | 'SIMULATE_AMBIGUOUS';
+    },
+  ) {
+    return this.serial(async () => {
+      await this.studio.load(uuid(sessionId));
+      const queue = await this.read<BrowserUploadQueueItem[]>(
+        'upload-queue/' + sessionId + '.json',
+        [],
+      );
+      const item = queue.find((q) => q.id === uuid(uploadId));
+      if (!item) throw new BadRequestException('Unknown browser upload job');
+      await this.uploader.confirmPublish(item, body);
+      await this.write('upload-queue/' + sessionId + '.json', queue);
+      return item;
+    });
+  }
+  async retryBrowserUpload(sessionId: string, uploadId: string) {
+    return this.serial(async () => {
+      await this.studio.load(uuid(sessionId));
+      const queue = await this.read<BrowserUploadQueueItem[]>(
+        'upload-queue/' + sessionId + '.json',
+        [],
+      );
+      const item = queue.find((q) => q.id === uuid(uploadId));
+      if (!item) throw new BadRequestException('Unknown browser upload job');
+      this.uploader.retryQueueItem(item);
+      await this.write('upload-queue/' + sessionId + '.json', queue);
+      return item;
+    });
   }
   async saveDraft(sessionId: string, d: PublishingDraft) {
     validateDraft(d);

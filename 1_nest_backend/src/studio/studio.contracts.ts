@@ -55,6 +55,8 @@ export interface StudioItem {
   };
   spokenApproval?: import('./voice.types').SpokenApproval;
   voiceSettings?: import('./voice.types').VoiceSettings;
+  regenerateFlagged?: boolean;
+  regenerateFlagReason?: string | null;
   metadataObservations?: {
     observedAt: string;
     record: import('./public-types').PublicRecord;
@@ -114,6 +116,18 @@ export interface StudioSession {
   };
   reports?: import('./stage-report').StageReport[];
   attempts?: import('./public-types').SourceAttempt[];
+  urlQueue?: {
+    submittedCount: number;
+    uniqueValidCount: number;
+    duplicateCount: number;
+    malformedCount: number;
+    processedCount: number;
+    succeededCount: number;
+    failedCount: number;
+    skippedReadyCount: number;
+    concurrency: 1;
+    updatedAt: string;
+  };
   id: string;
   title: string;
   revision: number;

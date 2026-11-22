@@ -52,10 +52,26 @@ export function UrlRows({
   );
   const [paste, setPaste] = useState(""),
     [message, setMessage] = useState(""),
-    [active, setActive] = useState<string | null>(null);
+    [active, setActive] = useState<string | null>(null),
+    [filterMode, setFilterMode] = useState<"ALL" | "FAILED" | "READY">("ALL"),
+    [page, setPage] = useState(0),
+    [showAllRows, setShowAllRows] = useState(false),
+    [collections, setCollections] = useState<
+      Array<{
+        id: string;
+        rootUrl: string;
+        authorHandle: string;
+        textPreview: string;
+        verifiedReplyCount: number;
+        observedCardCount: number;
+      }>
+    >([]),
+    [selectedCollectionId, setSelectedCollectionId] = useState(""),
+    [collectionsLoaded, setCollectionsLoaded] = useState(false);
   const [scope, setScope] = useState<"TARGET_ONLY" | "WITH_CONTEXT">(
     session.scope || "TARGET_ONLY",
   );
+  const PAGE_SIZE = 15;
   const unique = (v: string) => {
     try {
       const u = new URL(v);
@@ -68,31 +84,116 @@ export function UrlRows({
   };
   const values = rows.map((x) => x.trim()).filter(Boolean);
   const add = (input: string) => {
-    const merged = [
-      ...rows.filter((x) => x.trim()),
-      ...input.split(/\s+/).filter(Boolean),
-    ];
+    const incoming = input
+      .split(/[\r\n\s,;]+/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const merged = [...rows.filter((x) => x.trim()), ...incoming];
     const seen = new Set<string>();
+    let duplicates = 0;
     const next = merged.filter((x) => {
       const key = unique(x);
-      if (seen.has(key)) return false;
+      if (seen.has(key)) {
+        duplicates++;
+        return false;
+      }
       seen.add(key);
       return true;
     });
-    if (next.length > 5) {
-      setMessage("Maximum 5 URLs. Remove a row before adding more.");
-      return;
-    }
     setRows(next.length ? next : [""]);
     setPaste("");
-    setMessage("Duplicate URLs removed.");
+    setMessage(
+      duplicates > 0
+        ? `Added ${next.length} unique URL(s) (${duplicates} duplicate URL(s) deduplicated).`
+        : `Queue ready: ${next.length} unique URL(s).`,
+    );
+  };
+  const moveRow = (index: number, delta: -1 | 1) => {
+    const target = index + delta;
+    if (target < 0 || target >= rows.length) return;
+    const next = [...rows];
+    const [picked] = next.splice(index, 1);
+    next.splice(target, 0, picked);
+    setRows(next);
   };
   const fetchRows = async (urls: string[]) => {
+    const clean = urls.map((u) => u.trim()).filter(Boolean);
+    if (!clean.length) return;
     try {
-      for (const url of urls) {
-        setActive(url);
-        await onFetch([url], scope);
+      setActive(clean.length === 1 ? clean[0] : `BATCH (${clean.length})`);
+      await onFetch(clean, scope);
+    } finally {
+      setActive(null);
+    }
+  };
+  const failedOrPendingUrls = values.filter((url) => {
+    const attempt = session.attempts?.find(
+      (a) => unique(a.originalUrl) === unique(url),
+    );
+    return !attempt || attempt.status === "ERROR";
+  });
+  const indexedRows = rows
+    .map((url, index) => ({
+      url,
+      index,
+      attempt: session.attempts?.find(
+        (a) => unique(a.originalUrl) === unique(url),
+      ),
+    }))
+    .filter((entry) => {
+      if (filterMode === "FAILED")
+        return !entry.attempt || entry.attempt.status === "ERROR";
+      if (filterMode === "READY")
+        return (
+          !!entry.attempt &&
+          (entry.attempt.status === "SUCCESS" ||
+            entry.attempt.status === "PARTIAL")
+        );
+      return true;
+    });
+  const totalPages = Math.max(1, Math.ceil(indexedRows.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const visibleRows = showAllRows
+    ? indexedRows
+    : indexedRows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+  const loadSavedCollections = async () => {
+    try {
+      const res = await fetch("/api/studio/collections");
+      if (!res.ok) return;
+      const list = await res.json();
+      if (Array.isArray(list)) {
+        setCollections(list);
+        if (list[0]?.id && !selectedCollectionId)
+          setSelectedCollectionId(list[0].id);
       }
+      setCollectionsLoaded(true);
+    } catch {}
+  };
+  const importSelectedCollection = async () => {
+    if (!selectedCollectionId) return;
+    try {
+      setActive("COLLECTION_IMPORT");
+      const res = await fetch(
+        `/api/studio/sessions/${session.id}/import-collection`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            revision: session.revision,
+            collectionId: selectedCollectionId,
+            includeAllVerified: true,
+          }),
+        },
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setMessage(err.message || "Collection import failed.");
+        return;
+      }
+      setMessage(
+        "Imported root post and verified replies directly from ThreadCollection. Reloading session…",
+      );
+      window.location.reload();
     } finally {
       setActive(null);
     }
@@ -113,13 +214,71 @@ export function UrlRows({
         </select>
       </label>
       <p>
-        Paste a Threads Share link or permalink. Each row is a separate source.
-        {' '}Một permalink: chọn WITH_CONTEXT để lấy bài cùng các thẻ quan sát; bình luận chưa xác minh chỉ vào Script DRAFT khi bạn chọn.
+        Paste a Threads Share link or permalink (unlimited queue, sequential bounded concurrency = 1).
+        {" "}Một permalink: chọn WITH_CONTEXT để lấy bài cùng các thẻ quan sát; hoặc nhập trực tiếp từ ThreadCollection đã thu thập.
       </p>
-      {rows.map((url, n) => {
-        const attempt = session.attempts?.find(
-          (a) => unique(a.originalUrl) === unique(url),
-        );
+      {session.urlQueue && (
+        <p className="media" data-testid="url-queue-summary">
+          Queue summary: {session.urlQueue.uniqueValidCount} unique valid ·{" "}
+          {session.urlQueue.succeededCount} succeeded ·{" "}
+          {session.urlQueue.failedCount} failed ·{" "}
+          {session.urlQueue.duplicateCount} duplicate(s) removed ·{" "}
+          {session.urlQueue.malformedCount} malformed · concurrency ={" "}
+          {session.urlQueue.concurrency}
+        </p>
+      )}
+      {rows.length > 6 && (
+        <div className="actions" style={{ marginBottom: 8 }}>
+          <label>
+            Filter queue
+            <select
+              value={filterMode}
+              onChange={(e) => {
+                setFilterMode(e.target.value as typeof filterMode);
+                setPage(0);
+              }}
+            >
+              <option value="ALL">All ({rows.length})</option>
+              <option value="FAILED">
+                Pending / Failed ({failedOrPendingUrls.length})
+              </option>
+              <option value="READY">
+                Fetched ({rows.length - failedOrPendingUrls.length})
+              </option>
+            </select>
+          </label>
+          {indexedRows.length > PAGE_SIZE && (
+            <>
+              <button
+                type="button"
+                disabled={showAllRows || safePage <= 0}
+                onClick={() => setPage(Math.max(0, safePage - 1))}
+              >
+                Prev Page
+              </button>
+              <span className="badge">
+                {showAllRows
+                  ? `Showing all ${indexedRows.length}`
+                  : `Page ${safePage + 1}/${totalPages} (${indexedRows.length} rows)`}
+              </span>
+              <button
+                type="button"
+                disabled={showAllRows || safePage >= totalPages - 1}
+                onClick={() => setPage(Math.min(totalPages - 1, safePage + 1))}
+              >
+                Next Page
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAllRows((prev) => !prev)}
+              >
+                {showAllRows ? "Paginate (15/page)" : "Show All"}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {visibleRows.map(({ url, index: n, attempt }) => {
         return (
           <div className="url-entry" key={n}>
             <label>
@@ -147,7 +306,7 @@ export function UrlRows({
             </label>
             <div className="actions">
               <span className="badge">
-                {active === url
+                {active === url || (active?.startsWith("BATCH") && !attempt)
                   ? "Fetching…"
                   : attempt?.status || "Not fetched"}
               </span>
@@ -158,8 +317,27 @@ export function UrlRows({
                 {attempt ? "Retry URL" : "Fetch URL"}
               </button>
               <button
+                type="button"
+                title="Move URL up"
+                disabled={disabled || !!active || n === 0}
+                onClick={() => moveRow(n, -1)}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                title="Move URL down"
+                disabled={disabled || !!active || n >= rows.length - 1}
+                onClick={() => moveRow(n, 1)}
+              >
+                ↓
+              </button>
+              <button
                 disabled={disabled || !!active}
-                onClick={() => setRows(rows.filter((_, i) => i !== n))}
+                onClick={() => {
+                  const next = rows.filter((_, i) => i !== n);
+                  setRows(next.length ? next : [""]);
+                }}
               >
                 Remove
               </button>
@@ -189,7 +367,7 @@ export function UrlRows({
       })}
       <div className="actions">
         <button
-          disabled={disabled || rows.length >= 5}
+          disabled={disabled}
           onClick={() => setRows([...rows, ""])}
         >
           ＋ Add URL
@@ -199,18 +377,71 @@ export function UrlRows({
           disabled={disabled || !!active || !values.length}
           onClick={() => void fetchRows(values)}
         >
-          Fetch Content ({values.length}/5)
+          Fetch Content ({values.length} URL{values.length === 1 ? "" : "s"})
         </button>
+        {failedOrPendingUrls.length > 0 &&
+          failedOrPendingUrls.length < values.length && (
+            <button
+              type="button"
+              disabled={disabled || !!active}
+              onClick={() => void fetchRows(failedOrPendingUrls)}
+            >
+              Resume Failed/Pending ({failedOrPendingUrls.length})
+            </button>
+          )}
       </div>
       <details>
-        <summary>Paste multiple URLs</summary>
+        <summary>Paste multiple URLs (bulk import & deduplicate)</summary>
         <textarea
           aria-label="Paste multiple URLs"
           value={paste}
           onChange={(e) => setPaste(e.target.value)}
-          placeholder="One URL per line"
+          placeholder="One or more Threads URLs (newline, space, or comma separated — no 5-URL limit)"
         />
         <button onClick={() => add(paste)}>Add pasted URLs</button>
+      </details>
+      <details
+        onToggle={(e) => {
+          if ((e.currentTarget as HTMLDetailsElement).open && !collectionsLoaded)
+            void loadSavedCollections();
+        }}
+      >
+        <summary>
+          Import directly from collected ThreadCollection (root + verified replies)
+        </summary>
+        <div className="actions" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            disabled={disabled || !!active}
+            onClick={() => void loadSavedCollections()}
+          >
+            Refresh Saved Collections
+          </button>
+          {collections.length > 0 && (
+            <>
+              <select
+                aria-label="Select ThreadCollection"
+                value={selectedCollectionId}
+                onChange={(e) => setSelectedCollectionId(e.target.value)}
+              >
+                {collections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    @{c.authorHandle} · {c.verifiedReplyCount} verified replies ·{" "}
+                    {c.observedCardCount} observed cards · {c.textPreview.slice(0, 48)}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="primary"
+                disabled={disabled || !!active || !selectedCollectionId}
+                onClick={() => void importSelectedCollection()}
+              >
+                Import Root + Verified Replies
+              </button>
+            </>
+          )}
+        </div>
       </details>
       <small role="status">{message}</small>
     </div>

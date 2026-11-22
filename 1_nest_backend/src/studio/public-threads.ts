@@ -35,7 +35,7 @@ export function threadsUrl(value: unknown): string {
     return u.href;
   } catch {
     throw new BadRequestException(
-      'Enter an HTTPS Threads permalink or /share/ link (maximum 5 URLs).',
+      'Enter an HTTPS Threads permalink or /share/ link.',
     );
   }
 }
@@ -419,7 +419,15 @@ export async function extractPublicThreads(
               const time = node.querySelector('time');
               const imgs = [...node.querySelectorAll('img')];
               const avatar =
-                imgs.find((i) => i.width > 10 && i.width < 100)?.src || null;
+                imgs.find(
+                  (i) =>
+                    i.width > 10 &&
+                    i.width < 100 &&
+                    /^https:/i.test(i.src || '') &&
+                    !/static\.cdninstagram\.com\/rsrc\.php|\/rsrc\.php\/v\d+\//i.test(
+                      i.src || '',
+                    ),
+                )?.src || null;
               const permalink =
                 [...node.querySelectorAll('a[href]')]
                   .map((a) => a.getAttribute('href') || '')

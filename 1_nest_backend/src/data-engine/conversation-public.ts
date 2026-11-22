@@ -386,6 +386,19 @@ export function observePublicDocument() {
       })
       .map((element) => (element.textContent || '').trim())
       .filter(Boolean);
+    const avatarUrl =
+      [...card.querySelectorAll('img[src]')]
+        .filter(owns)
+        .map((image) => image as HTMLImageElement)
+        .find(
+          (image) =>
+            image.width > 10 &&
+            image.width < 100 &&
+            /^https:/i.test(image.src || '') &&
+            !/static\.cdninstagram\.com\/rsrc\.php|\/rsrc\.php\/v\d+\//i.test(
+              image.src || '',
+            ),
+        )?.src ?? null;
     const media = [
       ...[...card.querySelectorAll('img[src]')]
         .filter(owns)
@@ -431,6 +444,7 @@ export function observePublicDocument() {
       urls: [...new Set(links)],
       subjectUrl,
       authorHandle: handle?.slice(1) ?? null,
+      avatarUrl,
       controls,
       date: times.length === 1 ? times[0].getAttribute('datetime') : null,
       text: bodySpans.join('\n'),

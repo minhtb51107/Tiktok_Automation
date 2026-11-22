@@ -6,6 +6,7 @@ export const VOICE_SPEED = {
   step: 0.05,
   default: 1.2,
 } as const;
+export const VOICE_SPEED_PRESETS = [1.0, 1.1, 1.2, 1.3] as const;
 export function spokenAmbiguities(text: string,overrides:Record<string,string>={}): string[] {
   const covered=new Set(Object.keys(overrides).map(value=>value.normalize('NFC').toLocaleLowerCase('vi'))),
     normalized=text.normalize('NFC').toLocaleLowerCase('vi');

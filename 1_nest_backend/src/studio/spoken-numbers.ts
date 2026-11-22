@@ -86,7 +86,7 @@ const MONEY_UNIT: Record<string, string> = {
 const PER_UNIT =
   'tháng|ngày|năm|tuần|giờ|tiếng|đêm|người|ca|bữa|buổi|lần|cái|bạn|vé|suất|ly|cốc|phần|hộp';
 const RANGE_UNITS =
-  'thứ tiếng|ngôn ngữ|năm|tháng|ngày|tuổi|người|tuần|giờ|tiếng|phút|lần|buổi|cái|bạn|bữa|ca|quán|triệu|nghìn|tỷ|phần trăm|kg|km';
+  'thứ tiếng|ngôn ngữ|năm|tháng|ngày|tuổi|người|tuần|giờ|tiếng|phút|lần|buổi|cái|bạn|bữa|ca|quán|triệu|nghìn|tỷ|phần trăm|kg|km|lớp|tầng|bước|phần|đứa|chiếc|món|tờ|cuốn|bộ|chỗ|đợt|vòng';
 const RANGE_PREV = new Set([
   'vòng',
   'tầm',

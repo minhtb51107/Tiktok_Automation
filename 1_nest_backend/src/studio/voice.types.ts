@@ -10,6 +10,7 @@ export interface SpokenApproval {
   valid: boolean;
 }
 export interface VoiceAsset {
+  ttsDiagnostics?: import('./tts-diagnostics').TtsSceneDiagnostic;
   synthesisMetrics?:import('./tts-resource-policy').SynthesisMetrics;
   durationEvidence?:'FFPROBE'|'SYNTHETIC_FIXTURE';
   ttsInputText?: string;

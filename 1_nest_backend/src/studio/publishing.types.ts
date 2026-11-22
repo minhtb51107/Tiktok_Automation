@@ -63,3 +63,8 @@ export interface PublicationJob {
   requestHash: string;
   draft: PublishingDraft;
 }
+export type {
+  BrowserUploadJobState,
+  BrowserUploadQueueItem,
+  BrowserUploadTransition,
+} from '../modules/core/uploader/tiktok-upload.service';

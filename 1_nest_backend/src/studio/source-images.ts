@@ -17,7 +17,15 @@ export interface LocalSourceImage {
   provenance: 'PUBLIC_CDN' | 'USER_UPLOAD';
   checkedAt: string;
 }
+export function isPlaceholderAvatarUrl(raw: unknown): boolean {
+  if (typeof raw !== 'string' || !raw.trim()) return true;
+  return /static\.cdninstagram\.com\/rsrc\.php|\/rsrc\.php\/v\d+\/|default_profile|anonymous_avatar/i.test(
+    raw,
+  );
+}
 export function sourceImageUrl(raw: string) {
+  if (isPlaceholderAvatarUrl(raw))
+    throw Error('AVATAR_UNAVAILABLE: generic static placeholder sprite');
   const u = new URL(raw);
   if (
     u.protocol !== 'https:' ||

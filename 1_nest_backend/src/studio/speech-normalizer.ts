@@ -248,7 +248,11 @@ function shapeCase(c: RuleContext, replacement: string, category: string) {
   if (allCaps && c.sentenceStart) return upperFirst(replacement);
   return replacement;
 }
-function symbolEdits(text: string, spans: [number, number][]): Edit[] {
+function symbolEdits(
+  text: string,
+  spans: [number, number][],
+  mode: SpeechMode,
+): Edit[] {
   const raw: { start: number; end: number; id: string }[] = [];
   const collect = (re: RegExp, id: string) => {
     for (const m of text.matchAll(re)) {
@@ -269,14 +273,36 @@ function symbolEdits(text: string, spans: [number, number][]): Edit[] {
     if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
     else merged.push({ ...r });
   }
-  return merged.map((r) => ({
-    start: r.start,
-    end: r.end,
-    after: r.start > 0 && r.end < text.length ? ' ' : '',
-    ruleId: r.id,
-    stage: 'SYMBOL' as const,
-    category: 'OMIT_SPOKEN',
-  }));
+  const edits: Edit[] = merged.map((r) => {
+    const hasNewline = text.slice(r.start, r.end).includes('\n');
+    return {
+      start: r.start,
+      end: r.end,
+      after:
+        r.start > 0 && r.end < text.length ? (hasNewline ? '\n' : ' ') : '',
+      ruleId: r.id,
+      stage: 'SYMBOL' as const,
+      category: 'OMIT_SPOKEN',
+    };
+  });
+  if (mode === 'TTS') {
+    for (const m of text.matchAll(
+      /(?<=[\p{L}\p{N}])\s+\+\s+(?=[\p{L}\p{N}])/gu,
+    )) {
+      const s = m.index,
+        e = s + m[0].length;
+      if (!inside(spans, s, e))
+        edits.push({
+          start: s,
+          end: e,
+          after: ' cộng ',
+          ruleId: 'SYM-PLUS-CONJ',
+          stage: 'SYMBOL' as const,
+          category: 'SYMBOL',
+        });
+    }
+  }
+  return edits;
 }
 function core(
   src: string,
@@ -384,8 +410,8 @@ function core(
         category: 'NUMBER',
       });
   }
-  // 4. Visual-only symbols that must not be voiced.
-  candidates.push(...symbolEdits(src, spans));
+  // 4. Visual-only symbols that must not be voiced (plus spoken '+' in TTS mode).
+  candidates.push(...symbolEdits(src, spans, mode));
   // 5. Conflict resolution: priority, then longer span, then position.
   const accepted: Edit[] = [];
   for (const c of [...candidates].sort(

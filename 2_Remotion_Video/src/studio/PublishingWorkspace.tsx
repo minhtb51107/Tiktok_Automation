@@ -6,6 +6,7 @@ import type {
   PublishingDraft,
   TikTokAccount,
   PublicationJob,
+  BrowserUploadQueueItem,
 } from "../../../1_nest_backend/src/studio/publishing.types";
 import type { RenderManifest } from "../../../1_nest_backend/src/studio/render.types";
 import { copyReport } from "./copy-report";
@@ -37,6 +38,7 @@ interface Overview {
   accounts: TikTokAccount[];
   draft: PublishingDraft | null;
   jobs: PublicationJob[];
+  uploadQueue?: BrowserUploadQueueItem[];
   rights: NonNullable<StudioSession["mediaRights"]>;
   requiredRights?: { id: string; label: string }[];
 }
@@ -815,6 +817,157 @@ export function PublishingWorkspace({
           </button>
         </div>
       )}
+      <div className="panel" data-testid="browser-upload-queue-panel">
+        <h3>
+          Browser-Assisted TikTok Upload Queue (Exact Render ID + SHA-256 + Human
+          Confirmation Gate)
+        </h3>
+        <p>
+          Binds directly to the selected rendered MP4 artifact (
+          <code>{draft.renderJobId || "select a render job above"}</code>),
+          verifies its SHA-256 checksum on disk, stages caption/hashtags, and
+          stops at <code>READY_FOR_CONFIRMATION</code> for human review. Never
+          uses stealth plugins and never deletes any local MP4 file.
+        </p>
+        <div className="actions">
+          <button
+            type="button"
+            disabled={disabled || !draft.renderJobId}
+            onClick={() =>
+              void run(async () => {
+                const item = await api<BrowserUploadQueueItem>(
+                  base + "/publishing/upload-queue",
+                  "POST",
+                  {
+                    renderJobId: draft.renderJobId,
+                    accountId: draft.accountId || undefined,
+                    accountLabel: account?.nickname || "SERIOUS_CREATOR_PROFILE",
+                    caption: draft.caption,
+                    hashtags: draft.hashtags,
+                    mentions: draft.mentions,
+                    privacy: draft.privacy || "SELF_ONLY",
+                  },
+                );
+                await refresh();
+                setNotice(
+                  `Enqueued upload job ${item.id} (${item.state}) bound to render ${item.renderJobId} (SHA-256 ${item.mp4Sha256.slice(0, 16)}…).`,
+                );
+              })
+            }
+          >
+            Enqueue Selected Render for Browser Upload
+          </button>
+        </div>
+        {!info?.uploadQueue?.length && (
+          <p>No browser-assisted upload queue items yet.</p>
+        )}
+        {info?.uploadQueue?.map((u) => (
+          <article
+            key={u.id}
+            className="panel"
+            data-testid={`upload-queue-item-${u.state}`}
+            style={{ marginTop: 10 }}
+          >
+            <strong>
+              {u.state} · Render {u.renderJobId.slice(0, 8)} ({u.renderMode}) ·{" "}
+              {u.accountLabel} ({u.profileDirName})
+            </strong>
+            <p>
+              MP4 SHA-256: <code>{u.mp4Sha256}</code> ·{" "}
+              {(u.mp4Bytes / (1024 * 1024)).toFixed(2)} MiB ·{" "}
+              {u.durationSeconds.toFixed(2)}s · {u.width}×{u.height}
+            </p>
+            <p>
+              Caption: <code>{u.formattedCaption}</code> · Retry allowed:{" "}
+              <b>{u.retryAllowed ? "YES" : "NO (LOCKED)"}</b>
+            </p>
+            {u.humanConfirmationToken && (
+              <p>
+                Human Confirmation Gate Token:{" "}
+                <code>{u.humanConfirmationToken}</code>
+              </p>
+            )}
+            {u.error && <p className="warning">{u.error}</p>}
+            {u.warnings.map((w, idx) => (
+              <p key={idx}>{w}</p>
+            ))}
+            <div className="actions">
+              {u.state === "QUEUED" && (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() =>
+                    void run(async () => {
+                      const out = await api<BrowserUploadQueueItem>(
+                        `${base}/publishing/upload-queue/${u.id}/prepare`,
+                        "POST",
+                        { launchBrowser: false },
+                      );
+                      await refresh();
+                      setNotice(
+                        `Upload job ${out.id} prepared → ${out.state}. Waiting at human confirmation gate.`,
+                      );
+                    })
+                  }
+                >
+                  Prepare & Stage Upload (Stop at Confirmation Gate)
+                </button>
+              )}
+              {u.state === "READY_FOR_CONFIRMATION" &&
+                u.humanConfirmationToken && (
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() =>
+                      void run(async () => {
+                        const out = await api<BrowserUploadQueueItem>(
+                          `${base}/publishing/upload-queue/${u.id}/confirm`,
+                          "POST",
+                          {
+                            confirmationToken: u.humanConfirmationToken,
+                            action: "VERIFY_GATE_ONLY",
+                          },
+                        );
+                        await refresh();
+                        setNotice(
+                          `Human confirmation gate verified for ${out.id} (MP4 preserved on disk, not publicly posted).`,
+                        );
+                      })
+                    }
+                  >
+                    Verify Human Confirmation Gate (Safe / No Public Post)
+                  </button>
+                )}
+              {u.state === "FAILED" && u.retryAllowed && (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() =>
+                    void run(async () => {
+                      await api(
+                        `${base}/publishing/upload-queue/${u.id}/retry`,
+                        "POST",
+                        {},
+                      );
+                      await refresh();
+                    })
+                  }
+                >
+                  Retry Upload Preparation
+                </button>
+              )}
+            </div>
+            <details>
+              <summary>State Transitions ({u.transitions.length})</summary>
+              {u.transitions.map((tr, idx) => (
+                <p key={idx}>
+                  <code>{tr.state}</code> · {tr.at} · {tr.detail}
+                </p>
+              ))}
+            </details>
+          </article>
+        ))}
+      </div>
       <div className="panel">
         <h3>Publication history</h3>
         {!info?.jobs.length && (

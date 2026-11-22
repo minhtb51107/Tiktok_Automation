@@ -269,4 +269,15 @@ export class StudioController {
     this.check(origin);
     return this.studio.mutate(id, body, true);
   }
+  @Get('api/studio/collections') listCollections() {
+    return this.studio.listSavedCollections();
+  }
+  @Post('api/studio/sessions/:id/import-collection') importCollection(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Headers('origin') origin?: string,
+  ) {
+    this.check(origin);
+    return this.studio.importCollectionItems(id, body);
+  }
 }

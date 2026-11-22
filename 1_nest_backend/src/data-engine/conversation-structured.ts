@@ -108,7 +108,18 @@ function postFromObject(
     rawId = scalar(row.id),
     id = pk ?? rawId,
     user = object(row.user) ?? object(row.author),
-    authorHandle = scalar(user?.username) ?? scalar(user?.handle);
+    authorHandle = scalar(user?.username) ?? scalar(user?.handle),
+    rawAvatar =
+      scalar(user?.profile_pic_url) ??
+      scalar(object(user?.hd_profile_pic_url_info)?.url) ??
+      scalar(user?.avatar_url),
+    authorAvatarUrl =
+      rawAvatar &&
+      !/static\.cdninstagram\.com\/rsrc\.php|\/rsrc\.php\/v\d+\//i.test(
+        rawAvatar,
+      )
+        ? rawAvatar
+        : null;
   if (!code || !id || !authorHandle || !/^[\w-]+$/u.test(code)) return null;
   const url = canonicalPost(
     `https://www.threads.com/@${authorHandle}/post/${code}`,
@@ -146,6 +157,7 @@ function postFromObject(
     code,
     url: url.url,
     authorHandle: url.handle,
+    ...(authorAvatarUrl ? { authorAvatarUrl } : {}),
     originalText,
     publishedAt:
       epoch(row.taken_at) ?? epoch(row.published_at) ?? epoch(row.created_at),
@@ -482,7 +494,7 @@ export function extractStructuredEvidence(
       bodyText: post.originalText!,
       author: post.authorHandle,
       handle: post.authorHandle,
-      avatar: null,
+      avatar: (post as { authorAvatarUrl?: string | null }).authorAvatarUrl ?? null,
       createdAt: post.publishedAt,
       type: 'UNKNOWN',
       parentReference: null,

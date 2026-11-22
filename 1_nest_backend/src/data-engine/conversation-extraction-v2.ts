@@ -74,7 +74,7 @@ export function collectPublicCards(
         bodyText: row.text,
         author: row.authorHandle!,
         handle: row.authorHandle!,
-        avatar: null,
+        avatar: (row as { avatarUrl?: string | null }).avatarUrl ?? null,
         createdAt:
           row.date && Number.isFinite(Date.parse(row.date))
             ? new Date(row.date).toISOString()

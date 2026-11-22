@@ -61,6 +61,8 @@ export function voiceReport(s: StudioSession): StageReport {
           revision: i.revision,
           spokenText: i.spokenText,
           spokenApproval: i.spokenApproval || null,
+          regenerateFlagged: !!i.regenerateFlagged,
+          regenerateFlagReason: i.regenerateFlagReason || null,
           settings: i.voiceSettings || {
             voice: null,
             speed: VOICE_SPEED.default,
