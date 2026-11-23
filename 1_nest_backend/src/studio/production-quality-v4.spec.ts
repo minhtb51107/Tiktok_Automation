@@ -423,21 +423,13 @@ describe('Production Quality V4 + Publishing Recovery', () => {
     expect(gateVerified.state).toBe('READY_FOR_CONFIRMATION');
     expect(gateVerified.humanConfirmedAt).toBeTruthy();
 
-    // Simulate ambiguous post outcome -> UNKNOWN state -> retry must be blocked!
-    const ambiguous = await publishing.confirmBrowserUpload(
-      sessionId,
-      queued.id,
-      {
+    // Browser automation cannot mark a post as published or ambiguous.
+    await expect(
+      publishing.confirmBrowserUpload(sessionId, queued.id, {
         confirmationToken: prepared.humanConfirmationToken!,
         action: 'SIMULATE_AMBIGUOUS',
-      },
-    );
-    expect(ambiguous.state).toBe('UNKNOWN');
-    expect(ambiguous.postClicked).toBe(true);
-    expect(ambiguous.retryAllowed).toBe(false);
-    await expect(
-      publishing.retryBrowserUpload(sessionId, queued.id),
-    ).rejects.toThrow('RETRY_BLOCKED_UNKNOWN_OR_POST_CLICKED');
+      }),
+    ).rejects.toThrow('BROWSER_POST_DISABLED');
 
     // Verify the MP4 file on disk was NEVER deleted
     const afterStat = await fs.stat(mp4Path);

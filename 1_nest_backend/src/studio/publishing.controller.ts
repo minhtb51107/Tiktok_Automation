@@ -142,6 +142,14 @@ export class PublishingController {
     this.origin(o);
     return this.publishing.submit(id, b);
   }
+  @Post('sessions/:id/publishing/manual-handoff') manualHandoff(
+    @Param('id') id: string,
+    @Body() b: any,
+    @Headers('origin') o?: string,
+  ) {
+    this.origin(o);
+    return this.publishing.prepareManualHandoff(id, b);
+  }
   @Get('sessions/:id/publishing/jobs/:jobId') status(
     @Param('id') id: string,
     @Param('jobId') job: string,

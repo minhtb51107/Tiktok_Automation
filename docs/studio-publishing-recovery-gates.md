@@ -8,19 +8,27 @@ enable TikTok account access or expand the current task into account onboarding.
 - `PublishingService.liveAccounts` is false. OAuth start/callback, account refresh,
   revoke, LIVE Creator Info and LIVE publication-status requests are blocked before
   any token or network operation. No OAuth was performed in recovery.
-- LIVE video init/upload/post routes are absent from the provider allowlist. App
-  approval cannot be enabled by a request body or an environment declaration.
+- Official Content Posting API video init, streaming FILE_UPLOAD and status
+  verification are implemented. They remain disabled unless both
+  `STUDIO_TIKTOK_LIVE_ENABLED=1` and `STUDIO_TIKTOK_APP_APPROVED=1` are supplied
+  to the backend together with valid account configuration. A request body cannot
+  enable these gates.
 - Studio shows BLOCKED_AUTH / BLOCKED_APP_APPROVAL and UNKNOWN rights. The main
   session has no supplied rights evidence and five DRAFT audio assets. It is not
   publishable. No rights or audio were automatically approved.
-- Existing draft form/contracts can be saved locally. The inbox flow explicitly
+- Existing draft form/contracts can be saved locally. A checked manual handoff
+  package binds the exact FINAL `sessionId + renderJobId + SHA-256` for operator
+  upload without opening a browser or claiming publication. The inbox flow explicitly
   describes caption/cover/privacy/disclosures as TikTok-side steps, not applied
   settings. Direct-post privacy comes only from fresh Creator Info; no default
   privacy or enabled interaction is assumed.
 - Any future submission requires retained FINAL output, matching timeline hash,
   current revision, spoken/audio approval, source/media/model rights evidence,
   explicit disclosures/consents and a short-lived exact-payload confirmation.
-- MOCK jobs are labelled simulations with no byte progress and no LIVE posting
+- Official jobs persist `INITIALIZING`, `TRANSFERRING`, `UPLOADING`, platform
+  status and error checkpoints. Only `PUBLISH_COMPLETE` becomes `PUBLISHED`;
+  uncertain transfer/status outcomes remain `UNKNOWN` and are not retried
+  automatically. MOCK jobs are labelled simulations with no byte progress and no LIVE posting
   claim. Consent/deduplication/history tests use temporary synthetic fixtures, not
   the main session or a real TikTok account.
 
@@ -39,10 +47,12 @@ audited machine. OAuth query strings are redacted from HTTP logs/error paths;
 provider failures do not return authentication bodies. Ignored local storage is
 `.studio-data/publishing/`; it must never be staged.
 
-Nine offline MOCK tests cover encryption isolation, error redaction, provider
+Offline MOCK/provider tests cover encryption isolation, error redaction, provider
 route restrictions, FINAL/rights/revision/hash gates, explicit consent, duplicate
 submission, persisted draft/history, creator limits, disabled interactions and
-browser-bound/expired/one-use OAuth state. They do not prove a LIVE TikTok login,
+browser-bound/expired/one-use OAuth state. They also cover exact-artifact manual
+handoff, durable official transfer checkpoints and platform-confirmed status using
+a synthetic provider. They do not prove a LIVE TikTok login,
 upload or post. Real browser smoke checked the blocked screen and Copy Report
 without creating/connecting an account or making external requests.
 

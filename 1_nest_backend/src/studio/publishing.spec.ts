@@ -114,17 +114,20 @@ async function fixture() {
     width: 1080,
     height: 1920,
   };
+  const videoRoot = await temp(),
+    videoPath = path.join(videoRoot, 'video.mp4');
+  await fs.writeFile(videoPath, Buffer.from('synthetic-final-mp4'));
   const studio: any = {
     load: async () => s,
     preview: async () => ({ request: { inputProps: p } }),
-    renders: { load: async () => manifest },
+    renders: { load: async () => manifest, output: async () => videoPath },
   };
   const service = new PublishingService(studio);
   (service as any).root = await temp();
   const a = await service.createMock({ nickname: 'Offline test account' }),
     d = { ...draft(), accountId: a.id, renderJobId: manifest.jobId };
   await service.creator(a.id);
-  return { service, s, p, d, sid, manifest, a };
+  return { service, s, p, d, sid, manifest, a, videoPath };
 }
 describe('Publishing foundation — OFFLINE / MOCK only', () => {
   it('builds official direct-post fields without enabling creator-disabled options', () => {
@@ -171,7 +174,7 @@ describe('Publishing foundation — OFFLINE / MOCK only', () => {
       'BLOCKED_AUTH',
     );
   });
-  it('provider has no LIVE upload/init route and redacts error bodies', async () => {
+  it('provider allows only official init/status routes and redacts error bodies', async () => {
     const http = jest.fn(async () => ({
       ok: false,
       status: 401,
@@ -180,10 +183,13 @@ describe('Publishing foundation — OFFLINE / MOCK only', () => {
       }),
     })) as any;
     const p = new TikTokProvider(http);
-    await expect(p.call('post/publish/video/init/', {})).rejects.toThrow(
+    await expect(p.call('private/graphql/upload', {})).rejects.toThrow(
       'blocked',
     );
     expect(http).not.toHaveBeenCalled();
+    await expect(p.call('post/publish/video/init/', {})).rejects.toThrow(
+      'HTTP 401',
+    );
     await expect(p.creator('synthetic')).rejects.toThrow('HTTP 401');
     try {
       await p.creator('synthetic');
@@ -241,6 +247,74 @@ describe('Publishing foundation — OFFLINE / MOCK only', () => {
     ).toEqual(j);
     expect((await service.overview(sid)).jobs).toHaveLength(1);
     expect(await service.status(sid, (j as any).id)).toEqual(j);
+  });
+  it('prepares one durable manual handoff for the exact FINAL artifact without deleting it', async () => {
+    const { service, d, sid, videoPath } = await fixture();
+    const first: any = await service.prepareManualHandoff(sid, d);
+    expect(first.status).toBe('READY_FOR_MANUAL_HANDOFF');
+    expect(first.renderJobId).toBe(d.renderJobId);
+    expect(first.artifactBytes).toBeGreaterThan(0);
+    expect(first.warnings.join()).toContain('no TikTok request');
+    expect(await service.prepareManualHandoff(sid, d)).toEqual(first);
+    expect((await service.overview(sid)).manualHandoffs).toHaveLength(1);
+    expect((await fs.stat(videoPath)).isFile()).toBe(true);
+  });
+  it('records official transfer checkpoints and only marks PUBLISHED from platform status', async () => {
+    const { service, d, sid, a } = await fixture();
+    const liveAccount = {
+      ...a,
+      mode: 'LIVE',
+      status: 'CONNECTED',
+      scopes: ['user.info.basic', 'video.publish'],
+    };
+    (service as any).liveAccounts = true;
+    (service as any).accounts = async () => [liveAccount];
+    (service as any).creators.set(liveAccount.id, {
+      ...creator,
+      source: 'LIVE',
+      checkedAt: new Date().toISOString(),
+    });
+    (service as any).vault = {
+      read: async () => ({ access_token: 'synthetic-access' }),
+    };
+    const uploadFile = jest.fn(async () => undefined),
+      status = jest
+        .fn<() => Promise<any>>()
+        .mockRejectedValueOnce(new Error('synthetic status outage'))
+        .mockResolvedValue({
+          data: {
+            status: 'PUBLISH_COMPLETE',
+            uploaded_bytes: 19,
+            publicaly_available_post_id: ['123'],
+          },
+        });
+    (service as any).provider = {
+      initVideo: async () => ({
+        publish_id: 'synthetic-publish-id',
+        upload_url: 'https://open-upload.tiktokapis.com/video/?redacted=1',
+      }),
+      uploadFile,
+      status,
+    };
+    const liveDraft = { ...d, execution: 'LIVE' as const };
+    const consent = await service.consent(sid, liveDraft);
+    const job: any = await service.submit(sid, {
+      draft: liveDraft,
+      receipt: consent.receipt,
+      confirmation: consent.confirmation,
+    });
+    expect(job.status).toBe('UPLOADING');
+    expect(job.stage).toBe('VERIFYING_PLATFORM_STATUS');
+    expect(job.publishId).toBe('synthetic-publish-id');
+    expect(uploadFile).toHaveBeenCalledTimes(1);
+    const uncertain: any = await service.status(sid, job.id);
+    expect(uncertain.status).toBe('UNKNOWN');
+    expect(uncertain.stage).toBe('STATUS_CHECK_FAILED_VERIFY_BEFORE_RETRY');
+    const verified: any = await service.status(sid, job.id);
+    expect(verified.status).toBe('PUBLISHED');
+    expect(verified.stage).toBe('PLATFORM_CONFIRMED');
+    expect(verified.platformPostIds).toEqual(['123']);
+    expect(status).toHaveBeenCalledTimes(2);
   });
   it('LIVE stays blocked even with a simulated connected account and rights', async () => {
     const { service, d, sid, a } = await fixture();

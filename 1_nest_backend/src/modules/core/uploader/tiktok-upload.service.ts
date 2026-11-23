@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
+import { createReadStream } from 'fs';
 import * as path from 'path';
 import puppeteer from 'puppeteer';
 import { existingPublicBrowser } from '../scraper/public-discovery';
@@ -122,8 +123,14 @@ export class TiktokUploadService {
         'UPLOAD_ARTIFACT_INVALID: rendered MP4 file is empty',
       );
     }
-    const buf = await fs.readFile(resolved);
-    const sha256 = createHash('sha256').update(buf).digest('hex');
+    const hash = createHash('sha256');
+    await new Promise<void>((resolve, reject) => {
+      const stream = createReadStream(resolved);
+      stream.on('data', (chunk) => hash.update(chunk));
+      stream.on('error', reject);
+      stream.on('end', resolve);
+    });
+    const sha256 = hash.digest('hex');
     if (expectedSha256 && expectedSha256 !== sha256) {
       throw new ConflictException(
         `UPLOAD_ARTIFACT_HASH_MISMATCH: expected ${expectedSha256}, actual ${sha256}`,

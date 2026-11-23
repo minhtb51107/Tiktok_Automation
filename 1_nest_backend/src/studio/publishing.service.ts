@@ -25,6 +25,7 @@ import type {
   PublicationJob,
   TikTokAccount,
   PostingMode,
+  ManualPublishingHandoff,
 } from './publishing.types';
 const digest = (v: string) => createHash('sha256').update(v).digest('hex');
 const uuid = (id: string) => {
@@ -147,10 +148,15 @@ export function creatorPostInfo(
 }
 @Injectable()
 export class PublishingService {
-  private root = path.resolve('.studio-data/publishing');
-  private liveAccounts = false; // Recovery gate: no TikTok OAuth/account network activity.
+  private root = path.resolve(
+    process.env.STUDIO_DATA_ROOT || '.studio-data',
+    'publishing',
+  );
+  private liveAccounts =
+    process.env.STUDIO_TIKTOK_LIVE_ENABLED === '1' &&
+    process.env.STUDIO_TIKTOK_APP_APPROVED === '1';
   private provider = new TikTokProvider();
-  private vault = new TokenVault();
+  private vault = new TokenVault(path.join(this.root, 'vault'));
   private uploader = new TiktokUploadService();
   private creators = new Map<string, CreatorInfo>();
   private lock: Promise<unknown> = Promise.resolve();
@@ -210,13 +216,21 @@ export class PublishingService {
         redirectValid
           ? 'CONFIGURED_NOT_LIVE_VERIFIED'
           : 'BLOCKED_AUTH',
-      postingStatus: 'BLOCKED_APP_APPROVAL',
-      eligibility: 'UNVERIFIED_INTENDED_USE',
-      reasons: [
-        'No verified TikTok app/audit approval is recorded.',
-        'Current internal utility/third-party Threads reuse requires intended-use eligibility review.',
-      ],
-      liveTransferEnabled: false,
+      postingStatus: this.liveAccounts
+        ? 'CONFIGURED_REQUIRES_PER_POST_CONFIRMATION'
+        : 'BLOCKED_APP_APPROVAL',
+      eligibility: this.liveAccounts
+        ? 'OPERATOR_DECLARED_APPROVED_CONFIGURATION'
+        : 'UNVERIFIED_INTENDED_USE',
+      reasons: this.liveAccounts
+        ? [
+            'Backend operator enabled the separately reviewed LIVE/app-approval gates; every post still requires explicit Studio confirmation and platform status verification.',
+          ]
+        : [
+            'No verified TikTok app/audit approval is recorded.',
+            'Current internal utility/third-party Threads reuse requires intended-use eligibility review.',
+          ],
+      liveTransferEnabled: this.liveAccounts,
     };
   }
   async accounts() {
@@ -448,6 +462,10 @@ export class PublishingService {
         'upload-queue/' + sessionId + '.json',
         [],
       ),
+      manualHandoffs: await this.read<ManualPublishingHandoff[]>(
+        'handoffs/' + sessionId + '.json',
+        [],
+      ),
       rights: s.mediaRights || {},
       requiredRights: requiredRights(s, p),
     };
@@ -562,10 +580,14 @@ export class PublishingService {
         'upload-queue/' + sessionId + '.json',
         [],
       );
+      if (body?.launchBrowser === true)
+        throw new BadRequestException(
+          'BROWSER_AUTOMATION_DISABLED: use the official Content Posting API or prepare a manual handoff',
+        );
       const item = queue.find((q) => q.id === uuid(uploadId));
       if (!item) throw new BadRequestException('Unknown browser upload job');
       await this.uploader.prepareUpload(item, {
-        launchBrowser: body?.launchBrowser === true,
+        launchBrowser: false,
       });
       await this.write('upload-queue/' + sessionId + '.json', queue);
       return item;
@@ -587,7 +609,14 @@ export class PublishingService {
       );
       const item = queue.find((q) => q.id === uuid(uploadId));
       if (!item) throw new BadRequestException('Unknown browser upload job');
-      await this.uploader.confirmPublish(item, body);
+      if (body.action && body.action !== 'VERIFY_GATE_ONLY')
+        throw new BadRequestException(
+          'BROWSER_POST_DISABLED: Studio cannot mark a browser-assisted handoff as published',
+        );
+      await this.uploader.confirmPublish(item, {
+        ...body,
+        action: 'VERIFY_GATE_ONLY',
+      });
       await this.write('upload-queue/' + sessionId + '.json', queue);
       return item;
     });
@@ -604,6 +633,55 @@ export class PublishingService {
       this.uploader.retryQueueItem(item);
       await this.write('upload-queue/' + sessionId + '.json', queue);
       return item;
+    });
+  }
+
+  async prepareManualHandoff(sessionId: string, d: PublishingDraft) {
+    return this.serial(async () => {
+      const validation = await this.validate(sessionId, d);
+      if (!validation.ready)
+        return { ...validation, status: 'BLOCKED' as const };
+      const s = await this.studio.load(uuid(sessionId));
+      const account = await this.account(d.accountId);
+      const videoPath = await this.studio.renders.output(
+        sessionId,
+        uuid(d.renderJobId),
+      );
+      const artifact = await this.uploader.verifyRenderFile(videoPath);
+      const requestHash = snapshotHash({
+        sessionId,
+        draft: d,
+        sha256: artifact.sha256,
+      });
+      const rows = await this.read<ManualPublishingHandoff[]>(
+        'handoffs/' + sessionId + '.json',
+        [],
+      );
+      const existing = rows.find((row) => row.requestHash === requestHash);
+      if (existing) return existing;
+      const handoff: ManualPublishingHandoff = {
+        id: randomUUID(),
+        sessionId,
+        renderJobId: d.renderJobId,
+        accountId: d.accountId,
+        accountLabel: account.nickname,
+        createdAt: new Date().toISOString(),
+        requestHash,
+        downloadUrl: `/api/studio/sessions/${sessionId}/renders/${d.renderJobId}/video?download=1`,
+        artifactSha256: artifact.sha256,
+        artifactBytes: artifact.bytes,
+        formattedCaption: postingText(d),
+        coverMs: d.coverMs,
+        status: 'READY_FOR_MANUAL_HANDOFF',
+        warnings: [
+          'Manual handoff only: no TikTok request was sent.',
+          'Complete account selection, rights checks and platform confirmation manually; Studio does not infer PUBLISHED.',
+          `Source session ${s.id} and retained render ${d.renderJobId} remain unchanged.`,
+        ],
+      };
+      rows.unshift(handoff);
+      await this.write('handoffs/' + sessionId + '.json', rows);
+      return handoff;
     });
   }
   async saveDraft(sessionId: string, d: PublishingDraft) {
@@ -636,7 +714,7 @@ export class PublishingService {
       errors.push(
         'BLOCKED_AUTH: select a connected account in the matching LIVE/MOCK mode',
       );
-    if (d.execution === 'LIVE')
+    if (d.execution === 'LIVE' && !this.liveAccounts)
       errors.push(
         'BLOCKED_APP_APPROVAL: live transfer is disabled pending verified app eligibility/approval',
       );
@@ -755,9 +833,61 @@ export class PublishingService {
       )
         throw new BadRequestException('Consent expired or changed');
       await fs.unlink(path.join(this.root, file));
-      // The LIVE provider has NO init/upload implementation in this approval-blocked foundation.
-      if (d.execution !== 'MOCK')
-        throw new BadRequestException('BLOCKED_APP_APPROVAL');
+      if (d.execution === 'LIVE') {
+        const renderPath = await this.studio.renders.output(
+          sessionId,
+          uuid(d.renderJobId),
+        );
+        const artifact = await this.uploader.verifyRenderFile(renderPath);
+        const account = await this.account(d.accountId);
+        const token = await this.vault.read(account.id);
+        const job: PublicationJob = {
+          id: randomUUID(), sessionId, accountId: d.accountId, mode: d.mode,
+          execution: 'LIVE', renderJobId: d.renderJobId, status: 'UPLOADING',
+          stage: 'INITIALIZING', createdAt: new Date().toISOString(),
+          completedAt: null, errors: [], warnings: [], publishId: null,
+          uploadedBytes: 0, totalBytes: artifact.bytes, requestHash, draft: d,
+          artifactSha256: artifact.sha256, artifactBytes: artifact.bytes,
+          lastCheckedAt: null, platformStatus: null, platformPostIds: [],
+        };
+        rows.unshift(job);
+        await this.write('jobs/' + sessionId + '.json', rows);
+        try {
+          const creator = this.creators.get(account.id);
+          const postInfo = d.mode === 'DIRECT_POST' && creator
+            ? creatorPostInfo(d, creator, validation.render!.duration * 1000)
+            : undefined;
+          const init = await this.provider.initVideo(
+            token.access_token,
+            d.mode,
+            {
+              source: 'FILE_UPLOAD',
+              video_size: artifact.bytes,
+              chunk_size: artifact.bytes,
+              total_chunk_count: 1,
+            },
+            postInfo,
+          );
+          job.publishId = init.publish_id;
+          job.stage = 'TRANSFERRING';
+          await this.write('jobs/' + sessionId + '.json', rows);
+          await this.provider.uploadFile(init.upload_url, renderPath, artifact.bytes);
+          job.uploadedBytes = artifact.bytes;
+          job.stage = 'VERIFYING_PLATFORM_STATUS';
+          job.status = 'UPLOADING';
+          await this.write('jobs/' + sessionId + '.json', rows);
+          return job;
+        } catch (error) {
+          job.errors.push(error instanceof Error ? error.message : String(error));
+          job.completedAt = new Date().toISOString();
+          job.status = job.publishId ? 'UNKNOWN' : 'FAILED';
+          job.stage = job.publishId
+            ? 'VERIFY_PLATFORM_BEFORE_RETRY'
+            : 'INITIALIZATION_FAILED';
+          await this.write('jobs/' + sessionId + '.json', rows);
+          return job;
+        }
+      }
       const j: PublicationJob = {
         id: randomUUID(),
         sessionId,
@@ -786,19 +916,56 @@ export class PublishingService {
     });
   }
   async status(sessionId: string, id: string) {
-    const rows = await this.read<PublicationJob[]>(
+    return this.serial(async () => {
+      const rows = await this.read<PublicationJob[]>(
         'jobs/' + uuid(sessionId) + '.json',
         [],
       ),
-      j = rows.find((j) => j.id === uuid(id));
-    if (!j) throw new BadRequestException('Unknown publication job');
-    if (j.execution === 'MOCK') return j;
-    if (!this.liveAccounts)
-      throw new BadRequestException(
-        'BLOCKED_AUTH: LIVE status access is disabled in recovery mode',
-      );
-    const a = await this.account(j.accountId),
-      t = await this.vault.read(a.id);
-    return this.provider.status(t.access_token, j.publishId!);
+        j = rows.find((j) => j.id === uuid(id));
+      if (!j) throw new BadRequestException('Unknown publication job');
+      if (j.execution === 'MOCK') return j;
+      if (!this.liveAccounts)
+        throw new BadRequestException(
+          'BLOCKED_AUTH: LIVE status access is disabled in recovery mode',
+        );
+      if (!j.publishId) return j;
+      try {
+        const a = await this.account(j.accountId),
+          t = await this.vault.read(a.id),
+          response = await this.provider.status(t.access_token, j.publishId),
+          data = response.data || {};
+        j.lastCheckedAt = new Date().toISOString();
+        j.platformStatus = String(data.status || 'UNKNOWN');
+        j.uploadedBytes = Number.isFinite(Number(data.uploaded_bytes))
+          ? Number(data.uploaded_bytes)
+          : j.uploadedBytes;
+        j.platformPostIds = Array.isArray(data.publicaly_available_post_id)
+          ? data.publicaly_available_post_id.map(String)
+          : j.platformPostIds || [];
+        if (j.platformStatus === 'PUBLISH_COMPLETE') {
+          j.status = 'PUBLISHED';
+          j.stage = 'PLATFORM_CONFIRMED';
+          j.completedAt = j.lastCheckedAt;
+        } else if (j.platformStatus === 'FAILED') {
+          j.status = 'FAILED';
+          j.stage = 'PLATFORM_REJECTED';
+          j.completedAt = j.lastCheckedAt;
+          if (data.fail_reason) j.errors.push(String(data.fail_reason));
+        } else {
+          j.status = 'UPLOADING';
+          j.stage =
+            j.platformStatus === 'SEND_TO_USER_INBOX'
+              ? 'WAITING_FOR_USER_IN_TIKTOK'
+              : 'PLATFORM_PROCESSING';
+        }
+      } catch (error) {
+        j.status = 'UNKNOWN';
+        j.stage = 'STATUS_CHECK_FAILED_VERIFY_BEFORE_RETRY';
+        j.lastCheckedAt = new Date().toISOString();
+        j.errors.push(error instanceof Error ? error.message : String(error));
+      }
+      await this.write('jobs/' + sessionId + '.json', rows);
+      return j;
+    });
   }
 }

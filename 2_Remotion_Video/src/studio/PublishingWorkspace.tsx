@@ -6,7 +6,7 @@ import type {
   PublishingDraft,
   TikTokAccount,
   PublicationJob,
-  BrowserUploadQueueItem,
+  ManualPublishingHandoff,
 } from "../../../1_nest_backend/src/studio/publishing.types";
 import type { RenderManifest } from "../../../1_nest_backend/src/studio/render.types";
 import { copyReport } from "./copy-report";
@@ -38,7 +38,7 @@ interface Overview {
   accounts: TikTokAccount[];
   draft: PublishingDraft | null;
   jobs: PublicationJob[];
-  uploadQueue?: BrowserUploadQueueItem[];
+  manualHandoffs?: ManualPublishingHandoff[];
   rights: NonNullable<StudioSession["mediaRights"]>;
   requiredRights?: { id: string; label: string }[];
 }
@@ -191,7 +191,9 @@ export function PublishingWorkspace({
       validation: v,
       rights: persisted.rights,
       jobs: persisted.jobs,
-      note: "No LIVE upload/post implementation is enabled. MOCK is a simulation, not a published video.",
+      note: persisted.config.liveTransferEnabled
+        ? "Official TikTok transfer is configured; PUBLISHED still requires platform status confirmation."
+        : "LIVE transfer is blocked. MOCK is a simulation and manual handoff is not a published video.",
     };
     const text = json
       ? JSON.stringify(out, null, 2)
@@ -227,7 +229,7 @@ export function PublishingWorkspace({
     <section className="publish-workspace" data-testid="publishing-workspace">
       <header>
         <div>
-          <h2>06 / TikTok Publishing Foundation</h2>
+          <h2>06 / TikTok Publishing</h2>
           <p>
             {session.title} ·{" "}
             {dirty ? "Unsaved publishing draft" : "Saved publishing settings"} ·
@@ -262,9 +264,9 @@ export function PublishingWorkspace({
         </strong>
         <p>Media rights: {(info?.requiredRights || []).some(({id}) => !info?.rights[id] || info.rights[id].status === 'UNKNOWN' || !info.rights[id].evidence.trim()) ? 'UNKNOWN — Publishing is blocked until evidence is supplied.' : 'Declarations still require review; app and FINAL gates remain enforced.'}</p>
         <p>
-          LIVE transfer is disabled. This internal utility and reuse of
-          third-party Threads content have not been verified as eligible for
-          TikTok approval. No upload is performed by this foundation.
+          {info?.config.liveTransferEnabled
+            ? "Official LIVE transfer is configured. Each submission still requires explicit confirmation and TikTok status verification before PUBLISHED."
+            : "LIVE transfer is disabled. App eligibility, approved scopes, OAuth configuration and content rights must be verified first; use the checked manual handoff when appropriate."}
         </p>
         <a
           href="https://developers.tiktok.com/docs/en/content-sharing-guidelines"
@@ -798,7 +800,7 @@ export function PublishingWorkspace({
             disabled={
               disabled ||
               confirmation !== receipt.confirmation ||
-              draft.execution !== "MOCK"
+              (draft.execution === "LIVE" && !info?.config.liveTransferEnabled)
             }
             onClick={() =>
               void run(async () => {
@@ -809,162 +811,77 @@ export function PublishingWorkspace({
                 });
                 setReceipt(null);
                 await refresh();
-                setNotice(result.status + " — MOCK sends no bytes to TikTok.");
+                setNotice(
+                  result.status +
+                    (draft.execution === "MOCK"
+                      ? " — MOCK sends no bytes to TikTok."
+                      : " — status must be verified with TikTok before PUBLISHED."),
+                );
               })
             }
           >
-            Confirm MOCK submission
+            {draft.execution === "MOCK"
+              ? "Confirm MOCK submission"
+              : "Confirm official TikTok transfer"}
           </button>
         </div>
       )}
-      <div className="panel" data-testid="browser-upload-queue-panel">
-        <h3>
-          Browser-Assisted TikTok Upload Queue (Exact Render ID + SHA-256 + Human
-          Confirmation Gate)
-        </h3>
+      <div className="panel" data-testid="manual-publishing-handoff-panel">
+        <h3>Manual TikTok handoff (safe fallback)</h3>
         <p>
-          Binds directly to the selected rendered MP4 artifact (
+          Prepare the exact retained MP4 (
           <code>{draft.renderJobId || "select a render job above"}</code>),
-          verifies its SHA-256 checksum on disk, stages caption/hashtags, and
-          stops at <code>READY_FOR_CONFIRMATION</code> for human review. Never
-          uses stealth plugins and never deletes any local MP4 file.
+          checksum and editable caption for a user-completed TikTok upload. This
+          does not open a browser, use cookies, click Post, or mark the item
+          PUBLISHED. The FINAL, approval and rights gates still apply.
         </p>
         <div className="actions">
           <button
             type="button"
-            disabled={disabled || !draft.renderJobId}
+            disabled={disabled || !validation?.ready || !draft.renderJobId}
             onClick={() =>
               void run(async () => {
-                const item = await api<BrowserUploadQueueItem>(
-                  base + "/publishing/upload-queue",
+                const item = await api<ManualPublishingHandoff>(
+                  base + "/publishing/manual-handoff",
                   "POST",
-                  {
-                    renderJobId: draft.renderJobId,
-                    accountId: draft.accountId || undefined,
-                    accountLabel: account?.nickname || "SERIOUS_CREATOR_PROFILE",
-                    caption: draft.caption,
-                    hashtags: draft.hashtags,
-                    mentions: draft.mentions,
-                    privacy: draft.privacy || "SELF_ONLY",
-                  },
+                  draft,
                 );
                 await refresh();
                 setNotice(
-                  `Enqueued upload job ${item.id} (${item.state}) bound to render ${item.renderJobId} (SHA-256 ${item.mp4Sha256.slice(0, 16)}…).`,
+                  `Manual handoff ${item.id} is ready for render ${item.renderJobId} (SHA-256 ${item.artifactSha256.slice(0, 16)}…). No TikTok request was sent.`,
                 );
               })
             }
           >
-            Enqueue Selected Render for Browser Upload
+            Prepare manual handoff package
           </button>
         </div>
-        {!info?.uploadQueue?.length && (
-          <p>No browser-assisted upload queue items yet.</p>
+        {!info?.manualHandoffs?.length && (
+          <p>No manual handoff packages yet.</p>
         )}
-        {info?.uploadQueue?.map((u) => (
+        {info?.manualHandoffs?.map((u) => (
           <article
             key={u.id}
             className="panel"
-            data-testid={`upload-queue-item-${u.state}`}
+            data-testid="manual-handoff-item"
             style={{ marginTop: 10 }}
           >
             <strong>
-              {u.state} · Render {u.renderJobId.slice(0, 8)} ({u.renderMode}) ·{" "}
-              {u.accountLabel} ({u.profileDirName})
+              {u.status} · Render {u.renderJobId.slice(0, 8)} · {u.accountLabel}
             </strong>
             <p>
-              MP4 SHA-256: <code>{u.mp4Sha256}</code> ·{" "}
-              {(u.mp4Bytes / (1024 * 1024)).toFixed(2)} MiB ·{" "}
-              {u.durationSeconds.toFixed(2)}s · {u.width}×{u.height}
+              MP4 SHA-256: <code>{u.artifactSha256}</code> ·{" "}
+              {(u.artifactBytes / (1024 * 1024)).toFixed(2)} MiB
             </p>
             <p>
-              Caption: <code>{u.formattedCaption}</code> · Retry allowed:{" "}
-              <b>{u.retryAllowed ? "YES" : "NO (LOCKED)"}</b>
+              Caption: <code>{u.formattedCaption}</code>
             </p>
-            {u.humanConfirmationToken && (
-              <p>
-                Human Confirmation Gate Token:{" "}
-                <code>{u.humanConfirmationToken}</code>
-              </p>
-            )}
-            {u.error && <p className="warning">{u.error}</p>}
+            <p>
+              <a href={u.downloadUrl}>Download exact retained MP4</a>
+            </p>
             {u.warnings.map((w, idx) => (
               <p key={idx}>{w}</p>
             ))}
-            <div className="actions">
-              {u.state === "QUEUED" && (
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() =>
-                    void run(async () => {
-                      const out = await api<BrowserUploadQueueItem>(
-                        `${base}/publishing/upload-queue/${u.id}/prepare`,
-                        "POST",
-                        { launchBrowser: false },
-                      );
-                      await refresh();
-                      setNotice(
-                        `Upload job ${out.id} prepared → ${out.state}. Waiting at human confirmation gate.`,
-                      );
-                    })
-                  }
-                >
-                  Prepare & Stage Upload (Stop at Confirmation Gate)
-                </button>
-              )}
-              {u.state === "READY_FOR_CONFIRMATION" &&
-                u.humanConfirmationToken && (
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    onClick={() =>
-                      void run(async () => {
-                        const out = await api<BrowserUploadQueueItem>(
-                          `${base}/publishing/upload-queue/${u.id}/confirm`,
-                          "POST",
-                          {
-                            confirmationToken: u.humanConfirmationToken,
-                            action: "VERIFY_GATE_ONLY",
-                          },
-                        );
-                        await refresh();
-                        setNotice(
-                          `Human confirmation gate verified for ${out.id} (MP4 preserved on disk, not publicly posted).`,
-                        );
-                      })
-                    }
-                  >
-                    Verify Human Confirmation Gate (Safe / No Public Post)
-                  </button>
-                )}
-              {u.state === "FAILED" && u.retryAllowed && (
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() =>
-                    void run(async () => {
-                      await api(
-                        `${base}/publishing/upload-queue/${u.id}/retry`,
-                        "POST",
-                        {},
-                      );
-                      await refresh();
-                    })
-                  }
-                >
-                  Retry Upload Preparation
-                </button>
-              )}
-            </div>
-            <details>
-              <summary>State Transitions ({u.transitions.length})</summary>
-              {u.transitions.map((tr, idx) => (
-                <p key={idx}>
-                  <code>{tr.state}</code> · {tr.at} · {tr.detail}
-                </p>
-              ))}
-            </details>
           </article>
         ))}
       </div>

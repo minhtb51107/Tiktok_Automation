@@ -62,6 +62,28 @@ export interface PublicationJob {
   totalBytes: number | null;
   requestHash: string;
   draft: PublishingDraft;
+  artifactSha256?: string;
+  artifactBytes?: number;
+  lastCheckedAt?: string | null;
+  platformStatus?: string | null;
+  platformPostIds?: string[];
+}
+
+export interface ManualPublishingHandoff {
+  id: string;
+  sessionId: string;
+  renderJobId: string;
+  accountId: string;
+  accountLabel: string;
+  createdAt: string;
+  requestHash: string;
+  downloadUrl: string;
+  artifactSha256: string;
+  artifactBytes: number;
+  formattedCaption: string;
+  coverMs: number;
+  status: 'READY_FOR_MANUAL_HANDOFF';
+  warnings: string[];
 }
 export type {
   BrowserUploadJobState,
