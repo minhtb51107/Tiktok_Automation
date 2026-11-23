@@ -462,10 +462,17 @@ export class PublishingService {
         'upload-queue/' + sessionId + '.json',
         [],
       ),
-      manualHandoffs: await this.read<ManualPublishingHandoff[]>(
-        'handoffs/' + sessionId + '.json',
-        [],
-      ),
+      manualHandoffs: (
+        await this.read<(ManualPublishingHandoff & { videoPath?: string })[]>(
+          'handoffs/' + sessionId + '.json',
+          [],
+        )
+      ).map(({ videoPath: _legacyPath, ...row }) => ({
+        ...row,
+        downloadUrl:
+          row.downloadUrl ||
+          `/api/studio/sessions/${sessionId}/renders/${row.renderJobId}/video?download=1`,
+      })),
       rights: s.mediaRights || {},
       requiredRights: requiredRights(s, p),
     };
