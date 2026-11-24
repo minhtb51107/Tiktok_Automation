@@ -75,6 +75,7 @@ async function fixture() {
   };
   const s: any = {
     id: sid,
+    project: { id: sid },
     revision: 1,
     items: [
       {
@@ -257,6 +258,29 @@ describe('Publishing foundation — OFFLINE / MOCK only', () => {
     expect(first.warnings.join()).toContain('no TikTok request');
     expect(await service.prepareManualHandoff(sid, d)).toEqual(first);
     expect((await service.overview(sid)).manualHandoffs).toHaveLength(1);
+    expect((await fs.stat(videoPath)).isFile()).toBe(true);
+  });
+  it('persists and reopens one idempotent browser-assisted queue item for the exact FINAL artifact', async () => {
+    const { service, d, sid, videoPath } = await fixture();
+    await service.saveDraft(sid, d);
+    const input = {
+      renderJobId: d.renderJobId,
+      accountId: 'browser:offline-test',
+      accountLabel: 'Offline browser test',
+      profileDirName: 'offline-test-profile',
+      caption: d.caption,
+      hashtags: d.hashtags,
+      mentions: d.mentions,
+      privacy: 'USER_SELECTED_IN_TIKTOK',
+    };
+    const queued = await service.enqueueBrowserUpload(sid, input);
+    expect(queued.renderMode).toBe('FINAL');
+    expect(queued.videoPath).toBe(path.resolve(videoPath));
+    expect(await service.enqueueBrowserUpload(sid, input)).toEqual(queued);
+
+    const reopened = new PublishingService((service as any).studio);
+    (reopened as any).root = (service as any).root;
+    expect(await reopened.listUploadQueue(sid)).toEqual([queued]);
     expect((await fs.stat(videoPath)).isFile()).toBe(true);
   });
   it('records official transfer checkpoints and only marks PUBLISHED from platform status', async () => {

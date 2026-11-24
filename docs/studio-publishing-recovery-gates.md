@@ -22,6 +22,15 @@ enable TikTok account access or expand the current task into account onboarding.
   describes caption/cover/privacy/disclosures as TikTok-side steps, not applied
   settings. Direct-post privacy comes only from fresh Creator Info; no default
   privacy or enabled interaction is assumed.
+- Browser-assisted preparation is an independent method. It requires
+  `STUDIO_TIKTOK_BROWSER_ENABLED=1` and a user-managed
+  `STUDIO_TIKTOK_PROFILE_ROOT`; the profile is referenced by a simple directory
+  name and is never copied or inspected. The headed window prepares the exact
+  retained FINAL MP4 and caption, then stops before Post. A request body cannot
+  enable it. Actual Post remains independently disabled unless
+  `STUDIO_TIKTOK_BROWSER_LIVE_ENABLED=1` and the operator enters the exact
+  per-job confirmation token. Login, CAPTCHA, access gates and unrecognized UI
+  require visible user action or stop safely; no stealth/bypass is present.
 - Any future submission requires retained FINAL output, matching timeline hash,
   current revision, spoken/audio approval, source/media/model rights evidence,
   explicit disclosures/consents and a short-lived exact-payload confirmation.
@@ -70,7 +79,8 @@ Reviewed on 2026-11-02:
 
 The current internal utility / third-party Threads reuse has unresolved intended-use
 eligibility under TikTok's guidelines. No app/audit approval evidence is available.
-The recovery must not work around those restrictions using passwords, scraping
-cookies, browser upload automation, an assumed public privacy value or a silent
-switch to another account/provider. Future LIVE work needs a separate explicit
-request, verified eligibility/permissions and per-post confirmation.
+The recovery must not work around those restrictions by extracting passwords or
+cookies, using stealth/bypass behavior, assuming a public privacy value, or
+silently switching accounts/providers. Browser-assisted preparation remains a
+visible, user-controlled path; a real Post still needs a separate explicit LIVE
+gate, verified eligibility/permissions and per-post confirmation.

@@ -231,6 +231,7 @@ export class PublishingService {
             'Current internal utility/third-party Threads reuse requires intended-use eligibility review.',
           ],
       liveTransferEnabled: this.liveAccounts,
+      browserAssisted: this.uploader.browserStatus(),
     };
   }
   async accounts() {
@@ -502,10 +503,40 @@ export class PublishingService {
       const s = await this.studio.load(uuid(sessionId));
       const renderJobId = uuid(body?.renderJobId || '');
       const manifest = await this.studio.renders.load(sessionId, renderJobId);
-      if (manifest.status !== 'COMPLETED')
+      if (manifest.status !== 'COMPLETED' || manifest.mode !== 'FINAL')
         throw new BadRequestException(
-          'UPLOAD_REQUIRES_COMPLETED_RENDER: selected render job is not COMPLETED',
+          'BLOCKED_FINAL: browser-assisted upload requires an exact COMPLETED FINAL render',
         );
+      const savedDraft = await this.read<PublishingDraft | null>(
+        'drafts/' + sessionId + '.json',
+        null,
+      );
+      if (!savedDraft || savedDraft.revision !== s.revision)
+        throw new BadRequestException(
+          'BLOCKED_REVIEW: save the current publishing draft before browser preparation',
+        );
+      const preview = (await this.studio.preview(sessionId)).request.inputProps;
+      const projected = renderBackground(preview, manifest.backgroundMode);
+      const gateErrors: string[] = [];
+      if (manifest.previewHash !== snapshotHash(projected))
+        gateErrors.push('STALE_RENDER');
+      if (renderValidation(s, projected).finalBlockers.length)
+        gateErrors.push('BLOCKED_APPROVAL');
+      for (const { id } of requiredRights(s, projected))
+        if (
+          !s.mediaRights?.[id] ||
+          s.mediaRights[id].status === 'UNKNOWN' ||
+          !s.mediaRights[id].evidence.trim()
+        )
+          gateErrors.push('BLOCKED_RIGHTS: ' + id);
+      if (
+        savedDraft.aiDisclosure === 'UNSET' ||
+        !savedDraft.musicConsent ||
+        !savedDraft.contentConsent
+      )
+        gateErrors.push('BLOCKED_CONSENT');
+      if (gateErrors.length)
+        throw new BadRequestException(gateErrors.join('; '));
       const videoPath = await this.studio.renders.output(
         sessionId,
         renderJobId,
@@ -571,6 +602,29 @@ export class PublishingService {
         privacy: body.privacy || 'SELF_ONLY',
         formattedCaption,
       });
+      const duplicate = queue.find(
+        (row) =>
+          row.renderJobId === item.renderJobId &&
+          row.mp4Sha256 === item.mp4Sha256 &&
+          row.accountId === item.accountId &&
+          row.formattedCaption === item.formattedCaption &&
+          row.state !== 'FAILED',
+      );
+      if (duplicate) return duplicate;
+      const officialJobs = await this.read<PublicationJob[]>(
+        'jobs/' + sessionId + '.json',
+        [],
+      );
+      if (
+        officialJobs.some(
+          (job) =>
+            job.renderJobId === renderJobId &&
+            ['UPLOADING', 'UNKNOWN', 'PUBLISHED'].includes(job.status),
+        )
+      )
+        throw new ConflictException(
+          'PUBLISHER_DUPLICATE_GUARD: Official API already has an active, ambiguous, or published job for this render',
+        );
       queue.unshift(item);
       await this.write('upload-queue/' + sessionId + '.json', queue);
       return item;
@@ -587,14 +641,24 @@ export class PublishingService {
         'upload-queue/' + sessionId + '.json',
         [],
       );
-      if (body?.launchBrowser === true)
-        throw new BadRequestException(
-          'BROWSER_AUTOMATION_DISABLED: use the official Content Posting API or prepare a manual handoff',
-        );
       const item = queue.find((q) => q.id === uuid(uploadId));
       if (!item) throw new BadRequestException('Unknown browser upload job');
+      const officialJobs = await this.read<PublicationJob[]>(
+        'jobs/' + sessionId + '.json',
+        [],
+      );
+      if (
+        officialJobs.some(
+          (job) =>
+            job.renderJobId === item.renderJobId &&
+            ['UPLOADING', 'UNKNOWN'].includes(job.status),
+        )
+      )
+        throw new ConflictException(
+          'PUBLISHER_BUSY: Official API has an active or ambiguous job for this render',
+        );
       await this.uploader.prepareUpload(item, {
-        launchBrowser: false,
+        launchBrowser: body?.launchBrowser === true,
       });
       await this.write('upload-queue/' + sessionId + '.json', queue);
       return item;
@@ -605,7 +669,7 @@ export class PublishingService {
     uploadId: string,
     body: {
       confirmationToken: string;
-      action?: 'VERIFY_GATE_ONLY' | 'MARK_PUBLISHED' | 'SIMULATE_AMBIGUOUS';
+      action?: 'VERIFY_GATE_ONLY' | 'POST_AND_VERIFY';
     },
   ) {
     return this.serial(async () => {
@@ -616,14 +680,24 @@ export class PublishingService {
       );
       const item = queue.find((q) => q.id === uuid(uploadId));
       if (!item) throw new BadRequestException('Unknown browser upload job');
-      if (body.action && body.action !== 'VERIFY_GATE_ONLY')
-        throw new BadRequestException(
-          'BROWSER_POST_DISABLED: Studio cannot mark a browser-assisted handoff as published',
-        );
       await this.uploader.confirmPublish(item, {
         ...body,
-        action: 'VERIFY_GATE_ONLY',
       });
+      await this.write('upload-queue/' + sessionId + '.json', queue);
+      return item;
+    });
+  }
+
+  async closeBrowserUpload(sessionId: string, uploadId: string) {
+    return this.serial(async () => {
+      await this.studio.load(uuid(sessionId));
+      const queue = await this.read<BrowserUploadQueueItem[]>(
+        'upload-queue/' + sessionId + '.json',
+        [],
+      );
+      const item = queue.find((q) => q.id === uuid(uploadId));
+      if (!item) throw new BadRequestException('Unknown browser upload job');
+      await this.uploader.closeBrowser(item);
       await this.write('upload-queue/' + sessionId + '.json', queue);
       return item;
     });
@@ -812,6 +886,10 @@ export class PublishingService {
   }
   async submit(sessionId: string, body: any) {
     return this.serial(async () => {
+      if (this.uploader.browserStatus().active)
+        throw new ConflictException(
+          'PUBLISHER_BUSY: close the browser-assisted upload before using Official API Publishing',
+        );
       const d = body.draft as PublishingDraft,
         validation = await this.validate(sessionId, d);
       if (!validation.ready)

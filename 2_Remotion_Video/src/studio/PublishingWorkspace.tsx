@@ -7,6 +7,7 @@ import type {
   TikTokAccount,
   PublicationJob,
   ManualPublishingHandoff,
+  BrowserUploadQueueItem,
 } from "../../../1_nest_backend/src/studio/publishing.types";
 import type { RenderManifest } from "../../../1_nest_backend/src/studio/render.types";
 import { copyReport } from "./copy-report";
@@ -34,11 +35,18 @@ interface Overview {
     postingStatus: string;
     reasons: string[];
     liveTransferEnabled: boolean;
+    browserAssisted: {
+      preparationEnabled: boolean;
+      livePostEnabled: boolean;
+      profileRootConfigured: boolean;
+      active: boolean;
+    };
   };
   accounts: TikTokAccount[];
   draft: PublishingDraft | null;
   jobs: PublicationJob[];
   manualHandoffs?: ManualPublishingHandoff[];
+  uploadQueue?: BrowserUploadQueueItem[];
   rights: NonNullable<StudioSession["mediaRights"]>;
   requiredRights?: { id: string; label: string }[];
 }
@@ -84,6 +92,11 @@ export function PublishingWorkspace({
     [confirmation, setConfirmation] = useState(""),
     [dirty, setDirty] = useState(false),
     [report, setReport] = useState("");
+  const [browserAccount, setBrowserAccount] = useState(""),
+    [browserProfile, setBrowserProfile] = useState(""),
+    [browserConfirmations, setBrowserConfirmations] = useState<
+      Record<string, string>
+    >({});
   const base = "/sessions/" + session.id,
     account = info?.accounts.find((a) => a.id === draft.accountId),
     render = renders.find((r) => r.jobId === draft.renderJobId);
@@ -278,7 +291,7 @@ export function PublishingWorkspace({
       </div>
       <div className="publish-grid">
         <div className="panel">
-          <h3>Account Manager</h3>
+          <h3>Official Content Posting API · Account Manager</h3>
           <label>
             Environment
             <select
@@ -882,6 +895,183 @@ export function PublishingWorkspace({
             {u.warnings.map((w, idx) => (
               <p key={idx}>{w}</p>
             ))}
+          </article>
+        ))}
+      </div>
+      <div className="panel" data-testid="browser-assisted-upload-panel">
+        <h3>Browser-assisted TikTok Upload</h3>
+        <p>
+          Opens a visible Chromium window with a user-managed local profile,
+          selects the exact FINAL render and prepares its caption. It does not
+          use stealth, import cookies, bypass challenges, choose the newest MP4,
+          or click Post without a separate explicit confirmation.
+        </p>
+        <p>
+          Preparation: {info?.config.browserAssisted.preparationEnabled ? "ENABLED" : "BLOCKED_CONFIGURATION"}
+          {" · "}Live Post: {info?.config.browserAssisted.livePostEnabled ? "EXPLICITLY ENABLED" : "DISABLED"}
+          {" · "}Browser: {info?.config.browserAssisted.active ? "OPEN" : "CLOSED"}
+        </p>
+        <label>
+          TikTok account label
+          <input
+            aria-label="Browser TikTok account label"
+            value={browserAccount}
+            onChange={(e) => setBrowserAccount(e.target.value)}
+            placeholder="e.g. serious-channel"
+          />
+        </label>
+        <label>
+          User-managed profile directory name
+          <input
+            aria-label="Browser profile directory"
+            value={browserProfile}
+            onChange={(e) => setBrowserProfile(e.target.value)}
+            placeholder="e.g. tiktok-serious"
+          />
+        </label>
+        <div className="actions">
+          <button
+            type="button"
+            disabled={
+              disabled || dirty || render?.mode !== "FINAL" ||
+              !browserAccount.trim() || !browserProfile.trim()
+            }
+            onClick={() =>
+              void run(async () => {
+                const item = await api<BrowserUploadQueueItem>(
+                  base + "/publishing/upload-queue",
+                  "POST",
+                  {
+                    renderJobId: draft.renderJobId,
+                    accountId: `browser:${browserAccount.trim()}`,
+                    accountLabel: browserAccount.trim(),
+                    profileDirName: browserProfile.trim(),
+                    caption: draft.caption,
+                    hashtags: draft.hashtags,
+                    mentions: draft.mentions,
+                    privacy: draft.privacy || "USER_SELECTED_IN_TIKTOK",
+                  },
+                );
+                await refresh();
+                setNotice(`Browser upload ${item.id} queued for exact render ${item.renderJobId}. No browser opened yet.`);
+              })
+            }
+          >
+            Queue exact FINAL render
+          </button>
+        </div>
+        {!info?.uploadQueue?.length && <p>No browser-assisted upload jobs.</p>}
+        {info?.uploadQueue?.map((item) => (
+          <article key={item.id} className="panel" style={{ marginTop: 10 }}>
+            <strong>
+              {item.state} · {item.accountLabel} · render {item.renderJobId.slice(0, 8)}
+            </strong>
+            <p>
+              Profile: <code>{item.profileDirName}</code> · SHA-256: <code>{item.mp4Sha256}</code>
+            </p>
+            <p>Caption: <code>{item.formattedCaption}</code></p>
+            {item.error && <p className="alert error">{item.error}</p>}
+            {item.warnings.map((warning, index) => <p key={index}>{warning}</p>)}
+            <details>
+              <summary>Operation history</summary>
+              {item.transitions.map((transition, index) => (
+                <p key={index}>{transition.at} · {transition.state} · {transition.detail}</p>
+              ))}
+            </details>
+            <div className="actions">
+              <button
+                type="button"
+                disabled={
+                  disabled || !info.config.browserAssisted.preparationEnabled ||
+                  !["QUEUED", "AWAITING_USER_ACTION"].includes(item.state) &&
+                  !(item.state === "READY_FOR_CONFIRMATION" && !info.config.browserAssisted.active)
+                }
+                onClick={() =>
+                  void run(async () => {
+                    const prepared = await api<BrowserUploadQueueItem>(
+                      base + `/publishing/upload-queue/${item.id}/prepare`,
+                      "POST",
+                      { launchBrowser: true },
+                    );
+                    await refresh();
+                    setNotice(`${prepared.state}: visible browser preparation checkpoint saved; Post was not clicked.`);
+                  })
+                }
+              >
+                {item.state === "AWAITING_USER_ACTION"
+                  ? "Resume after user action"
+                  : item.state === "READY_FOR_CONFIRMATION"
+                    ? "Reopen Chromium after restart"
+                    : "Open Chromium & prepare"}
+              </button>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() =>
+                  void run(async () => {
+                    await api(base + `/publishing/upload-queue/${item.id}/close`, "POST", {});
+                    await refresh();
+                    setNotice("Browser closed; MP4 and queue history preserved.");
+                  })
+                }
+              >
+                Close browser
+              </button>
+            </div>
+            {item.state === "READY_FOR_CONFIRMATION" && item.humanConfirmationToken && (
+              <div>
+                <p>
+                  Review the visible TikTok preview and settings. To authorize this exact attempt, type:
+                  <br /><code>{item.humanConfirmationToken}</code>
+                </p>
+                <input
+                  aria-label={`Browser confirmation ${item.id}`}
+                  value={browserConfirmations[item.id] || ""}
+                  onChange={(e) =>
+                    setBrowserConfirmations((current) => ({ ...current, [item.id]: e.target.value }))
+                  }
+                />
+                <div className="actions">
+                  <button
+                    type="button"
+                    disabled={disabled || browserConfirmations[item.id] !== item.humanConfirmationToken}
+                    onClick={() =>
+                      void run(async () => {
+                        await api(base + `/publishing/upload-queue/${item.id}/confirm`, "POST", {
+                          confirmationToken: browserConfirmations[item.id],
+                          action: "VERIFY_GATE_ONLY",
+                        });
+                        await refresh();
+                        setNotice("Confirmation gate checked; Post was not clicked.");
+                      })
+                    }
+                  >
+                    Verify confirmation only
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      disabled || !info.config.browserAssisted.livePostEnabled ||
+                      browserConfirmations[item.id] !== item.humanConfirmationToken
+                    }
+                    onClick={() => {
+                      if (!window.confirm("Click Post in the visible TikTok window for this exact render? This cannot be safely retried if the result is ambiguous.")) return;
+                      void run(async () => {
+                        const result = await api<BrowserUploadQueueItem>(
+                          base + `/publishing/upload-queue/${item.id}/confirm`,
+                          "POST",
+                          { confirmationToken: browserConfirmations[item.id], action: "POST_AND_VERIFY" },
+                        );
+                        await refresh();
+                        setNotice(`${result.state}: ${result.error || "TikTok completion signal recorded."}`);
+                      });
+                    }}
+                  >
+                    Confirm Post & verify platform result
+                  </button>
+                </div>
+              </div>
+            )}
           </article>
         ))}
       </div>

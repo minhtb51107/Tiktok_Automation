@@ -195,4 +195,12 @@ export class PublishingController {
     this.origin(o);
     return this.publishing.retryBrowserUpload(id, uploadId);
   }
+  @Post('sessions/:id/publishing/upload-queue/:uploadId/close') closeUpload(
+    @Param('id') id: string,
+    @Param('uploadId') uploadId: string,
+    @Headers('origin') o?: string,
+  ) {
+    this.origin(o);
+    return this.publishing.closeBrowserUpload(id, uploadId);
+  }
 }

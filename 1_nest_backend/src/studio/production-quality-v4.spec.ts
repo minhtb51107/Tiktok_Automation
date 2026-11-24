@@ -337,7 +337,7 @@ describe('Production Quality V4 + Publishing Recovery', () => {
     expect(v.warnings.join('\n')).toContain('MANUAL_DURATION_ADVISORY');
   });
 
-  it('VI. enforces compliant TikTok Browser Upload queue, SHA-256 binding, human confirmation gate, UNKNOWN retry lock, and preserves MP4 file on disk', async () => {
+  it('VI. rejects DRAFT renders before browser upload and preserves the MP4', async () => {
     const uploaderSource = readFileSync(
       path.resolve('src/modules/core/uploader/tiktok-upload.service.ts'),
       'utf8',
@@ -386,52 +386,16 @@ describe('Production Quality V4 + Publishing Recovery', () => {
     const publishing = new PublishingService(studioStub);
     (publishing as any).root = path.join(root, 'publishing');
 
-    const queued = await publishing.enqueueBrowserUpload(sessionId, {
-      renderJobId,
-      accountLabel: 'SERIOUS_CHANNEL',
-      caption: 'Ca trực đêm ở bệnh viện',
-      hashtags: ['threads', 'chuyennghe'],
-      expectedSha256: expectedSha,
-    });
-    expect(queued.state).toBe('QUEUED');
-    expect(queued.mp4Sha256).toBe(expectedSha);
-    expect(queued.renderJobId).toBe(renderJobId);
-
-    const prepared = await publishing.prepareBrowserUpload(
-      sessionId,
-      queued.id,
-      { launchBrowser: false },
-    );
-    expect(prepared.state).toBe('READY_FOR_CONFIRMATION');
-    expect(prepared.humanConfirmationToken).toContain('CONFIRM_PUBLISH_');
-    expect(prepared.transitions.map((t) => t.state)).toEqual([
-      'QUEUED',
-      'PREPARING',
-      'UPLOADING',
-      'READY_FOR_CONFIRMATION',
-    ]);
-
-    // Verify human confirmation gate without public posting
-    const gateVerified = await publishing.confirmBrowserUpload(
-      sessionId,
-      queued.id,
-      {
-        confirmationToken: prepared.humanConfirmationToken!,
-        action: 'VERIFY_GATE_ONLY',
-      },
-    );
-    expect(gateVerified.state).toBe('READY_FOR_CONFIRMATION');
-    expect(gateVerified.humanConfirmedAt).toBeTruthy();
-
-    // Browser automation cannot mark a post as published or ambiguous.
     await expect(
-      publishing.confirmBrowserUpload(sessionId, queued.id, {
-        confirmationToken: prepared.humanConfirmationToken!,
-        action: 'SIMULATE_AMBIGUOUS',
+      publishing.enqueueBrowserUpload(sessionId, {
+        renderJobId,
+        accountLabel: 'SERIOUS_CHANNEL',
+        caption: 'Ca trực đêm ở bệnh viện',
+        hashtags: ['threads', 'chuyennghe'],
+        expectedSha256: expectedSha,
       }),
-    ).rejects.toThrow('BROWSER_POST_DISABLED');
+    ).rejects.toThrow('BLOCKED_FINAL');
 
-    // Verify the MP4 file on disk was NEVER deleted
     const afterStat = await fs.stat(mp4Path);
     expect(afterStat.size).toBe(mp4Bytes.length);
   });

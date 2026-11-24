@@ -8,13 +8,16 @@ import { createHash, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { createReadStream } from 'fs';
 import * as path from 'path';
-import puppeteer from 'puppeteer';
-import { existingPublicBrowser } from '../scraper/public-discovery';
+import {
+  PuppeteerBrowserUploadDriver,
+  type BrowserUploadDriver,
+} from './browser-upload-driver';
 
 export type BrowserUploadJobState =
   | 'QUEUED'
   | 'PREPARING'
   | 'UPLOADING'
+  | 'AWAITING_USER_ACTION'
   | 'READY_FOR_CONFIRMATION'
   | 'VERIFYING'
   | 'PUBLISHED'
@@ -93,6 +96,23 @@ export interface EnqueueBrowserUploadInput {
 export class TiktokUploadService {
   private readonly logger = new Logger('TiktokUploadAdapter');
   private isUploading = false;
+  private readonly browserDriver: BrowserUploadDriver;
+
+  constructor(browserDriver?: BrowserUploadDriver) {
+    this.browserDriver = browserDriver || new PuppeteerBrowserUploadDriver();
+  }
+
+  browserStatus() {
+    return {
+      preparationEnabled:
+        process.env.STUDIO_TIKTOK_BROWSER_ENABLED === '1' &&
+        !!process.env.STUDIO_TIKTOK_PROFILE_ROOT,
+      livePostEnabled:
+        process.env.STUDIO_TIKTOK_BROWSER_LIVE_ENABLED === '1',
+      profileRootConfigured: !!process.env.STUDIO_TIKTOK_PROFILE_ROOT,
+      active: this.browserDriver.has(),
+    };
+  }
 
   resolveProfileFolder(accountLabelOrCategory?: string | null): string {
     const clean = String(accountLabelOrCategory || 'SERIOUS')
@@ -103,6 +123,16 @@ export class TiktokUploadService {
     if (!clean || clean === 'serious') return 'tiktok_profile_serious';
     if (clean === 'drama') return 'tiktok_profile_drama';
     return `tiktok_profile_${clean.slice(0, 32)}`;
+  }
+
+  private explicitProfileFolder(value?: string) {
+    if (!value) return null;
+    const clean = value.trim();
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(clean))
+      throw new BadRequestException(
+        'BROWSER_PROFILE_INVALID: choose a simple user-managed profile directory name',
+      );
+    return clean;
   }
 
   async verifyRenderFile(
@@ -186,9 +216,9 @@ export class TiktokUploadService {
       height: input.height,
       accountId: input.accountId,
       accountLabel: input.accountLabel,
-      profileDirName: this.resolveProfileFolder(
-        input.profileDirName || input.accountLabel,
-      ),
+      profileDirName:
+        this.explicitProfileFolder(input.profileDirName) ||
+        this.resolveProfileFolder(input.accountLabel),
       caption: input.caption,
       hashtags: [...input.hashtags],
       mentions: [...input.mentions],
@@ -228,7 +258,13 @@ export class TiktokUploadService {
         'RETRY_BLOCKED_UNKNOWN_OR_POST_CLICKED: manual verification required on TikTok before retrying',
       );
     }
-    if (!['QUEUED', 'READY_FOR_CONFIRMATION'].includes(item.state)) {
+    const resumableReady =
+      item.state === 'READY_FOR_CONFIRMATION' &&
+      !this.browserDriver.has(item.id);
+    if (
+      !['QUEUED', 'AWAITING_USER_ACTION'].includes(item.state) &&
+      !resumableReady
+    ) {
       throw new ConflictException(
         `INVALID_UPLOAD_STATE_TRANSITION: cannot prepare from state ${item.state}`,
       );
@@ -255,63 +291,26 @@ export class TiktokUploadService {
       );
 
       if (options.launchBrowser) {
-        const executable = existingPublicBrowser();
-        if (!executable) {
-          item.error =
-            'BROWSER_MISSING: no local Chrome/Edge executable found; no automatic download attempted';
-          return this.transition(item, 'FAILED', item.error);
+        if (!this.browserStatus().preparationEnabled)
+          throw new BadRequestException(
+            'BROWSER_ASSISTED_DISABLED: enable the local headed-browser gate and configure the user-managed profile root',
+          );
+        const result = await this.browserDriver.prepare({
+          jobId: item.id,
+          videoPath: item.videoPath,
+          formattedCaption: item.formattedCaption,
+          profileDirName: item.profileDirName,
+        });
+        item.warnings.push(`${result.detail} (${result.pagePath})`);
+        if (result.status === 'USER_ACTION_REQUIRED') {
+          item.error = null;
+          item.retryAllowed = true;
+          return this.transition(item, 'AWAITING_USER_ACTION', result.detail);
         }
-        const userDataDir = path.resolve(process.cwd(), item.profileDirName);
-        let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
-        try {
-          browser = await puppeteer.launch({
-            executablePath: executable,
-            headless: true,
-            userDataDir,
-            args: [
-              '--disable-background-networking',
-              '--disable-extensions',
-              '--disable-notifications',
-              '--window-size=1280,960',
-            ],
-          });
-          const page = (await browser.pages())[0] ?? (await browser.newPage());
-          await page.setViewport({ width: 1280, height: 960 });
-          const response = await page.goto(
-            'https://www.tiktok.com/creator-center/upload',
-            {
-              waitUntil: 'domcontentloaded',
-              timeout: 25000,
-            },
-          );
-          const url = page.url();
-          const gated =
-            (response && response.status() >= 400) ||
-            /\/(?:login|challenge|checkpoint|verify)(?:\/|\?|$)/i.test(url) ||
-            (await page.evaluate(
-              () =>
-                !!document.querySelector(
-                  'input[type="password"],iframe[src*="captcha"],[data-testid*="captcha"],[id*="captcha"]',
-                ),
-            ));
-          if (gated) {
-            item.error =
-              'AUTH_OR_CAPTCHA_GATE_STOP: TikTok requires login or human verification; stopped immediately without bypass';
-            item.retryAllowed = true;
-            return this.transition(item, 'FAILED', item.error);
-          }
-          const fileInput = await page.$(
-            'input[type="file"][accept*="video"]',
-          );
-          if (!fileInput) {
-            item.error =
-              'UPLOAD_FORM_UNAVAILABLE: TikTok video file input not accessible without authenticated creator session';
-            item.retryAllowed = true;
-            return this.transition(item, 'FAILED', item.error);
-          }
-          await fileInput.uploadFile(item.videoPath);
-        } finally {
-          await browser?.close().catch(() => {});
+        if (result.status === 'BLOCKED') {
+          item.error = result.detail;
+          item.retryAllowed = true;
+          return this.transition(item, 'FAILED', result.detail);
         }
       }
 
@@ -334,7 +333,7 @@ export class TiktokUploadService {
     item: BrowserUploadQueueItem,
     body: {
       confirmationToken: string;
-      action?: 'VERIFY_GATE_ONLY' | 'MARK_PUBLISHED' | 'SIMULATE_AMBIGUOUS';
+      action?: 'VERIFY_GATE_ONLY' | 'POST_AND_VERIFY';
     },
   ): Promise<BrowserUploadQueueItem> {
     if (item.state !== 'READY_FOR_CONFIRMATION') {
@@ -367,6 +366,11 @@ export class TiktokUploadService {
       return item;
     }
 
+    if (!this.browserStatus().livePostEnabled)
+      throw new BadRequestException(
+        'BROWSER_LIVE_POST_DISABLED: explicit local LIVE browser-post gate is not enabled',
+      );
+
     // Once Post is triggered (VERIFYING), automatic retry is permanently locked.
     item.postClicked = true;
     item.retryAllowed = false;
@@ -376,17 +380,25 @@ export class TiktokUploadService {
       'Human confirmation accepted; Post triggered, verifying completion signal (retry locked)',
     );
 
-    if (action === 'SIMULATE_AMBIGUOUS') {
-      item.error =
-        'AMBIGUOUS_POST_OUTCOME: Post was triggered but confirmation signal timed out; automatic retry is blocked to prevent duplicate publication.';
-      return this.transition(item, 'UNKNOWN', item.error);
+    const result = await this.browserDriver.confirm(item.id);
+    item.warnings.push(`${result.detail} (${result.pagePath})`);
+    if (result.status === 'UNKNOWN') {
+      item.error = result.detail;
+      return this.transition(item, 'UNKNOWN', result.detail);
     }
+    await this.browserDriver.close(item.id);
+    return this.transition(item, 'PUBLISHED', result.detail);
+  }
 
-    return this.transition(
-      item,
-      'PUBLISHED',
-      'Publication confirmed after human gate; local MP4 artifact preserved on disk.',
-    );
+  async closeBrowser(item: BrowserUploadQueueItem) {
+    await this.browserDriver.close(item.id);
+    item.transitions.push({
+      state: item.state,
+      at: new Date().toISOString(),
+      detail: 'Operator closed the headed browser window; queue data and MP4 were preserved',
+    });
+    item.updatedAt = new Date().toISOString();
+    return item;
   }
 
   retryQueueItem(item: BrowserUploadQueueItem): BrowserUploadQueueItem {
@@ -402,6 +414,7 @@ export class TiktokUploadService {
     }
     item.error = null;
     item.retryAllowed = true;
+    item.completedAt = null;
     return this.transition(
       item,
       'QUEUED',
