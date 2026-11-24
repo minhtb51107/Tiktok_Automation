@@ -46,6 +46,8 @@ export interface SpeechRule {
   category: string;
   caseMode: CaseMode;
   when?: (c: RuleContext) => boolean;
+  /** When true, only applied in TTS mode so card/subtitle text keeps original spelling. */
+  ttsOnly?: boolean;
   note?: string;
 }
 export interface PhraseRule {
@@ -1219,6 +1221,91 @@ export const SPEECH_RULES: SpeechRule[] = [
       !LETTER_BLOCK_PREV.has(p(c)) &&
       (!c.nextSameClause ||
         has(set('thì', 'nên', 'mà', 'á', 'ạ', 'nha', 'nhé', 'đó', 'đấy', 'nè'), n(c))),
+  },
+  // ── TTS-only phonetic pronunciation overrides (display/subtitle text unchanged) ──
+  {
+    id: 'TTS-IELTS',
+    terms: ['ielts'],
+    spoken: 'eye elts',
+    category: 'TTS_PHONETIC',
+    caseMode: 'any',
+    ttsOnly: true,
+    note: 'vig2p phonemizes raw IELTS as /iːlts/ ("i ót"); "eye elts" yields /ˈaɪ ˈɛlts/ verified on Kokoro my_yen WAV.',
+  },
+  {
+    id: 'TTS-BA',
+    terms: ['BA'],
+    spoken: 'bi ây',
+    category: 'TTS_PHONETIC',
+    caseMode: 'exact',
+    ttsOnly: true,
+    note: 'Prevents uppercase BA (Business Analyst / Bachelor of Arts) from being read as Vietnamese "ba".',
+  },
+  {
+    id: 'TTS-UK',
+    terms: ['uk'],
+    spoken: 'UK',
+    category: 'TTS_PHONETIC',
+    caseMode: 'lower',
+    ttsOnly: true,
+    when: (c) =>
+      has(c.clauseWords, 'trường', 'học', 'ielts', 'nước', 'top', 'đầu', 'anh', 'du'),
+    note: 'Uppercases "uk" to "UK" in TTS mode so vig2p yields /jˌuːkˈeɪ/ instead of Vietnamese syllables.',
+  },
+  {
+    id: 'TTS-XH',
+    terms: ['xh'],
+    spoken: 'xã hội',
+    category: 'ABBREVIATION',
+    caseMode: 'any',
+    ttsOnly: true,
+  },
+  {
+    id: 'TTS-LUN',
+    terms: ['lun'],
+    spoken: 'luôn',
+    category: 'TEENCODE',
+    caseMode: 'lower',
+    ttsOnly: true,
+  },
+  {
+    id: 'TTS-GS',
+    terms: ['GS'],
+    spoken: 'giáo sư',
+    category: 'ABBREVIATION',
+    caseMode: 'exact',
+    ttsOnly: true,
+  },
+  {
+    id: 'TTS-TT-PRESIDENT',
+    terms: ['TT'],
+    spoken: 'Tổng thống',
+    category: 'ABBREVIATION',
+    caseMode: 'exact',
+    ttsOnly: true,
+    when: (c) => has(c.clauseWords, 'mẽo', 'mỹ', 'phát', 'biểu', 'thông', 'dịch', 'cam'),
+  },
+  {
+    id: 'CTX-TA-ENGLISH',
+    terms: ['TA'],
+    spoken: 'tiếng Anh',
+    category: 'ABBREVIATION',
+    caseMode: 'exact',
+    ttsOnly: true,
+    when: (c) =>
+      has(
+        c.clauseWords,
+        'giáo',
+        'dạy',
+        'học',
+        'ielts',
+        'ngoại',
+        'ngữ',
+        'môn',
+        'thi',
+        'nói',
+      ),
+    note: 'Expands uppercase TA to "tiếng Anh" only in language/education clauses.',
   },
 ];
 function nextAfter(c: RuleContext): string {

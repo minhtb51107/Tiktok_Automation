@@ -2,7 +2,9 @@ import { DATA_SCHEMA } from './contracts';
 import { hash } from './rules';
 import { ConversationEngine } from './conversation-engine';
 import {
+  DEFAULT_EDITORIAL_MODE,
   EDITORIAL_VERSION,
+  type EditorialMode,
   type EditorialPlan,
   type EditorialSection,
 } from './editorial-contracts';
@@ -61,7 +63,11 @@ export class EditorialEngine {
       const observedUrls = review.selectedObservedUrls || [];
       if (!review.selectedReplyIds.length && !observedUrls.length)
         throw Error('EDITORIAL_SELECT_CONVERSATION_MATERIAL');
-      const replies = selectedReplies(
+      const mode: EditorialMode =
+          body.mode === 'COMMENTARY_ENABLED'
+            ? 'COMMENTARY_ENABLED'
+            : DEFAULT_EDITORIAL_MODE,
+        replies = selectedReplies(
           record.collection,
           review.selectedReplyIds,
         ),
@@ -73,6 +79,7 @@ export class EditorialEngine {
           selectedReplyIds: review.selectedReplyIds,
           selectedObservedUrls: observedUrls,
           style: 'SERIOUS',
+          ...(mode === 'VERBATIM_THREADS' ? { mode } : {}),
         });
       for await (const row of this.conversations.data.store.rows<EditorialPlan>(
         'editorial-plans',
@@ -118,13 +125,21 @@ export class EditorialEngine {
         locked: false,
         sourceEvidence: 'AI_COMMENTARY',
       });
-      const sections = [
-        commentary('HOOK'),
+      const rawRootText = (record.collection.root.rawPayload as any)?.text;
+      const rootBody =
+        typeof rawRootText === 'string' &&
+        rawRootText.trim() &&
+        record.collection.root.originalText
+          .replace(/^\d{1,2}\/\d{1,2}\/\d{4}\r?\n/, '')
+          .trim() === rawRootText.trim()
+          ? rawRootText.trim()
+          : record.collection.root.originalText;
+      const sourceSections: EditorialSection[] = [
         {
           ...quote(
             'root',
             'CONTEXT',
-            record.collection.root.originalText,
+            rootBody,
             record.collection.root.id,
             null,
             record.collection.root.url,
@@ -157,9 +172,16 @@ export class EditorialEngine {
               ? ('OBSERVED_RELATIONSHIP_UNVERIFIED' as const)
               : ('UNKNOWN_CONVERSATION_MEMBERSHIP' as const),
         })),
-        commentary('COMMENTARY'),
-        commentary('RESOLUTION'),
       ];
+      const sections: EditorialSection[] =
+        mode === 'VERBATIM_THREADS'
+          ? sourceSections
+          : [
+              commentary('HOOK'),
+              ...sourceSections,
+              commentary('COMMENTARY'),
+              commentary('RESOLUTION'),
+            ];
       const bundle = {
           collection: record.collection,
           quality: record.evaluation,
@@ -187,8 +209,10 @@ export class EditorialEngine {
           sections,
           bundle.humanReplyLabels,
           observedUrls,
+          mode,
         ),
         style: 'SERIOUS',
+        mode,
         scriptStatus: 'DRAFT',
         editorialSelectionConfirmed: true,
         rightsStatus: 'UNKNOWN',
@@ -264,6 +288,7 @@ export class EditorialEngine {
         sections,
         plan.bundle.humanReplyLabels,
         plan.selectedObservedUrls || [],
+        plan.mode ?? 'COMMENTARY_ENABLED',
       );
       plan.history.push({
         at: plan.updatedAt,
@@ -305,6 +330,7 @@ export class EditorialEngine {
         plan.sections,
         plan.bundle.humanReplyLabels,
         plan.selectedObservedUrls || [],
+        plan.mode ?? 'COMMENTARY_ENABLED',
       );
       if (f.status !== 'READY_FOR_SCRIPT')
         throw Error('EDITORIAL_NOT_FEASIBLE');

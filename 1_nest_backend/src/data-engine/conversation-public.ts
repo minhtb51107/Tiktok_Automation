@@ -1122,10 +1122,31 @@ export async function enrichConversation(
       const fields = attempt.records[0]?.fields;
       const exact = (key: string, value: number | null) =>
         fields?.[key]?.status === 'AVAILABLE' ? value : null;
+      const structuredAvatars = new Map<string, string>();
+      for (const sp of structured.posts) {
+        const av = (sp as { authorAvatarUrl?: string | null }).authorAvatarUrl;
+        if (av && !/static\.cdninstagram\.com\/rsrc\.php|\/rsrc\.php\/v\d+\//i.test(av)) {
+          const canon = canonicalPost(sp.url)?.url ?? sp.url;
+          if (canon && !structuredAvatars.has(canon)) structuredAvatars.set(canon, av);
+        }
+      }
+      const rootAvatarCandidate =
+        structuredAvatars.get(target.url) ??
+        observed.rows.find((r) => canonicalPost(r.subjectUrl)?.url === target.url)?.avatarUrl ??
+        (attempt.records[0]?.avatar &&
+        !/static\.cdninstagram\.com\/rsrc\.php|\/rsrc\.php\/v\d+\//i.test(attempt.records[0].avatar)
+          ? attempt.records[0].avatar
+          : null) ??
+        source.author.avatarUrl ??
+        null;
       const root: PublicPost = {
         id: target.id,
         url: target.url,
-        author: { handle: target.handle, name: source.author.name },
+        author: {
+          handle: target.handle,
+          name: source.author.name,
+          ...(rootAvatarCandidate ? { avatarUrl: rootAvatarCandidate } : {}),
+        },
         originalText: source.originalBody!,
         topic: source.topic,
         itemType: 'UNKNOWN',
@@ -1161,9 +1182,11 @@ export async function enrichConversation(
               fields[k]?.status === 'AVAILABLE'
                 ? Number(fields[k].value)
                 : null;
+          const canon = canonicalPost(r.subjectUrl!)?.url ?? r.subjectUrl!;
           return {
             url: r.subjectUrl!,
             publishedAt: r.date,
+            avatarUrl: structuredAvatars.get(canon) ?? r.avatarUrl ?? null,
             engagement: {
               likes: value('likeCount'),
               replies: value('replyCount'),
@@ -1173,6 +1196,19 @@ export async function enrichConversation(
             engagementFields: fields as PublicPost['engagementFields'],
           };
         });
+      const observedCardObsUrls = new Set(
+        cardObservations.map((o) => canonicalPost(o.url)?.url ?? o.url),
+      );
+      for (const [canon, av] of structuredAvatars.entries()) {
+        if (observedCardObsUrls.has(canon)) continue;
+        cardObservations.push({
+          url: canon,
+          publishedAt: null,
+          avatarUrl: av,
+          engagement: { likes: null, replies: null, reposts: null, shares: null },
+          engagementFields: undefined as any,
+        });
+      }
       const observedCards = collectPublicCards(
         observed,
         context,

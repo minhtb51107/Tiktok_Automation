@@ -417,21 +417,37 @@ export async function extractPublicThreads(
                 .map((x) => x.textContent?.trim() || '')
                 .filter(Boolean);
               const time = node.querySelector('time');
-              const imgs = [...node.querySelectorAll('img')];
-              const avatar =
-                imgs.find(
-                  (i) =>
-                    i.width > 10 &&
-                    i.width < 100 &&
-                    /^https:/i.test(i.src || '') &&
-                    !/static\.cdninstagram\.com\/rsrc\.php|\/rsrc\.php\/v\d+\//i.test(
-                      i.src || '',
-                    ),
-                )?.src || null;
               const permalink =
                 [...node.querySelectorAll('a[href]')]
                   .map((a) => a.getAttribute('href') || '')
                   .find((h) => /^\/@[\w.-]+\/post\/[\w-]+\/?$/.test(h)) || null;
+              const rowHandle = permalink ? permalink.split('/')[1].slice(1).toLowerCase() : '';
+              const isValidAvatar = (i: HTMLImageElement) =>
+                /^https:/i.test(i.src || '') &&
+                !/static\.cdninstagram\.com\/rsrc\.php|\/rsrc\.php\/v\d+\//i.test(
+                  i.src || '',
+                );
+              const imgs = [...node.querySelectorAll('img')];
+              const byAlt = (list: HTMLImageElement[]) =>
+                rowHandle
+                  ? list.find((i) => {
+                      if (!isValidAvatar(i)) return false;
+                      const alt = (i.alt || '').toLowerCase();
+                      return (
+                        alt === `ảnh đại diện của ${rowHandle}` ||
+                        alt === `${rowHandle}'s profile picture` ||
+                        alt === `${rowHandle}’s profile picture`
+                      );
+                    })
+                  : undefined;
+              const avatar =
+                byAlt(imgs)?.src ||
+                imgs.find((i) => {
+                  const w = i.width || Math.round(i.getBoundingClientRect().width);
+                  return w > 10 && w < 100 && isValidAvatar(i);
+                })?.src ||
+                byAlt([...document.querySelectorAll('img')])?.src ||
+                null;
               const visibleMetrics = spans.filter((s) =>
                 /^[\d.,]+[KkMm]?$/.test(s),
               );

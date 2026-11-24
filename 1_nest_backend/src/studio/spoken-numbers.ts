@@ -513,11 +513,23 @@ export function numberEdits(
       return readInteger(m[1]) + ' đến ' + readInteger(m[2]);
     },
   );
-  // 19. Decimal with unit word and thousands-separated integers
+  // 19. Decimal with unit word, IELTS/band score decimals, and thousands-separated integers
   scan(
     /(?<![\p{L}\p{N}.,])(\d+)[,.](\d+)(?=\s*(?:triệu|tỷ|nghìn)(?![\p{L}\p{N}]))/gu,
     'DECIMAL_UNIT',
     (m) => readInteger(stripZeros(m[1])) + ' phẩy ' + readDigits(m[2]),
+  );
+  scan(
+    /(?<![\p{L}\p{N}.,])(\d{1,2})\.(\d)(?![\p{N}])/gu,
+    'SCORE_DECIMAL',
+    (m, s) => {
+      const ctx = text
+        .slice(Math.max(0, s - 120), Math.min(text.length, s + 80))
+        .toLocaleLowerCase('vi');
+      if (!/\b(?:ielts|eye elts|gpa|band|chấm|điểm|b1|b2|c1|c2)\b/u.test(ctx))
+        return null;
+      return readInteger(stripZeros(m[1])) + ' chấm ' + readDigits(m[2]);
+    },
   );
   scan(
     /(?<![\p{L}\p{N}.,])\d{1,3}(?:\.\d{3})+(?![\p{N}]|[.,]\d)/gu,

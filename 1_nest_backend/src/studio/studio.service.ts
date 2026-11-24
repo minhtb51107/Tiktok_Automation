@@ -1864,11 +1864,30 @@ export class StudioService {
                   editorial: {
                     ...original.editorial,
                     kind:
-                      original.editorial.kind === 'QUOTE' &&
-                      (patch.spokenText !== original.originalText ||
-                        patch.displayText !== original.originalText)
-                        ? ('PARAPHRASE' as const)
-                        : original.editorial.kind,
+                      original.editorial.kind === 'COMMENTARY'
+                        ? 'COMMENTARY'
+                        : (() => {
+                              const verbatimCandidates = [
+                                original.originalText,
+                                original.rawExtraction?.text,
+                              ]
+                                .filter(
+                                  (v): v is string =>
+                                    typeof v === 'string' && !!v,
+                                )
+                                .flatMap((v) => [
+                                  v,
+                                  v
+                                    .replace(/^\d{1,2}\/\d{1,2}\/\d{4}\r?\n+/, '')
+                                    .trim(),
+                                ]);
+                              return verbatimCandidates.includes(
+                                patch.displayText,
+                              ) &&
+                                verbatimCandidates.includes(patch.spokenText)
+                                ? ('QUOTE' as const)
+                                : ('PARAPHRASE' as const);
+                            })(),
                   },
                 }
               : {}),

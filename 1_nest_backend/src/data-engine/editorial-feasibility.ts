@@ -5,6 +5,7 @@ import type {
   ConversationEvaluation,
 } from './conversation-contracts';
 import type {
+  EditorialMode,
   EditorialSection,
   Feasibility,
   DurationAssessment,
@@ -140,6 +141,7 @@ export function feasibility(
   sections?: EditorialSection[],
   humanLabels: Record<string, string> = {},
   observedUrls: string[] = [],
+  mode: EditorialMode = 'COMMENTARY_ENABLED',
 ): Feasibility {
   const replies = selectedReplies(c, ids),
     observed = selectedObservedContexts(c, observedUrls),
@@ -182,12 +184,13 @@ export function feasibility(
       'Explicitly selected observations keep their original membership and parent evidence and require editorial review.',
     );
   }
-  if (!personal) missing.push('CLEAR_SITUATION_OR_ARGUMENT');
-  if (!commentary.some((s) => s.stage === 'HOOK'))
+  const verbatim = mode === 'VERBATIM_THREADS';
+  if (!personal && !verbatim) missing.push('CLEAR_SITUATION_OR_ARGUMENT');
+  if (!verbatim && !commentary.some((s) => s.stage === 'HOOK'))
     missing.push('ORIGINAL_HOOK');
-  if (!commentary.some((s) => s.stage === 'COMMENTARY'))
+  if (!verbatim && !commentary.some((s) => s.stage === 'COMMENTARY'))
     missing.push('ORIGINAL_COMMENTARY');
-  if (!commentary.some((s) => s.stage === 'RESOLUTION'))
+  if (!verbatim && !commentary.some((s) => s.stage === 'RESOLUTION'))
     missing.push('ORIGINAL_RESOLUTION');
   const estimate = estimatedDuration(narration);
   let status: Feasibility['status'];
@@ -223,7 +226,10 @@ export function feasibility(
     reasons.push(
       'Popularity cannot replace substantive discussion; do not manufacture length.',
     );
-  } else if (sourceTokens < EDITORIAL_CONFIG.minimumSourceTokens || !personal) {
+  } else if (
+    !verbatim &&
+    (sourceTokens < EDITORIAL_CONFIG.minimumSourceTokens || !personal)
+  ) {
     status = 'NEEDS_EDITORIAL_ENRICHMENT';
     reasons.push(
       'Source context is limited; editor must determine whether meaningful analysis is possible.',
@@ -234,7 +240,7 @@ export function feasibility(
         code !== 'OBSERVED_PARENT_RELATIONSHIP_UNVERIFIED' &&
         code !== 'UNKNOWN_CONVERSATION_MEMBERSHIP_REQUIRES_EXCEPTION_REVIEW',
     ) ||
-    estimate.minimumSeconds <= EDITORIAL_CONFIG.minReleaseSeconds
+    (!verbatim && estimate.minimumSeconds <= EDITORIAL_CONFIG.minReleaseSeconds)
   ) {
     status = 'NEEDS_EDITORIAL_ENRICHMENT';
     reasons.push(
@@ -243,7 +249,9 @@ export function feasibility(
   } else {
     status = 'READY_FOR_SCRIPT';
     reasons.push(
-      'Heuristic material/structure checks pass; human factual/semantic review and measured TTS are still required.',
+      verbatim
+        ? 'Verbatim Threads mode: original root and selected replies only; duration is determined from measured TTS.'
+        : 'Heuristic material/structure checks pass; human factual/semantic review and measured TTS are still required.',
     );
   }
   if (

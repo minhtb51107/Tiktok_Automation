@@ -20,6 +20,7 @@ export interface PublicDocument {
   cardObservations?: Array<{
     url: string;
     publishedAt: string | null;
+    avatarUrl?: string | null;
     engagement: PublicPost['engagement'];
     engagementFields?: PublicPost['engagementFields'];
   }>;
@@ -308,8 +309,16 @@ export function collectEvidence(
         accepted.get(url)!.engagement = matching[0].engagement;
         accepted.get(url)!.engagementFields = matching[0].engagementFields;
         accepted.get(url)!.publishedAt ??= date(matching[0].publishedAt);
+        if (matching[0].avatarUrl) {
+          accepted.get(url)!.author.avatarUrl = matching[0].avatarUrl;
+        }
         accepted.get(url)!.provenance.method +=
           ';UNIQUE_CARD_LABELLED_COUNTERS';
+      } else {
+        const avatarMatch = matching.find((m) => !!m.avatarUrl)?.avatarUrl;
+        if (avatarMatch) {
+          accepted.get(url)!.author.avatarUrl = avatarMatch;
+        }
       }
       pending.delete(url);
       progressed = true;

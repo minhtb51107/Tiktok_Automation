@@ -3,6 +3,18 @@ import type { EditorialPlan } from './editorial-contracts';
 import { editorSettings } from '../video-pipeline/editor-state';
 import {sourceProvenance,combinedProvenance} from './studio-integration';
 import { observedContextViews } from './conversation-context';
+import { canonicalPost } from './conversation-identity';
+import { isPlaceholderAvatarUrl } from '../studio/source-images';
+
+function usableAvatar(...candidates: Array<string | null | undefined>): string | null {
+  for (const url of candidates) {
+    if (typeof url === 'string' && url.trim() && !isPlaceholderAvatarUrl(url)) {
+      return url.trim();
+    }
+  }
+  return null;
+}
+
 /** Extends the existing DATA03 seed, preserving root and reply identities separately from editorial scene IDs. */
 export function editorialSession(
   s: StudioSession,
@@ -11,6 +23,33 @@ export function editorialSession(
   const root = plan.bundle.collection.root,
     original = s.items[0],
     observed = new Map(observedContextViews(plan.bundle.collection).map((row) => [row.id, row]));
+  const collection = plan.bundle.collection;
+  const resolveAvatar = (reply?: (typeof collection.replies)[number], observedRow?: ReturnType<typeof observedContextViews>[number]) => {
+    if (observedRow) return usableAvatar(observedRow.raw?.avatar);
+    if (reply) {
+      const matchedObs = (collection.observedCards || []).find(
+        (c) => canonicalPost(c.url)?.id === reply.id || (!!c.handle && c.handle === reply.author.handle),
+      );
+      const matchedCap = (collection.sourceCapture?.contextCandidates || []).find(
+        (c) => canonicalPost(c.url)?.id === reply.id || (!!c.handle && c.handle === reply.author.handle),
+      );
+      const sameAsRoot = reply.author.handle === root.author.handle
+        ? usableAvatar(root.author.avatarUrl, (root.rawPayload as any)?.avatar, collection.sourceCapture?.records?.[0]?.avatar, original.author.avatarUrl)
+        : null;
+      return usableAvatar(reply.author.avatarUrl, matchedObs?.avatar, matchedCap?.avatar, sameAsRoot);
+    }
+    const matchedRootObs = (collection.observedCards || []).find(
+      (c) => canonicalPost(c.url)?.id === root.id,
+    );
+    return usableAvatar(
+      root.author.avatarUrl,
+      (root.rawPayload as any)?.avatar,
+      collection.sourceCapture?.records?.[0]?.avatar,
+      matchedRootObs?.avatar,
+      original.author.avatarUrl,
+      original.rawExtraction?.avatar,
+    );
+  };
   const provenance=combinedProvenance([
     sourceProvenance({sourceUrl:root.url,sourcePostId:root.id,provenance:{synthetic:root.provenance.synthetic,identityEvidence:root.provenance.method==='EXISTING_EXACT_TARGET_EXTRACTOR'?'DOM_PERMALINK':undefined}}),
     ...plan.selectedReplyIds.map(id=>{const r=plan.bundle.collection.replies.find(r=>r.id===id)!;return r.provenance.synthetic===true?'SYNTHETIC' as const:r.provenance.synthetic===false&&r.extractionStatus==='VERIFIED'?'REAL' as const:'UNKNOWN' as const;}),
@@ -41,6 +80,7 @@ export function editorialSession(
         observedRow = section.sourceId ? observed.get(section.sourceId) : undefined,
         source = reply || observedRow || root;
       const commentary = section.kind === 'COMMENTARY';
+      const avatarUrl = commentary ? null : resolveAvatar(reply, observedRow);
       return {
         id: section.id,
         sourceId: commentary ? undefined : reply ? reply.id : observedRow ? observedRow.id : original.sourceId,
@@ -52,10 +92,15 @@ export function editorialSession(
         author: commentary
           ? { displayName: 'Bình luận biên tập' }
           : observedRow
-            ? { displayName: observedRow.author, handle: observedRow.author }
+            ? {
+                displayName: observedRow.author,
+                handle: observedRow.author,
+                ...(avatarUrl ? { avatarUrl } : {}),
+              }
           : {
               displayName: (reply || root).author.name || (reply || root).author.handle,
               handle: (reply || root).author.handle,
+              ...(avatarUrl ? { avatarUrl } : {}),
             },
         originalText: section.originalText,
         displayText: section.displayText,
@@ -82,7 +127,7 @@ export function editorialSession(
                     text: reply.originalText,
                     author: reply.author.name || reply.author.handle,
                     handle: reply.author.handle,
-                    avatar: null,
+                    avatar: avatarUrl,
                     createdAt: reply.publishedAt,
                     type: 'COMMENT',
                     parentReference: reply.parentId,
@@ -99,6 +144,7 @@ export function editorialSession(
                 : observedRow
                   ? {
                       ...observedRow.raw,
+                      avatar: avatarUrl ?? observedRow.raw.avatar ?? null,
                       bodyText: observedRow.originalText,
                       text: observedRow.originalText,
                       type: 'UNKNOWN' as const,
@@ -108,7 +154,10 @@ export function editorialSession(
                         parent: 'Observed on target page; parent relationship unverified',
                       },
                     }
-                : original.rawExtraction,
+                : {
+                    ...original.rawExtraction,
+                    avatar: avatarUrl ?? original.rawExtraction?.avatar ?? null,
+                  },
               metadata: reply ? undefined : original.metadata,
             }
           : {}),
@@ -118,6 +167,7 @@ export function editorialSession(
   s.project.posts[0].commentIds.push(...(plan.selectedObservedUrls || []).map((url) => observedContextViews(plan.bundle.collection).find((row) => row.url === url)!.id));
   s.project.comments = plan.selectedReplyIds.map((id) => {
     const r = plan.bundle.collection.replies.find((x) => x.id === id)!;
+    const replyAvatar = resolveAvatar(r);
     return {
       id: r.id,
       sourceId: r.id,
@@ -126,6 +176,7 @@ export function editorialSession(
       author: {
         displayName: r.author.name || r.author.handle,
         handle: r.author.handle,
+        ...(replyAvatar ? { avatarUrl: replyAvatar } : {}),
       },
       text: r.originalText,
       mediaAssetIds: [],

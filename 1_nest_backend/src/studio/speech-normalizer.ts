@@ -238,7 +238,7 @@ function caseAllowed(rule: SpeechRule, c: RuleContext) {
   );
 }
 function shapeCase(c: RuleContext, replacement: string, category: string) {
-  if (category === 'ACRONYM') return replacement;
+  if (category === 'ACRONYM' || category === 'TTS_PHONETIC') return replacement;
   const t = c.token.text,
     first = t[0];
   const allCaps =
@@ -370,6 +370,7 @@ function core(
     if (!rules.length) return;
     const ctx = contextFor(src, st, i);
     for (const rule of rules) {
+      if (rule.ttsOnly && mode !== 'TTS') continue;
       if (!caseAllowed(rule, ctx)) continue;
       if (rule.when && !rule.when(ctx)) continue;
       const spoken =

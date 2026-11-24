@@ -3,6 +3,8 @@ import type {
   ConversationEvaluation,
 } from './conversation-contracts';
 export const EDITORIAL_VERSION = 'conversation-editorial/1' as const;
+export type EditorialMode = 'VERBATIM_THREADS' | 'COMMENTARY_ENABLED';
+export const DEFAULT_EDITORIAL_MODE: EditorialMode = 'VERBATIM_THREADS';
 export type EditorialKind = 'QUOTE' | 'PARAPHRASE' | 'COMMENTARY';
 export interface EditorialSection {
   id: string;
@@ -70,6 +72,7 @@ export interface EditorialPlan {
   sections: EditorialSection[];
   feasibility: Feasibility;
   style: 'SERIOUS' | 'FUNNY';
+  mode?: EditorialMode;
   scriptStatus: 'DRAFT';
   editorialSelectionConfirmed: true;
   rightsStatus: 'UNKNOWN';

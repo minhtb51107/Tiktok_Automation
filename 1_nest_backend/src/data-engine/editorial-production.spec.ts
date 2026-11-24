@@ -66,6 +66,7 @@ describe('DATA05 actual DATA03/Studio handoff — isolated SYNTHETIC', () => {
       selectionRevision: 1,
       selectionConfirmed: true,
       requestId: 'plan',
+      mode: 'COMMENTARY_ENABLED',
     });
     p = await editorial.save(p.id, {
       revision: p.revision,
@@ -119,6 +120,7 @@ describe('DATA05 actual DATA03/Studio handoff — isolated SYNTHETIC', () => {
       selectionRevision: 1,
       selectionConfirmed: true,
       requestId: 'plan',
+      mode: 'COMMENTARY_ENABLED',
     };
     const p = await editorial.create(args);
     expect(p.scriptStatus).toBe('DRAFT');
@@ -312,5 +314,40 @@ describe('DATA05 actual DATA03/Studio handoff — isolated SYNTHETIC', () => {
     await expect(
       production.start({ ...input, requestId: 'root-only-duplicate' }),
     ).rejects.toThrow('EXISTING_PROJECT');
+  });
+  test('defaults to VERBATIM_THREADS without AI commentary sections and preserves reply avatars', async () => {
+    const p = await editorial.create({
+      collectionId,
+      selectionRevision: 1,
+      selectionConfirmed: true,
+      requestId: 'verbatim-default-plan',
+    });
+    expect(p.mode).toBe('VERBATIM_THREADS');
+    expect(p.sections.some((s) => s.kind === 'COMMENTARY')).toBe(false);
+    expect(p.sections.every((s) => s.kind === 'QUOTE')).toBe(true);
+    expect(p.feasibility.status).toBe('READY_FOR_SCRIPT');
+    p.bundle.collection.root.author.avatarUrl =
+      'https://scontent.cdninstagram.com/v/root-avatar.jpg';
+    p.bundle.collection.replies[0].author.avatarUrl =
+      'https://scontent.cdninstagram.com/v/reply-avatar.jpg';
+    const input = await queue();
+    const job = await editorial.handoff(
+      p.id,
+      { ...input, planRevision: p.revision, requestId: 'verbatim-handoff' },
+      (b, snapshot) => production.start(b, snapshot),
+    );
+    const s = await studio.load(job.projectId);
+    expect(s.items.some((i) => i.editorial?.kind === 'COMMENTARY')).toBe(false);
+    const { editorialSession } = await import('./editorial-adapter');
+    const projected = editorialSession(structuredClone(s), p);
+    expect(projected.items[0].author.avatarUrl).toBe(
+      'https://scontent.cdninstagram.com/v/root-avatar.jpg',
+    );
+    expect(projected.items[1].author.avatarUrl).toBe(
+      'https://scontent.cdninstagram.com/v/reply-avatar.jpg',
+    );
+    expect(projected.items[1].rawExtraction?.avatar).toBe(
+      'https://scontent.cdninstagram.com/v/reply-avatar.jpg',
+    );
   });
 });

@@ -63,6 +63,7 @@ describe('DATA05 explicit exception-review context editorial bridge', () => {
       selectionConfirmed: true,
       requestId: 'observed-plan',
       style: 'SERIOUS',
+      mode: 'COMMENTARY_ENABLED',
     });
     expect(plan.selectedReplyIds).toEqual([]);
     expect(plan.selectedObservedUrls).toEqual([observedUrl]);
