@@ -29,6 +29,7 @@ Date: 2026-11-24. Branch: `codex/restore-tiktok-browser-uploader`.
 | Check | Result |
 | --- | --- |
 | Browser driver mock: exact MP4/caption, no Post during preparation | PASS |
+| Real Chromium against local mock upload page (test MP4, caption, zero Post clicks) | PASS |
 | Login/challenge pause and resume | PASS |
 | Upload-form failure checkpoint | PASS |
 | Separate LIVE gate | PASS |
@@ -43,7 +44,8 @@ Date: 2026-11-24. Branch: `codex/restore-tiktok-browser-uploader`.
 | Read-only smoke changed persisted publishing files | NO |
 | TikTok LIVE login/upload/Post | NOT RUN — not authorized |
 
-Targeted Jest result: 3 suites, 22 tests passed after the fixture correction.
+Targeted Jest result: 4 suites, 23 tests passed, including one real Chromium
+fixture against a loopback-only mock upload page.
 The isolated Studio smoke used
 `http://127.0.0.1:3132/studio?area=Video%20Studio&step=Publish&session=200b0443-5c05-4a8b-8897-feb7e01ed7b6`.
 It observed Official API, manual handoff and browser-assisted panels together,

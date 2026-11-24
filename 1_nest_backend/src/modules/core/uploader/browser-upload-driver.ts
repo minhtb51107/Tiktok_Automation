@@ -36,8 +36,8 @@ const pagePath = (raw: string) => {
   }
 };
 
-const profilePath = (name: string) => {
-  const rootValue = process.env.STUDIO_TIKTOK_PROFILE_ROOT;
+const profilePath = (name: string, rootOverride?: string) => {
+  const rootValue = rootOverride || process.env.STUDIO_TIKTOK_PROFILE_ROOT;
   if (!rootValue)
     throw new BadRequestException(
       'BROWSER_PROFILE_ROOT_MISSING: configure a user-managed STUDIO_TIKTOK_PROFILE_ROOT',
@@ -60,6 +60,15 @@ const profilePath = (name: string) => {
 export class PuppeteerBrowserUploadDriver implements BrowserUploadDriver {
   private sessions = new Map<string, { browser: Browser; page: Page }>();
 
+  constructor(
+    private readonly options: {
+      uploadUrl?: string;
+      executablePath?: string;
+      profileRoot?: string;
+      headlessForTest?: boolean;
+    } = {},
+  ) {}
+
   has(jobId?: string) {
     return jobId ? this.sessions.has(jobId) : this.sessions.size > 0;
   }
@@ -67,15 +76,16 @@ export class PuppeteerBrowserUploadDriver implements BrowserUploadDriver {
   private async session(jobId: string, dirName: string) {
     const current = this.sessions.get(jobId);
     if (current) return current;
-    const executablePath = existingPublicBrowser();
+    const executablePath =
+      this.options.executablePath || existingPublicBrowser();
     if (!executablePath)
       throw new BadRequestException(
         'BROWSER_MISSING: no existing local Chrome/Edge executable found',
       );
     const browser = await puppeteer.launch({
       executablePath,
-      headless: false,
-      userDataDir: profilePath(dirName),
+      headless: this.options.headlessForTest === true ? true : false,
+      userDataDir: profilePath(dirName, this.options.profileRoot),
       defaultViewport: { width: 1280, height: 960 },
       args: ['--disable-notifications', '--window-size=1280,960'],
     });
@@ -106,11 +116,19 @@ export class PuppeteerBrowserUploadDriver implements BrowserUploadDriver {
     profileDirName: string;
   }): Promise<BrowserPrepareResult> {
     const { page } = await this.session(input.jobId, input.profileDirName);
-    if (!/tiktok\.com/i.test(page.url())) {
-      const response = await page.goto(
-        'https://www.tiktok.com/creator-center/upload',
-        { waitUntil: 'domcontentloaded', timeout: 45_000 },
-      );
+    const uploadUrl =
+      this.options.uploadUrl ||
+      'https://www.tiktok.com/creator-center/upload';
+    const target = new URL(uploadUrl);
+    let currentOrigin = '';
+    try {
+      currentOrigin = new URL(page.url()).origin;
+    } catch {}
+    if (currentOrigin !== target.origin) {
+      const response = await page.goto(uploadUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 45_000,
+      });
       if (response && response.status() >= 400)
         return {
           status: 'BLOCKED',
