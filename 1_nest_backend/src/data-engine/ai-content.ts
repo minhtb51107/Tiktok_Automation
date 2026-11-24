@@ -23,9 +23,12 @@ import type { ContentAiProvider } from './ai-provider';
 const cleanJson = (value: string) =>
   JSON.parse(
     value
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
       .trim()
+      .replace(/^(?:<\/think>|>+)\s*/i, '')
       .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```$/, ''),
+      .replace(/\s*```$/, '')
+      .trim(),
   );
 const text = (value: unknown, max: number) => {
   if (typeof value !== 'string' || !value.trim() || value.length > max)

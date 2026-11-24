@@ -48,7 +48,7 @@ async function main(){
     const before=Math.floor((c.sourceInMs*m.fps)/1000),after=Math.ceil((c.sourceOutMs*m.fps)/1000),span=Math.max(1,after-before);
     const sliceName=`bg-slice-${c.id}.mp4`,slicePath=path.join(dir,sliceName);
     tick('Normalizing background video GOP for frame-exact OffthreadVideo');
-    await command('ffmpeg',['-v','error','-y','-ss',(before/m.fps).toFixed(6),'-i',a.uri,'-frames:v',String(span),'-r',String(m.fps),'-c:v','libx264','-preset','ultrafast','-crf','17','-g','12','-keyint_min','12','-sc_threshold','0','-pix_fmt','yuv420p','-an',slicePath],true);
+    await command('ffmpeg',['-v','error','-y','-ss',(before/m.fps).toFixed(6),'-i',a.uri,'-frames:v',String(span),'-r',String(m.fps),'-vf',`scale=${m.width}:${m.height}:force_original_aspect_ratio=increase,crop=${m.width}:${m.height}`,'-c:v','libx264','-preset','ultrafast','-crf','18','-g','6','-keyint_min','6','-bf','0','-sc_threshold','0','-pix_fmt','yuv420p','-movflags','+faststart','-an',slicePath],true);
     sliceFiles['/'+sliceName]=slicePath;
    }
   }

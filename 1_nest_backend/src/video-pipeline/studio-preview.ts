@@ -6,6 +6,71 @@ import { buildVideoTimeline } from './timeline-engine';
 import { createRemotionPreviewRequest } from './preview-adapter';
 import { defaultBgm, cardPages, normalizeVisual } from './scene-visual';
 import { editorSettings } from './editor-state';
+
+function buildTimedSubtitles(
+  itemId: string,
+  text: string,
+  durationMs: number,
+) {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (!clean || durationMs <= 0) return [];
+  const rawParts = clean
+    .split(/(?<=[.?!:;])\s+/)
+    .flatMap((part) => (part.length > 72 ? part.split(/(?<=,)\s+/) : [part]))
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const chunks: string[] = [];
+  for (const part of rawParts) {
+    if (part.length <= 68) {
+      if (chunks.length && chunks[chunks.length - 1].length + 1 + part.length <= 58) {
+        chunks[chunks.length - 1] += ' ' + part;
+      } else {
+        chunks.push(part);
+      }
+      continue;
+    }
+    const words = part.split(' ');
+    let cur = '';
+    for (const w of words) {
+      if (cur && cur.length + 1 + w.length > 62) {
+        chunks.push(cur);
+        cur = w;
+      } else {
+        cur = cur ? cur + ' ' + w : w;
+      }
+    }
+    if (cur) chunks.push(cur);
+  }
+  if (!chunks.length) return [];
+  const weights = chunks.map((c) => Math.max(4, c.replace(/\s+/g, '').length));
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+  let cursor = 0;
+  return chunks.map((chunk, idx) => {
+    const startMs = cursor;
+    const endMs =
+      idx === chunks.length - 1
+        ? durationMs
+        : Math.min(
+            durationMs,
+            Math.max(
+              startMs + 250,
+              Math.round(
+                (weights.slice(0, idx + 1).reduce((a, b) => a + b, 0) /
+                  totalWeight) *
+                  durationMs,
+              ),
+            ),
+          );
+    cursor = endMs;
+    return {
+      id: `caption-${itemId}-${idx + 1}`,
+      text: chunk,
+      startMs,
+      endMs,
+    };
+  });
+}
+
 export function buildStudioPreview(
   s: StudioSession,
   library: LibraryAsset[] = [],
@@ -125,8 +190,8 @@ export function buildStudioPreview(
               durationMs:x.visual.sfx.durationMs, sourceInMs:x.visual.sfx.sourceInMs,
             }
           : undefined,
-      // Scene-level captions follow measured narration bounds. No word alignment is claimed.
-      subtitles: audio && x.visual?.subtitlesEnabled===true ? [{id:`caption-${i.id}`,text:i.spokenText,startMs:0,endMs:audio.durationMs}] : [],
+      // Clause-level timed captions distributed proportionally across measured narration duration.
+      subtitles: audio && x.visual?.subtitlesEnabled===true ? buildTimedSubtitles(i.id, i.spokenText, audio.durationMs) : [],
       timing: {
         paddingBeforeMs: x.paddingBeforeMs,
         paddingAfterMs: x.paddingAfterMs,
@@ -151,47 +216,51 @@ export function buildStudioPreview(
         revision: i.revision,
         lastEditedBy: 'USER',
       },
-      threadsCard: {
-        topic: i.contentMapping?.topic ?? meta?.topic ?? null,
-        countLabels: Object.fromEntries(
-          ['likeCount', 'replyCount', 'repostCount', 'shareCount'].map(
-            (k, n) => [
-              ['likes', 'replies', 'reposts', 'shares'][n],
-              meta?.fields?.[k]?.raw ?? null,
-            ],
-          ),
-        ),
-        author: meta?.author || i.author.displayName,
-        handle: meta?.handle ?? i.author.handle ?? null,
-        avatarUrl: s.sourceImages?.[i.id]?.status==='READY' && s.sourceImages[i.id].sourceUrl===(meta?.avatar??i.author.avatarUrl)
-          ? s.sourceImages[i.id].uri : meta?.avatar ?? i.author.avatarUrl ?? null,
-        createdAt: meta?.createdAt ?? null,
-        dateLabel: meta?.fields?.createdAt?.raw ?? null,
-        sourceUrl: i.sourceUrl,
-        counts: {
-          likes: meta?.likeCount ?? null,
-          replies: meta?.replyCount ?? null,
-          reposts: meta?.repostCount ?? null,
-          shares: meta?.shareCount ?? null,
-        },
-        fieldStates: Object.fromEntries(
-          Object.entries(meta?.fields || {}).map(([k, v]) => [k, v.status]),
-        ),
-        fieldEvidence: Object.fromEntries(
-          Object.entries(meta?.fields || {}).map(([k, v]) => [
-            k,
-            {
-              status: v.status,
-              raw: v.raw ?? null,
-              source: v.source,
-              observedAt: v.observedAt,
-              ...(v.approximate === undefined
-                ? {}
-                : { approximate: v.approximate }),
+      ...(i.editorial?.kind === 'COMMENTARY'
+        ? {}
+        : {
+            threadsCard: {
+              topic: i.contentMapping?.topic ?? meta?.topic ?? null,
+              countLabels: Object.fromEntries(
+                ['likeCount', 'replyCount', 'repostCount', 'shareCount'].map(
+                  (k, n) => [
+                    ['likes', 'replies', 'reposts', 'shares'][n],
+                    meta?.fields?.[k]?.raw ?? null,
+                  ],
+                ),
+              ),
+              author: meta?.author || i.author.displayName,
+              handle: meta?.handle ?? i.author.handle ?? null,
+              avatarUrl: s.sourceImages?.[i.id]?.status==='READY' && s.sourceImages[i.id].sourceUrl===(meta?.avatar??i.author.avatarUrl)
+                ? s.sourceImages[i.id].uri : meta?.avatar ?? i.author.avatarUrl ?? null,
+              createdAt: meta?.createdAt ?? null,
+              dateLabel: meta?.fields?.createdAt?.raw ?? null,
+              sourceUrl: i.sourceUrl,
+              counts: {
+                likes: meta?.likeCount ?? null,
+                replies: meta?.replyCount ?? null,
+                reposts: meta?.repostCount ?? null,
+                shares: meta?.shareCount ?? null,
+              },
+              fieldStates: Object.fromEntries(
+                Object.entries(meta?.fields || {}).map(([k, v]) => [k, v.status]),
+              ),
+              fieldEvidence: Object.fromEntries(
+                Object.entries(meta?.fields || {}).map(([k, v]) => [
+                  k,
+                  {
+                    status: v.status,
+                    raw: v.raw ?? null,
+                    source: v.source,
+                    observedAt: v.observedAt,
+                    ...(v.approximate === undefined
+                      ? {}
+                      : { approximate: v.approximate }),
+                  },
+                ]),
+              ),
             },
-          ]),
-        ),
-      },
+          }),
     };
     if(i.editorial?.kind==='COMMENTARY')delete scene.threadsCard;
     const pages = cardPages(
