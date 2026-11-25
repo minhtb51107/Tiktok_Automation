@@ -1,12 +1,14 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { mkdtemp } from 'fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import { StudioJobs } from './progress';
 import { assertRenderable, avatarState, sourceBlockers } from './production-contract';
-import { operatorBoundary, ProductionHarness } from './production-harness';
+import { operatorBoundary, operatorFailure, ProductionHarness } from './production-harness';
 import { prepareTtsInput } from './speech-normalizer';
+import { StudioService } from './studio.service';
+import { editorialFixture } from '../data-engine/editorial-test.fixture';
 
 function rootSession(): any {
   const url = 'https://www.threads.com/@demo/post/DeI-TuzEc_9';
@@ -25,6 +27,102 @@ function rootSession(): any {
 }
 
 describe('Production Harness runtime', () => {
+  it('classifies historical and runtime failures without echoing the underlying message', () => {
+    const stage = 'GENERATING_AUDIO';
+    for (const [raw, code] of [
+      ['Unknown Kokoro voice', 'VOICE_UNAVAILABLE'],
+      ['BLOCKED_RUNTIME: unavailable', 'RUNTIME_UNAVAILABLE'],
+      ['RESOURCE_GUARD_STOP', 'RESOURCE_BLOCKED'],
+      ['TIMEOUT', 'TIMEOUT'],
+      ['Kokoro inference failed', 'INFERENCE_FAILED'],
+      ['Operation failed: invalid request', 'VALIDATION_ERROR'],
+    ]) {
+      const out = operatorFailure(raw + ' bearer=private-fixture', stage, 2);
+      expect(out).toMatchObject({errorCode:code, failedStage:stage, retryable:false});
+      expect(JSON.stringify(out)).not.toContain('private-fixture');
+    }
+  });
+
+  it('runs create, normalize, pronunciation, new DRAFT audio and cache through real Studio services with a mocked Kokoro worker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'operator-voice-integration-'));
+    const studio = new StudioService(null);
+    const jobs = new StudioJobs(join(root,'jobs'));
+    const runtime = {status:'READY', blockers:[], declaredVoices:[{id:'my_yen'}],
+      model:'fixture', modelVersion:'fixture', packageVersion:'fixture'};
+    const preflight = jest.fn(async () => runtime as any);
+    const generate = jest.fn(async (id: string) => {
+      const rel = `audio/${id}/assets/fixture.wav`;
+      await mkdir(join(root, 'audio',id,'assets'), {recursive:true});
+      await writeFile(join(root,rel), Buffer.alloc(128));
+      return {filePath:rel, durationMs:200, durationEvidence:'FFPROBE', cacheKey:'fixture', cacheHit:false};
+    });
+    Object.assign(studio, {root, jobs, voice:{preflight, generate}});
+    const f = editorialFixture('Mình học đại học và làm việc ở quê.', 'Mình từng học cùng các bạn và có thêm nhiều cơ hội học tiếp.');
+    f.collection.root.provenance.synthetic = false;
+    f.collection.replies[0].provenance.synthetic = false;
+    const collectionId = 'a'.repeat(64);
+    const review = {schemaVersion:'threads-data/1',collectionId,revision:1,selectedReplyIds:[],replyLabels:{},decision:'NEEDS_REVIEW',reason:'fixture',history:[]};
+    Object.assign(f.quality.replyQuality[0], {label:'LOW_INFORMATION'});
+    const conversations = {engine:{collection:async()=>({collection:f.collection,evaluation:f.quality}),review:async()=>review}};
+    const harness = new ProductionHarness(studio, null, conversations as any, {evaluator:{list:async()=>[]}} as any);
+    const old = process.env.STUDIO_OPERATOR_TTS;
+    process.env.STUDIO_OPERATOR_TTS='1';
+    const finish = async (tool: string, input: any) => {
+      const initial = await harness.run(tool,input);
+      for (let i=0; i<100; i++) {
+        const j=await harness.job(initial.jobId);
+        if (!['QUEUED','RUNNING'].includes(j.status)) return j;
+        await new Promise(resolve=>setTimeout(resolve,10));
+      }
+      throw Error('fixture job did not complete');
+    };
+    try {
+      const created = await finish('create_draft', {requestId:'create-a', collectionId, replyIds:['REPLY']});
+      expect(created.status).toBe('SUCCEEDED');
+      const s = await studio.load((created.result as any).sessionId);
+      expect(s.voiceRuntime).toBeUndefined();
+      const item = s.items.find(row => row.selected)!;
+      const bytes = Buffer.from('test cached source image');
+      const hash = createHash('sha256').update(bytes).digest('hex');
+      const avatar = 'https://example.cdninstagram.com/avatar.jpg';
+      item.author.avatarUrl = avatar;
+      s.sourceImages = {[item.id]: { itemId:item.id, sourceUrl:avatar, provenance:'PUBLIC_CDN',
+        uri:'/fixture', status:'READY', sha256:hash,fileName:hash+'.jpg', checkedAt:'fixture', error:null }};
+      await mkdir(join(root,'source-images',s.id), {recursive:true});
+      await writeFile(join(root,'source-images',s.id,hash+'.jpg'),bytes);
+      await writeFile(join(root,s.id+'.json'),JSON.stringify(s));
+      const other = await finish('create_draft', {requestId:'create-root', collectionId, replyIds:[]});
+      const draft = await studio.load((other.result as any).sessionId);
+      const target = draft.items.find(row => row.selected)!;
+      expect(draft.sourceImages?.[target.id]?.sha256).toBe(hash);
+      expect(target.id).not.toBe(item.id);
+      const fields = {sessionId:draft.id, revision:draft.revision};
+      const normalized = await finish('normalize', {...fields,requestId:'norm'});
+      const pronunciation = await finish('pronunciation',{...fields,revision:normalized.revision,
+        requestId:'pron',itemId:target.id,term:'quê',reading:'quê'});
+      expect(pronunciation.status).toBe('SUCCEEDED');
+      const renorm = await finish('normalize',{...fields,revision:pronunciation.revision,requestId:'norm2'});
+      const input = {...fields,revision:renorm.revision,requestId:'audio1',itemId:target.id};
+      const audio = await finish('audio',input);
+      expect(audio.status).toBe('SUCCEEDED');
+      expect(generate).toHaveBeenCalledTimes(1);
+      const persisted = await studio.load(draft.id);
+      expect(persisted.voiceAssets?.[0]).toMatchObject({purpose:'DRAFT', status:'GENERATED', durationEvidence:'FFPROBE'});
+      expect(persisted.items.find(row=>row.id===target.id)?.spokenApproval?.valid).not.toBe(true);
+      const cache = await finish('audio',{...input,revision:audio.revision,requestId:'audio-cache'});
+      expect(cache.result).toMatchObject({cacheHit:true,assetId:(audio.result as any).assetId});
+      expect(generate).toHaveBeenCalledTimes(1);
+      await expect(studio.voiceAction(s.id,item.id,{revision:s.revision,action:'GENERATE',voice:'bad',speed:1.2,draft:true}))
+        .rejects.toThrow('Unknown Kokoro voice');
+      preflight.mockResolvedValueOnce({...runtime,status:'BLOCKED_RUNTIME',declaredVoices:[],blockers:['Python unavailable']});
+      const unavailable = await studio.voiceAction(s.id,item.id,{revision:s.revision,action:'GENERATE',voice:'my_yen',speed:1.2,draft:true});
+      expect(unavailable.voiceJobs?.slice(-1)[0]?.error).toContain('BLOCKED_RUNTIME');
+      expect(generate).toHaveBeenCalledTimes(1);
+    } finally {
+      if (old === undefined) delete process.env.STUDIO_OPERATOR_TTS;
+      else process.env.STUDIO_OPERATOR_TTS=old;
+    }
+  });
   it('accepts root-only content and distinguishes evidenced default from unavailable avatar', () => {
     const s = rootSession(), item = s.items[0];
     expect(sourceBlockers(s)).toEqual([]);

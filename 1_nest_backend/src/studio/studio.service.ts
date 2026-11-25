@@ -260,6 +260,71 @@ export class StudioService {
       return this.persist(s);
     });
   }
+  private async adoptCachedAvatars(s: StudioSession) {
+    const pending = s.items.filter(item => item.selected &&
+      s.sourceImages?.[item.id]?.status !== 'READY');
+    if (!pending.length) return false;
+    const sources = new Map<string, {sessionId: string; image: NonNullable<StudioSession['sourceImages']>[string]}[]>();
+    for (const name of await fs.readdir(this.root)) {
+      if (!/^[a-f0-9-]{36}\.json$/.test(name) || name === s.id + '.json') continue;
+      const prior = await this.load(name.slice(0,-5)).catch(() => null);
+      if (!prior?.sourceImages) continue;
+      for (const item of prior.items) {
+        const identity = canonicalPost(item.sourceUrl);
+        const handle = item.author.handle?.toLowerCase();
+        const image = prior.sourceImages[item.id];
+        if (!identity || !handle || image?.status !== 'READY' || image.provenance !== 'PUBLIC_CDN' ||
+            isPlaceholderAvatarUrl(image.sourceUrl) ||
+            image.sourceUrl !== (item.metadata?.avatar ?? item.rawExtraction?.avatar ?? item.author.avatarUrl) ||
+            !/^[a-f0-9]{64}$/.test(image.sha256 || '') ||
+            !new RegExp('^' + image.sha256 + '\\.(?:png|jpe?g|webp|gif)$').test(image.fileName || ''))
+          continue;
+        const key = identity.id + ':' + handle;
+        const candidates = sources.get(key) ?? [];
+        candidates.push({sessionId: name.slice(0,-5), image});
+        sources.set(key, candidates);
+      }
+    }
+    let changed = false;
+    for (const item of pending) {
+      const identity = canonicalPost(item.sourceUrl);
+      const avatar = item.metadata?.avatar ?? item.rawExtraction?.avatar ?? item.author.avatarUrl;
+      const candidates = (sources.get(identity?.id + ':' + item.author.handle?.toLowerCase()) || [])
+        .filter(candidate => !avatar || candidate.image.sourceUrl === avatar);
+      if (new Set(candidates.map(candidate => candidate.image.sha256)).size !== 1) continue;
+      for (const {sessionId, image} of candidates) {
+        const source = path.join(this.root, 'source-images', sessionId, image.fileName!);
+        const stat = await fs.lstat(source).catch(() => null);
+        if (!stat?.isFile() || !stat.size || stat.size > 10 * 1024 * 1024) continue;
+        const bytes = await fs.readFile(source);
+        if (createHash('sha256').update(bytes).digest('hex') !== image.sha256) continue;
+        const dir = path.join(this.root, 'source-images', s.id);
+        await fs.mkdir(dir, {recursive:true});
+        const target = path.join(dir, image.fileName!);
+        await fs.writeFile(target, bytes, {flag:'wx'}).catch(error => {
+          if (error.code !== 'EEXIST') throw error;
+        });
+        if (createHash('sha256').update(await fs.readFile(target)).digest('hex') !== image.sha256) continue;
+        s.sourceImages ??= {};
+        s.sourceImages[item.id] = {...image, itemId:item.id,
+          uri:`/api/studio/sessions/${s.id}/source-images/${image.sha256}`};
+        item.author.avatarUrl = image.sourceUrl;
+        changed = true;
+        break;
+      }
+    }
+    return changed;
+  }
+
+  restoreOperatorAvatars(id: string, revision: number) {
+    return this.exclusive(async () => {
+      const s = await this.load(id);
+      if (s.revision !== revision) throw new ConflictException('STALE_REVISION');
+      if (!await this.adoptCachedAvatars(s)) return s;
+      delete s.project.timeline;
+      return this.persist(s);
+    });
+  }
   async sourceImageFile(id: string, sha: string) {
     if (!/^[a-f0-9]{64}$/.test(sha))
       throw new BadRequestException('Invalid image hash');
@@ -758,14 +823,15 @@ export class StudioService {
       return this.persist(s);
     });
   }
-  async preparePreview(id: string, revision: number) {
+  async preparePreview(id: string, revision: number, cachedAvatarsOnly = false) {
     return this.exclusive(async () => {
       const s = await this.load(id);
       if (s.revision !== revision)
         throw new ConflictException(
           'Project changed; reopen before preparing preview',
         );
-      await this.ensureCachedAvatars(s);
+      if (cachedAvatarsOnly) await this.adoptCachedAvatars(s);
+      else await this.ensureCachedAvatars(s);
       await this.tick('Building deterministic timeline');
       const built = prepareEditor(s, await this.visualAssets(s));
       for (const a of built.project.audioAssets)
@@ -1120,6 +1186,7 @@ export class StudioService {
     collection: ThreadCollection,
     review: ConversationReview,
     requestId?: string,
+    cachedAvatarsOnly = false,
   ) {
     return this.exclusive(async () => {
       const root = collection.root,
@@ -1207,13 +1274,13 @@ export class StudioService {
         items: [],
       };
       const source = collection.sourceCapture?.records[0];
-      const rootRaw: any = source ?? {
+      const rootRaw: any = source ? { ...source, url: root.url, avatar: source.avatar ?? root.author.avatarUrl ?? null } : {
         url: root.url,
         text: root.originalText,
         bodyText: root.originalText,
         author: root.author.name ?? root.author.handle,
         handle: root.author.handle,
-        avatar: null,
+        avatar: root.author.avatarUrl ?? null,
         createdAt: root.publishedAt,
         type: root.itemType ?? 'UNKNOWN',
         parentReference: null,
@@ -1293,7 +1360,8 @@ export class StudioService {
       }
       s.status = 'READY';
       s.errors = [];
-      await this.ensureCachedAvatars(s);
+      if (cachedAvatarsOnly) await this.adoptCachedAvatars(s);
+      else await this.ensureCachedAvatars(s);
       return this.persist(s);
     });
   }
@@ -1301,8 +1369,8 @@ export class StudioService {
     const candidates = collection?.sourceCapture?.contextCandidates || [];
     const matchedCandidate = candidates.find(
       (c) =>
-        canonicalPost(c.url)?.id === reply.id ||
-        (!!c.handle && c.handle === reply.author.handle),
+        canonicalPost(c.url)?.id === reply.id &&
+        c.handle?.toLowerCase() === reply.author.handle.toLowerCase(),
     );
     const rootRecord = collection?.sourceCapture?.records?.[0];
     const candidateAvatar =
@@ -1312,10 +1380,7 @@ export class StudioService {
         ? rootRecord?.avatar
         : null) ??
       null;
-    const avatar =
-      candidateAvatar && !isPlaceholderAvatarUrl(candidateAvatar)
-        ? candidateAvatar
-        : null;
+    const avatar = candidateAvatar;
     return {
       url: reply.url,
       text: reply.originalText,
@@ -2083,7 +2148,13 @@ export class StudioService {
           );
         }
       } else if (body.action === 'GENERATE') {
-        if (body.voice !== undefined || body.speed !== undefined)
+        const hasSettings = body.voice !== undefined || body.speed !== undefined;
+        const runtime = hasSettings ? await this.voice.preflight() : undefined;
+        if (runtime) s.voiceRuntime = runtime;
+        if (hasSettings && (runtime!.status === 'READY' ||
+            (runtime!.declaredVoices.length > 0 &&
+             runtime!.blockers.length > 0 &&
+             runtime!.blockers.every(b => b.includes('BLOCKED_RESOURCE')))))
           this.applySettings(
             s,
             item,
@@ -2094,7 +2165,7 @@ export class StudioService {
           s,
           item,
           body.regenerate === true,
-          undefined,
+          runtime,
           body.draft === true,
           execution,
         );
@@ -2182,6 +2253,8 @@ export class StudioService {
       const settings = item.voiceSettings;
       if (!settings?.voice)
         throw Error('Select a locally available Kokoro voice');
+      if (!s.voiceRuntime.declaredVoices.some(v => v.id === settings.voice))
+        throw Error('Unknown Kokoro voice');
       const normalizedInput = prepareTtsInput(
         item.spokenText,
         item.pronunciationOverrides,
@@ -2200,7 +2273,8 @@ export class StudioService {
         oldAsset.modelVersion !==
           s.voiceRuntime.modelVersion + ' / ' + s.voiceRuntime.packageVersion;
       const existing =
-        regenerate || inputStale || modelStale ? undefined : oldAsset;
+        regenerate || inputStale || modelStale ||
+        (draft && oldAsset?.durationEvidence !== 'FFPROBE') ? undefined : oldAsset;
       let usable = false;
       if (existing) {
         try {
@@ -2241,6 +2315,7 @@ export class StudioService {
           cached.status = 'GENERATED';
           cached.cacheHit = true;
           cached.durationMs = result.durationMs;
+          cached.durationEvidence = result.durationEvidence;
           job.assetId = cached.id;
           job.status = 'GENERATED';
           job.reused = true;
@@ -2294,6 +2369,7 @@ export class StudioService {
               s.voiceRuntime.packageVersion,
             cacheKey: result.cacheKey,
             durationMs: result.durationMs,
+            durationEvidence: result.durationEvidence,
             filePath: result.filePath,
             uri: `/api/studio/sessions/${s.id}/audio/${assetId}`,
             createdAt: new Date().toISOString(),

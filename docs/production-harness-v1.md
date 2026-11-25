@@ -46,6 +46,7 @@ tool and session scope. Session mutations require the current `revision`.
 | evaluate | collectionId | Evaluate via the existing AI ledger. Output contains assessment ID and provider usage when available |
 | create_draft | collectionId, replyIds | Save a source project with a root and a subset of quality-eligible verified replies. Pass an empty array for root-only. Editorial approval remains pending |
 | visual_defaults | sessionId, revision | Apply the existing SERIOUS preset and local assets |
+| restore_cached_avatars | sessionId, revision | Reuse saved, hash-verified avatars for exact author/post identities. Use the returned revision for the next stage |
 | normalize | sessionId, revision | Apply deterministic speech normalization and list uncertain terms |
 | pronunciation | sessionId, revision, itemId, term, reading | Update one existing term's pronunciation without changing original/display text |
 | audio | sessionId, revision, itemId | Create or reuse current measured DRAFT WAV for a selected scene |
@@ -54,6 +55,10 @@ tool and session scope. Session mutations require the current `revision`.
 
 Read `/collections` for saved collection IDs and `/collections/:id` for the root,
 verified replies, quality and eligibility.
+Each selection row separates `eligible`, `recommended` and
+`rejectionReasons`. The matching saved AI assessment is advisory. Send only
+the reply IDs actually selected by the Operator or user. Draft creation and
+preview preparation in Operator mode use the local avatar cache.
 Read `/assessments/:id` for an existing evaluation. `/projects` lists up to 50
 local projects. `/projects/:id` returns source, editor and timeline summary
 including avatar state, normalization and current audio IDs.
@@ -77,6 +82,11 @@ An identical request reopens its job. Successful identical stage inputs can
 also reuse their job under a new request ID. Changing the payload under the
 same request ID is rejected. There is at most one explicit retry for identical
 stage inputs after a failed attempt. Read the failed or interrupted job first.
+Failed jobs expose `errorCode`, `errorMessage`, `failedStage`, `retryable`
+and `recommendedRecovery`. The diagnostic uses fixed text so runtime paths,
+credentials and upstream error bodies remain private. For a recoverable job,
+use a new request ID with the same other inputs to take the remaining attempt.
+Historical results keep their original timestamps and attempt counts.
 For stale revision or a quality/access/resource blocker, resolve the blocker
 before continuing. A render interrupted before completion restarts at the
 render stage. There is no frame-level resume. Reopen the session and keep
@@ -112,6 +122,20 @@ the copied session to its original and closes its own browser and server.
 This acceptance covers the API and persisted workflow in a local browser.
 Live collection, inference, Kokoro execution, and new MP4 output were outside
 the acceptance run. The browser check does not measure audio or render fidelity.
+
+## V1.1 audio acceptance
+
+Two original attempts failed before inference with `Unknown Kokoro voice`.
+The new session had no runtime voice declarations when settings were validated.
+V1.1 runs preflight first and records FFprobe duration evidence on the asset.
+
+One real audio request against an isolated copy produced job
+`fe359150-85a2-4ff3-abce-73d1f36d2115` and asset
+`7c19ebe8-5977-4c44-abce-0448cf0b758c`. The authenticated WAV download measured
+7.863542 seconds by a second FFprobe check. The session copy finished at
+revision 8 and the original stayed at revision 6. Asset purpose was DRAFT
+and the matching input hash and item revision were verified. This checks
+execution and artifact identity. Pronunciation still requires listening review.
 
 ## Operator prompt for Antigravity
 

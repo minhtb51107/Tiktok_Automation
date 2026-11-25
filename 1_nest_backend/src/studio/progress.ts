@@ -29,6 +29,7 @@ export interface StudioJob {
   warnings: string[];
   cancelRequested: boolean;
   revision: number | null;
+  inputRevision?: number;
   result?: unknown;
   heartbeatAt?: string;
   maxHeartbeatGapMs?: number;
@@ -195,7 +196,8 @@ export class StudioJobs {
         cancelRequested: false,
         revision: null,
         events: [],
-        ...(operator ? { operatorRequestId: operatorRequestId as string, operatorEffectKey, attemptNumber } : {}),
+        ...(operator ? { operatorRequestId: operatorRequestId as string, operatorEffectKey, attemptNumber,
+          inputRevision: typeof effect.revision === 'number' ? effect.revision : undefined } : {}),
       };
       await fs.mkdir(this.root, { recursive: true });
       await fs.writeFile(this.file(j.jobId), JSON.stringify(j, null, 2));

@@ -339,6 +339,7 @@ export class KokoroRuntime {
         .relative(dataRoot, file)
         .replace(/\\/g, '/'),
       durationMs,
+      durationEvidence: 'FFPROBE' as const,
       cacheKey,
       cacheHit,
       baseCacheHit,

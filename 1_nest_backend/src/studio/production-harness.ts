@@ -46,6 +46,7 @@ const definitions = {
   audio: { input: ['requestId','sessionId','revision','itemId'], output: '{assetId,cacheHit,audioDurationMs,voiceJob,metrics}', stage: 'GENERATING_AUDIO', budget: 'Existing Kokoro deadline and resource guards' },
   prepare: { input: ['requestId','sessionId','revision'], output: 'ProjectSummary', stage: 'PREPARING_TIMELINE', budget: 'Existing timeline preparation' },
   visual_defaults: { input: ['requestId','sessionId','revision'], output: 'ProjectSummary', stage: 'CONFIGURING_EDITOR', budget: 'Existing local asset registry' },
+  restore_cached_avatars: { input: ['requestId','sessionId','revision'], output: 'ProjectSummary', stage: 'RESTORING_CACHED_AVATARS', budget: 'Local hash-verified cache only' },
   render: { input: ['requestId','sessionId','revision'], output: 'MachineValidation', stage: 'RENDERING', budget: 'Existing 45 minute render watchdog, 720P, concurrency 1' },
 } as const;
 type Tool = keyof typeof definitions;
@@ -89,22 +90,51 @@ function projectSummary(s: StudioSession) {
   };
 }
 
+export function operatorFailure(error: string | null, stage: string, attempts: number) {
+  if (!error) return null;
+  // Public messages are fixed text. Runtime errors can include local paths,
+  // provider bodies or credentials and are never echoed at this boundary.
+  const rules = [
+    [/backend restarted/i, 'INTERRUPTED', 'The backend restarted before this stage finished.', 'Reopen the project and inspect retained artifacts before a retry.', true],
+    [/unknown Kokoro voice|voice.unavailable|locally available Kokoro voice/i, 'VOICE_UNAVAILABLE', 'The requested Kokoro voice is unavailable or was not declared by the runtime.', 'Ask the runtime administrator to verify the configured voicepack, then retry audio.', true],
+    [/RESOURCE_GUARD_STOP|BLOCKED_RESOURCE|ALLOCATION_FAILURE|WINDOWS_OOM_EVIDENCE/i, 'RESOURCE_BLOCKED', 'The TTS resource guard or allocator stopped execution.', 'Wait for safe headroom and other heavy workers to exit before retrying.', true],
+    [/timeout|timed out|deadline exceeded/i, 'TIMEOUT', 'This stage exceeded its execution deadline.', 'Check the job checkpoint and worker state before retrying.', true],
+    [/BLOCKED_RUNTIME|runtime unavailable|preflight unavailable/i, 'RUNTIME_UNAVAILABLE', 'A required local runtime dependency did not pass preflight.', 'Ask the runtime administrator to check Python, Kokoro assets, FFmpeg and FFprobe.', true],
+    [/STALE_REVISION|session changed/i, 'STALE_REVISION', 'The project revision has changed.', 'Read GET /projects/:id and submit the stage with its current revision.', false],
+    [/NORMALIZATION_REQUIRED/i, 'NORMALIZATION_REQUIRED', 'Current narration normalization is missing or stale.', 'Run normalize on the current project revision, then call audio.', false],
+    [/CURRENT_(?:WAV_MISSING|MEASURED_AUDIO_REQUIRED)/i, 'CURRENT_AUDIO_REQUIRED', 'A current measured WAV is missing.', 'Inspect the project and call audio for the affected scene before prepare.', false],
+    [/TTS_FAILED|inference|\bUNKNOWN\b/i, 'INFERENCE_FAILED', 'The inference stage did not produce a valid result.', 'Inspect the stage result and verify the local runtime or provider before retrying.', false],
+    [/operation failed.*(?:required|invalid|mismatch|forbidden|eligible)|PREPARED_TIMELINE|SUBTITLES_FORBIDDEN/i, 'VALIDATION_ERROR', 'The input or project failed a stage precondition.', 'Read the project blockers or preflight and correct them before submitting again.', false],
+  ] as const;
+  const rule = rules.find(([pattern]) => pattern.test(error));
+  return {
+    errorCode: rule?.[1] ?? 'STAGE_FAILED',
+    errorMessage: rule?.[2] ?? 'The stage failed without a recognized diagnostic.',
+    failedStage: stage,
+    retryable: rule?.[4] === true && attempts < 2,
+    recommendedRecovery: rule?.[3] ?? 'Inspect the current project and checkpoint, then ask the runtime administrator for diagnosis.',
+  };
+}
+
 function report(j: StudioJob) {
   const diff = (a: string | null, b: string | null) =>
     a && b ? Math.max(0, Date.parse(b) - Date.parse(a)) : null;
+  const stage = definitions[j.operation.slice(9) as Tool].stage;
+  const failure = operatorFailure(j.error, stage, j.attemptNumber || 1);
   return {
     contract: PRODUCTION_CONTRACT, jobId: j.jobId, attemptId: j.jobId,
     sessionId: j.sessionId === catalogScope ? null : j.sessionId,
-    stage: definitions[j.operation.slice(9) as Tool].stage,
+    stage,
     status: j.suspectedInterruption && /^Backend restarted/.test(j.error || '') ? 'INTERRUPTED'
       : j.result && (j.result as any).validation === 'MACHINE_VALIDATED' && j.status === 'SUCCEEDED' ? 'DRAFT_READY'
       : j.status,
     queuedAt: j.queuedAt, startedAt: j.startedAt, finishedAt: j.completedAt,
     queueWaitMs: diff(j.queuedAt, j.startedAt), observedExecutionMs: j.startedAt ? j.elapsedMs : null,
     wallClockMs: diff(j.queuedAt, j.completedAt || new Date().toISOString()),
-    revision: j.revision, checkpoint: j.currentStep, retryCount: (j.attemptNumber || 1) - 1,
+    revision: j.revision ?? j.inputRevision ?? null, checkpoint: j.currentStep, retryCount: (j.attemptNumber || 1) - 1,
     timeoutPolicy: definitions[j.operation.slice(9) as Tool].budget,
-    errorCode: j.error?.match(/\b[A-Z][A-Z_]{3,}\b/)?.[0] || (j.error ? 'STAGE_FAILED' : null),
+    errorCode: null, errorMessage: null, failedStage: null, retryable: false,
+    recommendedRecovery: null, ...failure,
     heartbeatAt: j.heartbeatAt ?? null, maxHeartbeatGapMs: j.maxHeartbeatGapMs ?? null,
     suspectedInterruption: j.suspectedInterruption ?? false,
     events: j.events, result: j.result ?? null,
@@ -174,15 +204,15 @@ export class ProductionHarness {
         return { result: { collectionId: b.collectionId, assessmentId: result.id, provider: result.provider } };
       }
       if (tool === 'create_draft') {
-        const { collection } = await this.conversations.engine.collection(b.collectionId);
+        const { collection, evaluation } = await this.conversations.engine.collection(b.collectionId);
         valid(!collection.root.provenance.synthetic && canonicalPost(collection.root.url) &&
           collection.root.originalText.trim() && collection.root.author.handle, 'SAVED_ROOT_NOT_ELIGIBLE');
-        const selection = this.selection(collection);
-        valid(b.replyIds.every(replyId => selection.some(row => row.id === replyId)), 'REPLY_NOT_QUALITY_ELIGIBLE');
+        const selection = this.selection(collection, evaluation);
+        valid(b.replyIds.every(replyId => selection.some(row => row.id === replyId && row.eligible)), 'REPLY_NOT_QUALITY_ELIGIBLE');
         const review = await this.conversations.engine.review(b.collectionId);
         const s = await this.studio.createConversationDraft(collection, {
           ...review, decision: 'NEEDS_REVIEW', selectedReplyIds: b.replyIds, selectedObservedUrls: [],
-        }, id);
+        }, id, true);
         return { revision: s.revision, result: { sessionId: s.id, collectionId: b.collectionId, revision: s.revision, selection: [
           { id: collection.root.id, reason: 'Exact collection root' },
           ...selection.filter(row => b.replyIds.includes(row.id)),
@@ -190,6 +220,10 @@ export class ProductionHarness {
       }
       const s = await this.studio.load(b.sessionId);
       if (s.revision !== b.revision) throw new ConflictException('STALE_REVISION');
+      if (tool === 'restore_cached_avatars') {
+        const next = await this.studio.restoreOperatorAvatars(s.id, s.revision);
+        return {revision:next.revision, result:projectSummary(next)};
+      }
       const blockers = sourceBlockers(s);
       valid(!blockers.length, blockers.join('; '));
       const item = s.items.find(i => i.selected && i.id === b.itemId);
@@ -202,7 +236,8 @@ export class ProductionHarness {
         return { revision: next.revision, result: projectSummary(next) };
       }
       if (tool === 'pronunciation') {
-        valid(item && item.spokenText.toLowerCase().split(/[^\p{L}\p{N}.]+/u).includes(b.term.toLowerCase()), 'PRONUNCIATION_TERM_NOT_PRESENT');
+        const tokens: string[] = item?.spokenText.toLowerCase().match(/[\p{L}\p{N}]+(?:\.[\p{L}\p{N}]+)*/gu) || [];
+        valid(item && tokens.includes(b.term.toLowerCase()), 'PRONUNCIATION_TERM_NOT_PRESENT');
         const next = await this.studio.mutate(s.id, {
           revision: s.revision, title: s.title, items: [...s.items].sort((a,c) => a.order-c.order).map(i => ({
             id: i.id, selected: i.selected, displayText: i.displayText, spokenText: i.spokenText,
@@ -222,7 +257,9 @@ export class ProductionHarness {
           voice: item?.voiceSettings?.voice || 'my_yen', speed: item?.voiceSettings?.speed ?? 1.2,
         });
         const voiceJob = next.voiceJobs?.slice(-1)[0], asset = currentNarration(next, next.items.find(i => i.id === b.itemId)!);
-        return { revision: next.revision, error: asset ? undefined : (voiceJob?.failureCategory || 'TTS_FAILED'),
+        const failure = voiceJob?.failureCategory;
+        const voiceError = failure && failure !== 'UNKNOWN' ? failure : voiceJob?.error || 'TTS_FAILED';
+        return { revision: next.revision, error: asset ? undefined : voiceError,
           result: { assetId: asset?.id, audioDurationMs: asset?.durationMs, cacheHit: asset?.cacheHit ?? null,
             voiceJob: voiceJob ? { elapsedMs: voiceJob.elapsedMs, status: voiceJob.status } : null, metrics: asset?.synthesisMetrics ?? null } };
       }
@@ -232,7 +269,7 @@ export class ProductionHarness {
           valid(asset, 'CURRENT_MEASURED_AUDIO_REQUIRED:' + i.id);
           await this.measuredWav(s.id, asset!.id);
         }
-        await this.studio.preparePreview(s.id, s.revision);
+        await this.studio.preparePreview(s.id, s.revision, true);
         const next = await this.studio.load(s.id);
         return { revision: next.revision, result: projectSummary(next) };
       }
@@ -258,17 +295,36 @@ export class ProductionHarness {
     return report(await this.job(job.jobId));
   }
 
-  private selection(collection: Parameters<typeof sourceQualityAdapter>[0]) {
+  private selection(collection: Parameters<typeof sourceQualityAdapter>[0],
+    evaluation: Awaited<ReturnType<ConversationStudioService['engine']['collection']>>['evaluation']) {
     const normalized = sourceQualityAdapter(collection);
-    return normalized.groups.PARENT_VERIFIED
-      .filter(row => normalized.automation.selectedVerifiedReplyIds.includes(row.id))
-      .map(row => ({ id: row.id, reason: row.quality?.reasons?.join('; ') || 'Verified and rule-recommended' }));
+    return normalized.groups.PARENT_VERIFIED.map(row => {
+      const reply = collection.replies.find(reply => reply.id === row.id);
+      const label = evaluation.replyQuality.find(quality => quality.replyId === row.id)?.label;
+      const rejectionReasons: string[] = [];
+      if (!reply || reply.provenance.synthetic || collection.root.provenance.synthetic ||
+          reply.rootId !== collection.root.id || reply.extractionStatus !== 'VERIFIED' ||
+          canonicalPost(reply.evidence?.subjectUrl)?.id !== row.id || !reply.evidence?.documentHash ||
+          row.membership === 'RECOMMENDED_POST')
+        rejectionReasons.push('RELATIONSHIP_OR_PROVENANCE_INVALID');
+      if (!row.displayText?.trim() || !reply?.author.handle) rejectionReasons.push('SOURCE_INCOMPLETE');
+      if (label === 'SPAM' || label === 'DUPLICATE') rejectionReasons.push(label);
+      const eligible = rejectionReasons.length === 0;
+      const recommended = eligible && normalized.automation.selectedVerifiedReplyIds.includes(row.id);
+      if (!recommended) rejectionReasons.push(...(row.quality?.reasons || ['NOT_RULE_RECOMMENDED']));
+      return {id:row.id, eligible, recommended, rejectionReasons,
+        reason: recommended ? 'Verified and rule-recommended' : rejectionReasons.join('; ')};
+    });
   }
 
   async collection(id: string) {
     valid(contentId.test(id), 'INVALID_CONTENT_ID');
     const { collection, evaluation } = await this.conversations.engine.collection(id);
-    return { root: collection.root, replies: collection.replies, evaluation, eligible: this.selection(collection) };
+    const saved = (await this.ai.evaluator.list()).find(row => row.collectionId === id && row.style === 'SERIOUS');
+    const selection = this.selection(collection, evaluation).map(row => ({...row,
+      assessment: saved?.candidates.find(candidate => candidate.sourceId === row.id) ?? null}));
+    return { root: collection.root, replies: collection.replies, evaluation, selection,
+      eligible: selection.filter(row => row.eligible), assessmentId: saved?.id ?? null };
   }
 
   async collections() {

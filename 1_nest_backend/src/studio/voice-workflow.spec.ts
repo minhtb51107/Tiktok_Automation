@@ -105,7 +105,7 @@ describe('Voice workflow usability (MOCK runtime, no inference)', () => {
     const { base, service, state } = await fixture();
     try {
       let s = await service.create();
-      for (const text of ['Cảnh A.', 'Cảnh B.', 'Cảnh C.'])
+      for (const text of ['Cảnh A.', 'Cảnh B.', 'Cảnh cuối.'])
         s = await service.mutate(s.id, {
           revision: s.revision,
           manual: { text, author: 'MOCK', comments: '' },
@@ -167,7 +167,7 @@ describe('Voice workflow usability (MOCK runtime, no inference)', () => {
       expect(s.items.map((i) => i.originalText)).toEqual([
         'Cảnh A.',
         'Cảnh B.',
-        'Cảnh C.',
+        'Cảnh cuối.',
       ]);
     } finally {
       await fs.rm(base, { recursive: true, force: true });
