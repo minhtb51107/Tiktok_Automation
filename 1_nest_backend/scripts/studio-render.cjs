@@ -86,7 +86,8 @@ async function main(){
   }
   metrics.resolvedPropsHash=hash(JSON.stringify(props));
   const cacheKey=hash((await fingerprint(path.join(project,'src/video-pipeline')))+(await fingerprint(path.join(project,'src/render')))+(await fingerprint(path.resolve('src/video-pipeline')))+requireVideo('remotion/package.json').version);
-  const bundleDir=path.resolve('.studio-data/render-bundles',cacheKey),empty=path.resolve('.studio-data/render-public-empty');
+  const dataRoot=process.env.STUDIO_OPERATOR_ONLY==='1' ? process.env.STUDIO_DATA_ROOT : '.studio-data';
+  const bundleDir=path.resolve(dataRoot,'render-bundles',cacheKey),empty=path.resolve(dataRoot,'render-public-empty');
   await fs.mkdir(empty,{recursive:true});const prep=Date.now();
   let serveUrl=bundleDir;
   if(await fs.stat(path.join(bundleDir,'index.html')).catch(()=>null)){tick('Using cached composition bundle');metrics.bundleCacheHit=true;}

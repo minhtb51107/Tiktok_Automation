@@ -14,9 +14,10 @@ import {PublishingController} from './publishing.controller';
 import {AiContentController,AiContentStudioService} from '../data-engine/ai.controller';
 import {ProductPipelineController} from './product-pipeline.controller';
 import {ProductPipelineService} from './product-pipeline';
+import {ProductionHarness, ProductionHarnessController} from './production-harness';
 
 @Module({
-  controllers: [ProductPipelineController,AiContentController,ContentQualityController,StudioOperationsController,StudioController,PublishingController,DataController,ThreadsController,CrawlerController,ConversationController,EditorialController],
-  providers: [ProductPipelineService,AiContentStudioService,ContentQualityService,StudioOperations,StudioService, ScraperService,PublishingService,DataStudioService,ThreadsDiscoveryService,CrawlerStudioService,ConversationStudioService,EditorialStudioService],
+  controllers: [ProductionHarnessController,ProductPipelineController,AiContentController,ContentQualityController,StudioOperationsController,StudioController,PublishingController,DataController,ThreadsController,CrawlerController,ConversationController,EditorialController],
+  providers: [ProductionHarness,ProductPipelineService,AiContentStudioService,ContentQualityService,StudioOperations,StudioService, ScraperService,PublishingService,DataStudioService,ThreadsDiscoveryService,CrawlerStudioService,ConversationStudioService,EditorialStudioService],
 })
 export class StudioModule {}

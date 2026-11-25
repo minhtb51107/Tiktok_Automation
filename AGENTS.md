@@ -39,3 +39,6 @@ before editing; do not reset, clean, stash or overwrite unrelated work.
   resources; do not kill unrelated processes.
 - Distinguish unit/mock tests, live browser preview, live TTS and real MP4 evidence.
   Do not infer live success from mocks or render fidelity from preview alone.
+- Operator work uses the restricted Production Harness interface. Set up the
+  agent host without repository write or shell tools and follow
+  [the Operator guide](docs/production-harness-v1.md).

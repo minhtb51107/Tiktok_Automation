@@ -287,6 +287,7 @@ export class StudioService {
     input: RenderRequest,
     tick: ProgressSink,
     jobId: string,
+    operatorGate?: (session: StudioSession, props: ReturnType<typeof renderBackground>) => Promise<void>,
   ) {
     return this.exclusive(async () => {
       assertNoLocalProbe();
@@ -295,7 +296,7 @@ export class StudioService {
         throw new ConflictException(
           'Project changed; reload Render before exporting',
         );
-      await this.ensureCachedAvatars(s);
+      if (!operatorGate) await this.ensureCachedAvatars(s);
       const built = prepareEditor(s, await this.visualAssets(s)),
         props = renderBackground(
           built.preview.request.inputProps,
@@ -303,6 +304,7 @@ export class StudioService {
         );
       const range = validateRenderRequest(input, props),
         validation = renderValidation(s, props);
+      await operatorGate?.(s, props);
       if (
         validation.blockers.length ||
         (input.mode === 'FINAL' && validation.finalBlockers.length)
@@ -385,6 +387,12 @@ export class StudioService {
       );
       return { revision: s.revision, warnings: result.warnings };
     });
+  }
+  runOperatorDraft(
+    id: string, revision: number, requestId: string, tick: ProgressSink, jobId: string,
+    gate: NonNullable<Parameters<StudioService['renderJob']>[4]>,
+  ) {
+    return this.renderJob(id, {revision, requestId, mode: 'DRAFT', preset: '720P', backgroundMode: 'SAVED'}, tick, jobId, gate);
   }
   readonly publicAssets = new PublicAssets();
   /**
@@ -2526,7 +2534,8 @@ export class StudioService {
         if (
           item.automaticNormalization?.normalizationVersion ===
             currentTts.normalizationVersion &&
-          item.automaticNormalization.outputHash === currentHash
+          item.automaticNormalization.outputHash === currentHash &&
+          item.automaticNormalization.ttsInputHash === currentTts.ttsInputHash
         )
           continue;
         const run = offlineNormalize(item);

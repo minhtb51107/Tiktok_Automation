@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { createHash, randomUUID } from 'crypto';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { replaceFile } from './atomic-file';
 export type ProgressStatus =
   | 'QUEUED'
@@ -29,6 +29,13 @@ export interface StudioJob {
   warnings: string[];
   cancelRequested: boolean;
   revision: number | null;
+  result?: unknown;
+  heartbeatAt?: string;
+  maxHeartbeatGapMs?: number;
+  suspectedInterruption?: boolean;
+  operatorRequestId?: string;
+  operatorEffectKey?: string;
+  attemptNumber?: number;
   events: {
     at: string;
     step: string;
@@ -89,10 +96,12 @@ export class StudioJobs {
     }
     const j: StudioJob = JSON.parse(await fs.readFile(this.file(id), 'utf8'));
     if (active(j)) {
+      j.suspectedInterruption = true;
       j.status = 'FAILED';
       j.error =
         'Backend restarted before completion. Not automatically retried.';
       j.completedAt = new Date().toISOString();
+      if (j.heartbeatAt) j.elapsedMs = Math.max(0, Date.parse(j.heartbeatAt) - Date.parse(j.startedAt || j.queuedAt));
       await this.save(j);
     }
     return j;
@@ -119,6 +128,7 @@ export class StudioJobs {
       review?: boolean;
       error?: string;
       warnings?: string[];
+      result?: unknown;
     }>,
   ) {
     // Serialize admission too: double-clicks must not race the on-disk check.
@@ -131,6 +141,13 @@ export class StudioJobs {
       const requestKey = createHash('sha256')
         .update(JSON.stringify({ sessionId, operation, input }))
         .digest('hex');
+      const operator = operation.startsWith('operator:');
+      const { requestId: operatorRequestId, ...effect } = operator
+        ? input as Record<string, unknown> : {};
+      const operatorEffectKey = operator ? createHash('sha256')
+        .update(JSON.stringify({ sessionId, operation, effect })).digest('hex') : undefined;
+      let attemptNumber = 1;
+      let reused: StudioJob | undefined;
       for (const f of await fs.readdir(this.root).catch(() => []))
         if (/^[a-f0-9-]{36}\.json$/.test(f)) {
           const old: StudioJob =
@@ -140,7 +157,19 @@ export class StudioJobs {
             release();
             return old;
           }
+          if (operator && old.sessionId === sessionId && old.operation === operation) {
+            if (old.operatorRequestId === operatorRequestId)
+              throw new ConflictException('OPERATOR_REQUEST_ID_CONFLICT');
+            if (old.operatorEffectKey === operatorEffectKey) {
+              if (active(old) || ['SUCCEEDED', 'WAITING_REVIEW'].includes(old.status)) reused = old;
+              else attemptNumber = Math.max(attemptNumber, (old.attemptNumber || 1) + 1);
+            }
+          }
         }
+      if (reused) return reused;
+      if (operator && attemptNumber > 2) throw new ConflictException('OPERATOR_ATTEMPT_LIMIT');
+      if (operation.startsWith('operator:') && [...this.live.values()].some(active))
+        throw new ConflictException('OPERATOR_WORKER_BUSY');
       j = {
         jobId: randomUUID(),
         sessionId,
@@ -166,6 +195,7 @@ export class StudioJobs {
         cancelRequested: false,
         revision: null,
         events: [],
+        ...(operator ? { operatorRequestId: operatorRequestId as string, operatorEffectKey, attemptNumber } : {}),
       };
       await fs.mkdir(this.root, { recursive: true });
       await fs.writeFile(this.file(j.jobId), JSON.stringify(j, null, 2));
@@ -175,6 +205,19 @@ export class StudioJobs {
     }
     const execute = async () => {
       const started = Date.now();
+      const beat = () => {
+        const now = Date.now();
+        const gap = j.heartbeatAt ? now - Date.parse(j.heartbeatAt) : 0;
+        j.maxHeartbeatGapMs = Math.max(j.maxHeartbeatGapMs || 0, gap);
+        if (gap > 20_000) j.suspectedInterruption = true;
+        j.heartbeatAt = new Date(now).toISOString();
+        j.elapsedMs = now - started;
+      };
+      const timer = operation.startsWith('operator:') ? setInterval(() => {
+        beat();
+        void this.save(j).catch(() => {});
+      }, 5000) : undefined;
+      timer?.unref();
       const tick: ProgressSink = async (step, completed, total) => {
         j.currentStep = step;
         j.elapsedMs = Date.now() - started;
@@ -196,6 +239,7 @@ export class StudioJobs {
         const out = await run(tick, j.jobId);
         j.revision = out.revision ?? null;
         j.warnings = out.warnings || [];
+        j.result = out.result;
         if (j.cancelRequested)
           throw new JobCancelled(
             'Cancelled after the current atomic operation; saved artifacts retained',
@@ -221,6 +265,8 @@ export class StudioJobs {
                 : 'Unknown error');
         j.currentStep = j.status === 'CANCELLED' ? 'Cancelled' : 'Failed';
       } finally {
+        clearInterval(timer);
+        if (operation.startsWith('operator:')) beat();
         j.completedAt = new Date().toISOString();
         j.elapsedMs = Date.now() - started;
         await this.save(j);
