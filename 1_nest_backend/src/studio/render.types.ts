@@ -1,4 +1,5 @@
 import type { VideoPreviewProps } from '../video-pipeline/contracts';
+import type { RenderFailure } from './render-progress';
 export type RenderMode = 'DRAFT' | 'FINAL';
 export interface RenderRequest {
   revision: number;
@@ -36,6 +37,7 @@ export interface RenderManifest {
   bytes: number | null;
   warnings: string[];
   error: string | null;
+  failureCode?: RenderFailure;
   metrics: Record<string, unknown>;
   probe?: unknown;
   downloadUrl?: string;

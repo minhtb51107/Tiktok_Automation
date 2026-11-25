@@ -7,10 +7,10 @@ const renderer=requireVideo('@remotion/renderer'),{bundle}=requireVideo('@remoti
 const {replaceFile}=require('../dist/studio/atomic-file');
 const muxers=new Set();
 const command=(exe,args,cancellable=false)=>new Promise((resolve,reject)=>{const child=execFile(exe,args,{windowsHide:true,timeout:120000,maxBuffer:2*1024*1024},(e,out)=>{muxers.delete(child);e?reject(e):resolve(out);});if(cancellable)muxers.add(child);});
-let cancelled=false;const signal=renderer.makeCancelSignal();
-const cancel=()=>{cancelled=true;signal.cancel();for(const child of muxers)child.kill();};
-process.on('message',m=>{if(m?.cancel)cancel();});
-process.on('disconnect',cancel);
+let cancelled=false,stopReason;const signal=renderer.makeCancelSignal();
+const cancel=(reason)=>{if(cancelled)return;cancelled=true;stopReason=reason;signal.cancel();for(const child of muxers)child.kill();};
+process.on('message',m=>{if(m?.cancel)cancel(m.reason||'USER_CANCELLED');});
+process.on('disconnect',()=>cancel('RENDER_WORKER_CRASH'));
 function check(){if(cancelled)throw Error('Cancelled');}
 function tick(step,completed,total){if(process.connected)process.send({step,completed,total});}
 const hash=v=>crypto.createHash('sha256').update(v).digest('hex');
@@ -23,8 +23,10 @@ async function main(){
  const sample=async()=>{if(monitoring)return;monitoring=true;try{metrics.workerPeakRssBytes=Math.max(metrics.workerPeakRssBytes,process.memoryUsage().rss);
    if(process.platform==='win32'){
     const ps=`$os=Get-CimInstance Win32_OperatingSystem; $all=Get-CimInstance Win32_Process; $ids=@(${process.pid}); do {$next=@($all | Where-Object {$_.ParentProcessId -in $ids -and $_.ProcessId -notin $ids} | ForEach-Object ProcessId); $ids+=$next} while($next.Count); $p=@($all | Where-Object {$_.ProcessId -in $ids}); [pscustomobject]@{freeRamKiB=$os.FreePhysicalMemory;freeVirtualKiB=$os.FreeVirtualMemory;workingBytes=($p|Measure-Object WorkingSetSize -Sum).Sum;privateBytes=($p|Measure-Object PrivatePageCount -Sum).Sum;cpu100ns=(($p|Measure-Object KernelModeTime -Sum).Sum+($p|Measure-Object UserModeTime -Sum).Sum)}|ConvertTo-Json -Compress`;
-    const data=JSON.parse(await command('powershell.exe',['-NoProfile','-NonInteractive','-Command',ps]));metrics.samples.push({elapsedMs:Date.now()-started,...data});
-    if(data.freeRamKiB<128*1024&&data.freeVirtualKiB<256*1024){m.warnings.push('Stopped: low physical and virtual memory');cancelled=true;signal.cancel();}
+    const data=JSON.parse(await command('powershell.exe',['-NoProfile','-NonInteractive','-Command',ps]));
+    const resource={elapsedMs:Date.now()-started,...data};metrics.samples.push(resource);
+    if(process.connected)process.send({resource},()=>{});
+    if(data.freeRamKiB<128*1024&&data.freeVirtualKiB<256*1024){m.warnings.push('Stopped: low physical and virtual memory');cancel('RESOURCE_BLOCKED');}
    }
  }catch{}finally{monitoring=false}};
  try{
@@ -40,7 +42,8 @@ async function main(){
    }else throw Error(`Nonlocal required media: ${a.id}`);
   }
   for(const t of props.timeline.scenes){const c=t.scene.threadsCard;if(c?.avatarUrl){const uri=local(c.avatarUrl);if(uri)c.avatarUrl=uri;else{c.avatarUrl=null;m.warnings.push(`${t.scene.id}: remote avatar unavailable to offline render`);}}}
-  // Pre-normalize active background video slices to short 12-frame GOPs so OffthreadVideo
+  const normalizationStart=Date.now();metrics.normalizedBackgroundTracks=0;
+  // Pre-normalize active background video slices to short GOPs so OffthreadVideo
   // extracts every frame deterministically within a bounded 48 MiB frame cache.
   for(const c of (props.backgroundTracks||[]).filter(x=>x.enabled)){
    const a=props.mediaAssets.find(x=>x.id===c.assetId);
@@ -50,8 +53,10 @@ async function main(){
     tick('Normalizing background video GOP for frame-exact OffthreadVideo');
     await command('ffmpeg',['-v','error','-y','-ss',(before/m.fps).toFixed(6),'-i',a.uri,'-frames:v',String(span),'-r',String(m.fps),'-vf',`scale=${m.width}:${m.height}:force_original_aspect_ratio=increase,crop=${m.width}:${m.height}`,'-c:v','libx264','-preset','ultrafast','-crf','18','-g','6','-keyint_min','6','-bf','0','-sc_threshold','0','-pix_fmt','yuv420p','-movflags','+faststart','-an',slicePath],true);
     sliceFiles['/'+sliceName]=slicePath;
+    metrics.normalizedBackgroundTracks++;
    }
   }
+  metrics.backgroundNormalizationMs=Date.now()-normalizationStart;
   if(Object.keys(sliceFiles).length){
    sliceServer=http.createServer((req,res)=>{
     const file=sliceFiles[new URL(req.url,'http://127.0.0.1').pathname];
@@ -115,7 +120,7 @@ async function main(){
   m.probe={streams:probe.streams,format:{...probe.format,filename:'video.mp4'}};m.bytes=(await fs.stat(path.join(dir,'video.mp4'))).size;m.status='COMPLETED';m.downloadUrl=`/api/studio/sessions/${m.sessionId}/renders/${m.jobId}/video`;
   // DRAFT never becomes publishable. FINAL still requires the publishing stage's own gate.
   m.publishable=false;tick('Completed',frames,frames);
- }catch(e){m.status=cancelled||(typeof renderer.isUserCancelledRender==='function'&&renderer.isUserCancelledRender(e))?'CANCELLED':'FAILED';m.error=m.status==='CANCELLED'?null:redact(e.message||String(e));if(m.error)console.error(m.error);process.exitCode=m.status==='CANCELLED'?0:1;}
+ }catch(e){m.failureCode=stopReason||'RENDER_FAILED';m.status=m.failureCode==='USER_CANCELLED'?'CANCELLED':'FAILED';m.error=stopReason||'RENDER_FAILED: '+redact(e.message||String(e));console.error(m.error);process.exitCode=m.status==='CANCELLED'?0:1;}
  finally{clearInterval(monitor);await browser?.close({silent:true}).catch(()=>{});for(const f of Object.values(sliceFiles))await fs.unlink(f).catch(()=>{});if(sliceServer)await new Promise(r=>sliceServer.close(r));m.completedAt=new Date().toISOString();metrics.endToEndMs=Date.now()-started;m.metrics=metrics;m.warnings=[...new Set(m.warnings)];await save();if(process.connected)process.disconnect();}
 }
 main().catch(e=>{console.error(redact(e.message));process.exitCode=1;if(process.connected)process.disconnect();});

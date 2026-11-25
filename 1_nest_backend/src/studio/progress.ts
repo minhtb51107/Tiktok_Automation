@@ -3,6 +3,7 @@ import * as path from 'path';
 import { createHash, randomUUID } from 'crypto';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { replaceFile } from './atomic-file';
+import type { RenderProgress } from './render-progress';
 export type ProgressStatus =
   | 'QUEUED'
   | 'RUNNING'
@@ -31,6 +32,7 @@ export interface StudioJob {
   revision: number | null;
   inputRevision?: number;
   result?: unknown;
+  renderProgress?: ReturnType<RenderProgress['view']>;
   heartbeatAt?: string;
   maxHeartbeatGapMs?: number;
   suspectedInterruption?: boolean;
@@ -70,6 +72,14 @@ export class StudioJobs {
   private queue: Promise<unknown> = Promise.resolve();
   private writing: Promise<unknown> = Promise.resolve();
   private live = new Map<string, StudioJob>();
+  setRenderProgress(id: string, value: StudioJob['renderProgress']) {
+    const job = this.live.get(id);
+    if (job) {
+      job.renderProgress = value;
+      job.completed = value?.renderedFrames ?? job.completed;
+      job.total = value?.totalFrames ?? job.total;
+    }
+  }
   constructor(private root = resolveJobsRoot()) {}
   private file(id: string) {
     if (!/^[a-f0-9-]{36}$/.test(id))
@@ -223,8 +233,8 @@ export class StudioJobs {
       const tick: ProgressSink = async (step, completed, total) => {
         j.currentStep = step;
         j.elapsedMs = Date.now() - started;
-        j.completed = completed ?? j.completed;
-        j.total = total ?? j.total;
+        j.completed = j.renderProgress?.renderedFrames ?? completed ?? j.completed;
+        j.total = j.renderProgress?.totalFrames ?? total ?? j.total;
         j.events.push({
           at: new Date().toISOString(),
           step,
@@ -258,7 +268,7 @@ export class StudioJobs {
         j.status = e instanceof JobCancelled ? 'CANCELLED' : 'FAILED';
         j.error =
           e instanceof JobCancelled
-            ? null
+            ? (j.renderProgress ? 'USER_CANCELLED' : null)
             : 'Operation failed; review the persisted stage result. ' +
               (e instanceof Error
                 ? e.message

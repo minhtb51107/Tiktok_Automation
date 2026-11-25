@@ -95,9 +95,14 @@ export function operatorFailure(error: string | null, stage: string, attempts: n
   // Public messages are fixed text. Runtime errors can include local paths,
   // provider bodies or credentials and are never echoed at this boundary.
   const rules = [
+    [/USER_CANCELLED/i, 'USER_CANCELLED', 'The operator cancelled this render.', 'Check the retained render checkpoint before starting a new attempt.', false],
+    [/RENDER_STALLED/i, 'RENDER_STALLED', 'The worker produced no new frame for two minutes during frame rendering.', 'Check resource samples and the last worker checkpoint.', true],
+    [/RENDER_TIMEOUT/i, 'RENDER_TIMEOUT', 'Rendering exceeded its execution budget.', 'Check measured frame throughput and resource samples before retrying.', true],
+    [/RENDER_WORKER_CRASH/i, 'RENDER_WORKER_CRASH', 'The render worker exited without a completed artifact.', 'Check the last worker checkpoint and resource samples before retrying.', true],
+    [/RENDER_FAILED/i, 'RENDER_FAILED', 'The render worker reported a render or output validation failure.', 'Inspect the render checkpoint before retrying.', false],
     [/backend restarted/i, 'INTERRUPTED', 'The backend restarted before this stage finished.', 'Reopen the project and inspect retained artifacts before a retry.', true],
     [/unknown Kokoro voice|voice.unavailable|locally available Kokoro voice/i, 'VOICE_UNAVAILABLE', 'The requested Kokoro voice is unavailable or was not declared by the runtime.', 'Ask the runtime administrator to verify the configured voicepack, then retry audio.', true],
-    [/RESOURCE_GUARD_STOP|BLOCKED_RESOURCE|ALLOCATION_FAILURE|WINDOWS_OOM_EVIDENCE/i, 'RESOURCE_BLOCKED', 'The TTS resource guard or allocator stopped execution.', 'Wait for safe headroom and other heavy workers to exit before retrying.', true],
+    [/RESOURCE_GUARD_STOP|BLOCKED_RESOURCE|RESOURCE_BLOCKED|ALLOCATION_FAILURE|WINDOWS_OOM_EVIDENCE/i, 'RESOURCE_BLOCKED', 'A resource guard or allocator stopped execution.', 'Wait for safe headroom and other heavy workers to exit before retrying.', true],
     [/timeout|timed out|deadline exceeded/i, 'TIMEOUT', 'This stage exceeded its execution deadline.', 'Check the job checkpoint and worker state before retrying.', true],
     [/BLOCKED_RUNTIME|runtime unavailable|preflight unavailable/i, 'RUNTIME_UNAVAILABLE', 'A required local runtime dependency did not pass preflight.', 'Ask the runtime administrator to check Python, Kokoro assets, FFmpeg and FFprobe.', true],
     [/STALE_REVISION|session changed/i, 'STALE_REVISION', 'The project revision has changed.', 'Read GET /projects/:id and submit the stage with its current revision.', false],
@@ -138,6 +143,7 @@ function report(j: StudioJob) {
     heartbeatAt: j.heartbeatAt ?? null, maxHeartbeatGapMs: j.maxHeartbeatGapMs ?? null,
     suspectedInterruption: j.suspectedInterruption ?? false,
     events: j.events, result: j.result ?? null,
+    renderProgress: j.renderProgress ?? null,
   };
 }
 

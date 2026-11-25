@@ -380,8 +380,7 @@ export class StudioService {
             ...(input.mode === 'FINAL' ? validation.finalBlockers : []),
           ].join('; '),
         );
-      // Close an idle retained Kokoro model before starting Chromium/encoding.
-      this.voice.close();
+      await this.voice.closeAndWait();
       const candidates = [
         process.env.STUDIO_BROWSER,
         'C:/Program Files/Google/Chrome/Application/chrome.exe',
