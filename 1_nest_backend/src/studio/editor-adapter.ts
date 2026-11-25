@@ -73,7 +73,15 @@ export function validateEditor(
   if(!Array.isArray(tracks)||tracks.length>20||new Set(tracks.map(t=>t.id)).size!==tracks.length)throw new BadRequestException('Invalid background tracks');
   for(const c of tracks){const a=library.find(a=>a.id===c.assetId)||s.studioMedia?.find(a=>a.id===c.assetId);if(!a||!['IMAGE','VIDEO'].includes(a.kind)||typeof c.enabled!=='boolean'||!/^bg-[a-zA-Z0-9-]+$/.test(c.id))throw new BadRequestException('Invalid background clip');try{validateRange(c,a.durationMs);}catch(e){throw new BadRequestException((e as Error).message);}}
   return {
-    backgroundTracks:structuredClone(tracks),
+    ...(s.editor?.automaticGameplay === 'OFF' ? {automaticGameplay:'OFF' as const} : {}),
+    backgroundTracks:tracks.map(track => {
+      const current = s.editor?.backgroundTracks?.find(row => row.id === track.id);
+      const {autoFitTimeline: _requestedAutoFit, ...settings} = track;
+      const keep = current?.autoFitTimeline === true &&
+        ['assetId','startMs','durationMs','sourceInMs','sourceOutMs','loop','enabled','offsetMs']
+          .every(key => current[key] === track[key]);
+      return {...settings,...(keep ? {autoFitTimeline:true} : {})};
+    }),
     backgroundId: body.backgroundId ?? null,
     backgroundMusic: validateBgm(body.backgroundMusic, (id) =>
       library.some((a) => a.id === id && a.category === 'BGM') || !!s.studioMedia?.some(a=>a.id===id&&a.category==='BGM'),

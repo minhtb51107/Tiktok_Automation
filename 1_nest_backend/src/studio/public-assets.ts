@@ -14,21 +14,23 @@ export interface LibraryAsset {
   durationMs?: number;
   width?: number;
   height?: number;
+  usage?: 'SERIOUS_GAMEPLAY';
 }
-export function seriousDraftAssets(assets: LibraryAsset[]) {
-  const gameplay = assets.find(
-    (asset) =>
-      asset.category === 'BACKGROUND' &&
-      asset.kind === 'VIDEO' &&
-      /(?:gameplay|parkour|minecraft|snaptt)/i.test(asset.relativePath),
-  );
+// Reviewed local library entries. Folder membership alone does not establish
+// gameplay: this library also contains non-game footage.
+const reviewedGameplay = ['backgrounds/source_3.mp4', 'backgrounds/source_4.mp4', 'backgrounds/source_8.mp4'];
+export function seriousDraftAssets(assets: LibraryAsset[], preferredIds: string[] = []) {
+  const videos = assets.filter(asset => asset.category === 'BACKGROUND' && asset.kind === 'VIDEO' && asset.bytes > 0);
+  const gameplay = preferredIds.length
+    ? preferredIds.flatMap(id => videos.filter(asset => asset.id === id))
+    : videos.filter(asset => asset.usage === 'SERIOUS_GAMEPLAY');
   const bgm = assets.find(
     (asset) =>
       asset.category === 'BGM' &&
       asset.kind === 'AUDIO' &&
       asset.relativePath.toLocaleLowerCase() === 'bgm/lofi.mp3',
   );
-  return { gameplay: gameplay ?? null, bgm: bgm ?? null };
+  return { gameplay, bgm: bgm ?? null };
 }
 export class PublicAssets {
   private probes = new Map<string, Partial<LibraryAsset>>();
@@ -76,10 +78,15 @@ export class PublicAssets {
           kind,
           category,
           bytes: (await fs.stat(f)).size,
+          ...(reviewedGameplay.includes(rel) ? {usage: 'SERIOUS_GAMEPLAY' as const} : {}),
         });
       }
     };
-    await walk(this.root);
+    try {
+      await walk(this.root);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
     return rows.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
   }
   async file(id: string) {
@@ -107,7 +114,7 @@ export class PublicAssets {
               '-v',
               'error',
               '-show_entries',
-              'format=duration:stream=width,height',
+              'format=duration:stream=codec_type,duration,width,height',
               '-of',
               'json',
               file,
@@ -119,14 +126,18 @@ export class PublicAssets {
                 : resolve(out),
           ),
         );
-        const probe = JSON.parse(raw),
-          durationMs = Math.ceil(Number(probe.format?.duration) * 1000);
+        const probe = JSON.parse(raw);
+        const video = probe.streams?.find((s: any) => s.codec_type === 'video' && s.width > 0 && s.height > 0);
+        if (asset.kind === 'VIDEO' && !video)
+          throw new BadRequestException('Public asset has no valid video stream');
+        const streamDuration = Number(video?.duration);
+        const durationMs = Math.floor((streamDuration > 0 ? streamDuration : Number(probe.format?.duration)) * 1000);
         if (!Number.isFinite(durationMs) || durationMs <= 0)
           throw new BadRequestException('Public asset duration unavailable');
         meta = {
           durationMs,
-          width: probe.streams?.find((s: any) => s.width)?.width,
-          height: probe.streams?.find((s: any) => s.height)?.height,
+          width: video?.width,
+          height: video?.height,
         };
         this.probes.set(key, meta);
       }

@@ -13,6 +13,7 @@ export interface EditorSceneSettings {
   mediaAssetIds: string[];
 }
 export interface EditorSettings {
+  automaticGameplay?: 'OFF';
   backgroundTracks?: import('../video-pipeline/editing').BackgroundClip[];
   backgroundId?: string | null;
   backgroundMusic?: import('../video-pipeline/scene-visual').BackgroundMusic;

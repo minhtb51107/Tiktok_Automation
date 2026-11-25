@@ -45,7 +45,7 @@ tool and session scope. Session mutations require the current `revision`.
 | collect | searchId, url | Collect the selected search-result permalink, using the existing collector and evidence validator |
 | evaluate | collectionId | Evaluate via the existing AI ledger. Output contains assessment ID and provider usage when available |
 | create_draft | collectionId, replyIds | Save a source project with a root and a subset of quality-eligible verified replies. Pass an empty array for root-only. Editorial approval remains pending |
-| visual_defaults | sessionId, revision | Apply the existing SERIOUS preset and local assets |
+| visual_defaults | sessionId, revision; optional gameplay (`PRESET` or `OFF`) | Apply the SERIOUS preset using the reviewed local asset registry. `OFF` opts out of automatic gameplay selection and preserves saved tracks |
 | restore_cached_avatars | sessionId, revision | Reuse saved, hash-verified avatars for exact author/post identities. Use the returned revision for the next stage |
 | normalize | sessionId, revision | Apply deterministic speech normalization and list uncertain terms |
 | pronunciation | sessionId, revision, itemId, term, reading | Update one existing term's pronunciation without changing original/display text |
@@ -107,6 +107,15 @@ subtitles, and requires measured current audio plus local media. An evidenced
 Threads default avatar is valid. Report an unavailable avatar separately. A
 completed render remains DRAFT with `MACHINE_VALIDATED` and human acceptance
 pending. Visual/layout and pronunciation review remain human checks.
+
+For a SERIOUS project that needs gameplay, call `visual_defaults` with the
+current revision and a new request ID. Call `prepare` with the returned
+revision to rebuild coverage from the current WAVs. Check the background
+track and its loop flag in the prepared project's summary. Existing editor
+choices, including a disabled track, retain their settings. The runtime
+administrator can configure an ordered comma-separated list of approved
+local public asset IDs in `STUDIO_SERIOUS_GAMEPLAY_ASSET_IDS`. A requested
+preset with no usable local clip returns `GAMEPLAY_ASSET_UNAVAILABLE`.
 
 ## Offline acceptance
 

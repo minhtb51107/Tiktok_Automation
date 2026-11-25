@@ -14,6 +14,7 @@ export function editorSettings(s: StudioSession): EditorSettings {
     .filter((x) => byId.has(x.itemId))
     .map((x) => ({ ...x, visual: normalizeVisual(x.visual) }));
   return {
+    ...(s.editor?.automaticGameplay === 'OFF' ? {automaticGameplay:'OFF' as const} : {}),
     backgroundId: s.editor?.backgroundId ?? null,
     backgroundTracks:s.editor?.backgroundTracks ?? [],
     backgroundMusic: s.editor?.backgroundMusic ?? defaultBgm(),

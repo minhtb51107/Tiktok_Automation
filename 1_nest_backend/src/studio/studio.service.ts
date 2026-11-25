@@ -463,37 +463,53 @@ export class StudioService {
    * Selects only the known local SERIOUS DRAFT assets. Local availability is
    * not a publishing-rights declaration; both assets remain UNKNOWN there.
    */
-  async applyAutomaticSeriousAssets(id: string, revision: number) {
+  async applyAutomaticSeriousAssets(id: string, revision: number, gameplay?: 'PRESET' | 'OFF') {
     return this.exclusive(async () => {
       const s = await this.load(id);
       if (s.revision !== revision)
         throw new ConflictException(
           'Session changed before automatic media selection.',
         );
-      const selected = seriousDraftAssets(await this.publicAssets.inventory());
+      if (s.project.style !== 'SERIOUS') return s;
+      const configured = (process.env.STUDIO_SERIOUS_GAMEPLAY_ASSET_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
+      const selected = seriousDraftAssets(await this.publicAssets.inventory(), [...new Set(configured)]);
       const settings = editorSettings(s);
       const appliedAssetIds = new Set<string>();
       let changed = false;
+      if (gameplay === 'OFF' && settings.automaticGameplay !== 'OFF') {
+        settings.automaticGameplay = 'OFF';
+        changed = true;
+      } else if (gameplay === 'PRESET' && settings.automaticGameplay === 'OFF') {
+        delete settings.automaticGameplay;
+        changed = true;
+      }
+      let chosen: Awaited<ReturnType<PublicAssets['resolve']>> | undefined;
       if (
-        selected.gameplay &&
-        !settings.backgroundTracks?.some((track) => track.enabled)
+        settings.automaticGameplay !== 'OFF' && !settings.backgroundTracks?.length &&
+        !settings.backgroundId && !settings.scenes.some(scene => scene.visual?.backgroundId)
       ) {
-        const asset = await this.publicAssets.resolve(selected.gameplay.id);
-        if (!asset.durationMs)
-          throw new BadRequestException('Gameplay duration unavailable');
+        for (const candidate of selected.gameplay) {
+          const asset = await this.publicAssets.resolve(candidate.id).catch(() => null);
+          if (asset?.durationMs >= 34 && asset.width > 0 && asset.height > 0) {
+            chosen = asset;
+            break;
+          }
+        }
+        if (!chosen) throw new BadRequestException('GAMEPLAY_ASSET_UNAVAILABLE');
         settings.backgroundTracks = [
           {
             id: 'bg-threads-gameplay',
-            assetId: asset.id,
+            assetId: chosen.id,
             startMs: 0,
-            durationMs: asset.durationMs,
+            durationMs: chosen.durationMs,
             sourceInMs: 0,
-            sourceOutMs: asset.durationMs,
+            sourceOutMs: chosen.durationMs,
             loop: true,
             enabled: true,
+            autoFitTimeline: true,
           },
         ];
-        appliedAssetIds.add(asset.id);
+        appliedAssetIds.add(chosen.id);
         changed = true;
       }
       if (selected.bgm && !settings.backgroundMusic?.assetId) {
@@ -505,7 +521,7 @@ export class StudioService {
         appliedAssetIds.add(selected.bgm.id);
         changed = true;
       }
-      for (const asset of [selected.gameplay, selected.bgm]) {
+      for (const asset of [chosen, selected.bgm]) {
         if (!asset || !appliedAssetIds.has(asset.id)) continue;
         s.mediaRights ??= {};
         if (!s.mediaRights[asset.id]) {

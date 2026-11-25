@@ -25,6 +25,7 @@ export interface BackgroundClip extends ClipRange {
   enabled: boolean;
   seed?: number;
   offsetMs?: number;
+  autoFitTimeline?: boolean;
 }
 export function fitBackground(c:BackgroundClip,totalMs:number,sourceMs:number,mode:'FIT'|'TRIM'|'LOOP'):BackgroundClip {
   if(!Number.isInteger(totalMs)||totalMs<34||!Number.isFinite(sourceMs)||sourceMs<=c.sourceInMs)throw Error('Measured timeline/source durations required');

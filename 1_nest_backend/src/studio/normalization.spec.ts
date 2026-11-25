@@ -11,6 +11,8 @@ import {
 import type { ContentAiProvider } from '../data-engine/ai-provider';
 import { offlineNormalize } from './offline-normalization';
 import { StudioService } from './studio.service';
+import { prepareEditor } from './editor-adapter';
+import { seriousDraftAssets } from './public-assets';
 import { ScraperService } from '../modules/core/scraper/scraper.service';
 describe('normalization and metadata', () => {
   it('maps labelled counts, preserving rounded evidence and distinct missing states', () => {
@@ -282,6 +284,7 @@ describe('normalization and metadata', () => {
         uri: '/api/studio/public-assets/pub-gameplay',
         category: 'BACKGROUND',
         kind: 'VIDEO',
+        usage: 'SERIOUS_GAMEPLAY',
         bytes: 100,
       },
       {
@@ -298,6 +301,8 @@ describe('normalization and metadata', () => {
     service.publicAssets.resolve = jest.fn(async (id: string) => ({
       ...assets.find((asset) => asset.id === id),
       durationMs: id === 'pub-gameplay' ? 133867 : 185644,
+      width: id === 'pub-gameplay' ? 720 : undefined,
+      height: id === 'pub-gameplay' ? 1280 : undefined,
     }));
     try {
       let s = await service.create();
@@ -326,8 +331,49 @@ describe('normalization and metadata', () => {
       s = await service.applyAutomaticSeriousAssets(s.id, s.revision);
       expect(s.revision).toBe(revision);
       expect(s.editor?.backgroundTracks).toHaveLength(1);
+      const library = await Promise.all(assets.map(asset => service.publicAssets.resolve(asset.id)));
+      const timed = prepareEditor(s, library);
+      const fitted = timed.project.backgroundTracks![0];
+      expect(fitted.durationMs).toBe(Math.ceil(timed.project.timeline!.totalFrames * 1000 / 30));
+      expect(fitted.loop).toBe(false);
+      // A short source loops across the measured timeline without moving scene boundaries.
+      const short = structuredClone(s);
+      short.editor!.backgroundTracks![0].sourceOutMs = 1000;
+      short.editor!.backgroundTracks![0].durationMs = 1000;
+      const loop = prepareEditor(short, library);
+      expect(loop.project.backgroundTracks![0]).toMatchObject({
+        durationMs: fitted.durationMs, loop: true, sourceOutMs: 1000,
+      });
+      expect(loop.project.timeline).toEqual(timed.project.timeline);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+  it('blocks missing gameplay for the preset and preserves an explicit OFF', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'studio-gameplay-off-'));
+    const service = new StudioService({} as ScraperService);
+    Object.assign(service, {root});
+    service.publicAssets.inventory = jest.fn(async () => []);
+    try {
+      const s = await service.create();
+      await expect(service.applyAutomaticSeriousAssets(s.id,s.revision)).rejects.toThrow('GAMEPLAY_ASSET_UNAVAILABLE');
+      const off = await service.applyAutomaticSeriousAssets(s.id,s.revision,'OFF');
+      expect(off.editor?.automaticGameplay).toBe('OFF');
+      expect((await service.applyAutomaticSeriousAssets(s.id,off.revision)).revision).toBe(off.revision);
+      await expect(service.applyAutomaticSeriousAssets(s.id,off.revision,'PRESET')).rejects.toThrow('GAMEPLAY_ASSET_UNAVAILABLE');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+  it('uses gameplay registry metadata and an explicit list of asset IDs', () => {
+    const clip = (id: string, usage?: 'SERIOUS_GAMEPLAY') => ({
+      id, name:id + '.mp4', relativePath:'backgrounds/' + id + '.mp4',
+      uri:'/api/studio/public-assets/' + id, category:'BACKGROUND' as const,
+      kind:'VIDEO' as const, bytes:1234, usage,
+    });
+    const entries = [clip('source_1'), clip('source_4','SERIOUS_GAMEPLAY'), clip('source_8','SERIOUS_GAMEPLAY')];
+    expect(seriousDraftAssets(entries).gameplay.map(row=>row.id)).toEqual(['source_4','source_8']);
+    expect(seriousDraftAssets(entries,['source_8','source_4']).gameplay.map(row=>row.id)).toEqual(['source_8','source_4']);
+    expect(seriousDraftAssets(entries,['missing']).gameplay).toEqual([]);
   });
 });

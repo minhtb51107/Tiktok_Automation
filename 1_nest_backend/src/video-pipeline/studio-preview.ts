@@ -307,6 +307,12 @@ export function buildStudioPreview(
     audioAssets: project.audioAssets,
     mediaAssets: project.mediaAssets,
   });
+  const totalMs = Math.max(34, Math.ceil(project.timeline.totalFrames * 1000 / project.timeline.fps));
+  project.backgroundTracks = project.backgroundTracks?.map(clip =>
+    clip.enabled && clip.autoFitTimeline ? {
+      ...clip, durationMs: totalMs, loop: totalMs > clip.sourceOutMs - clip.sourceInMs,
+    } : clip,
+  );
   for(const c of project.backgroundTracks||[]){const a=project.mediaAssets.find(a=>a.id===c.assetId);if(!a)throw Error('Background asset missing');validateRange(c,a.durationMs);if(c.offsetMs!==undefined&&(!Number.isInteger(c.offsetMs)||c.offsetMs<0))throw Error('Invalid background phase');}
   for(const t of project.timeline.scenes){const v=t.scene.visual!;const audio=project.audioAssets.find(a=>a.id===t.scene.audioAssetId);if(audio&&((v.voiceSourceInMs||0)>=audio.durationMs||(v.voiceStartMs||0)>=(t.endFrame-(t.audioStartFrame||t.startFrame))*1000/project.timeline.fps))throw Error('Voice clip starts outside measured audio/scene');const fx=t.scene.sfxLayer;if(fx){const a=project.audioAssets.find(a=>a.id===fx.assetId);if(!a||!a.durationMs||(fx.sourceInMs||0)>=a.durationMs)throw Error('SFX source in exceeds measured duration');}}
   if(project.backgroundMusic?.enabled){const b=project.backgroundMusic,a=project.audioAssets.find(a=>a.id===b.assetId);if(!a||(b.sourceInMs||0)>=a.durationMs)throw Error('BGM source in exceeds measured duration');}

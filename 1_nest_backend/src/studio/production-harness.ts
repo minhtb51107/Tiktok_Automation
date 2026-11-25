@@ -45,7 +45,7 @@ const definitions = {
   pronunciation: { input: ['requestId','sessionId','revision','itemId','term','reading'], output: 'ProjectSummary', stage: 'NORMALIZING', budget: 'Local revision update' },
   audio: { input: ['requestId','sessionId','revision','itemId'], output: '{assetId,cacheHit,audioDurationMs,voiceJob,metrics}', stage: 'GENERATING_AUDIO', budget: 'Existing Kokoro deadline and resource guards' },
   prepare: { input: ['requestId','sessionId','revision'], output: 'ProjectSummary', stage: 'PREPARING_TIMELINE', budget: 'Existing timeline preparation' },
-  visual_defaults: { input: ['requestId','sessionId','revision'], output: 'ProjectSummary', stage: 'CONFIGURING_EDITOR', budget: 'Existing local asset registry' },
+  visual_defaults: { input: ['requestId','sessionId','revision'], optional: ['gameplay: PRESET | OFF'], output: 'ProjectSummary', stage: 'CONFIGURING_EDITOR', budget: 'Existing local asset registry' },
   restore_cached_avatars: { input: ['requestId','sessionId','revision'], output: 'ProjectSummary', stage: 'RESTORING_CACHED_AVATARS', budget: 'Local hash-verified cache only' },
   render: { input: ['requestId','sessionId','revision'], output: 'MachineValidation', stage: 'RENDERING', budget: 'Existing 45 minute render watchdog, 720P, concurrency 1' },
 } as const;
@@ -68,6 +68,8 @@ function projectSummary(s: StudioSession) {
     blockers: sourceBlockers(s),
     editor: s.editor ? {
       backgroundId: s.editor.backgroundId, backgroundMusic: s.editor.backgroundMusic,
+      automaticGameplay: s.editor.automaticGameplay ?? 'PRESET',
+      backgroundTracks: s.project.timeline ? s.project.backgroundTracks : s.editor.backgroundTracks,
       scenes: s.editor.scenes.map(scene => ({
         itemId: scene.itemId, enabled: scene.enabled, subtitlesEnabled: scene.visual?.subtitlesEnabled === true,
       })),
@@ -95,6 +97,7 @@ export function operatorFailure(error: string | null, stage: string, attempts: n
   // Public messages are fixed text. Runtime errors can include local paths,
   // provider bodies or credentials and are never echoed at this boundary.
   const rules = [
+    [/GAMEPLAY_ASSET_UNAVAILABLE/i, 'GAMEPLAY_ASSET_UNAVAILABLE', 'No configured gameplay asset passed the local video probe.', 'Ask the operator host to configure a verified gameplay asset ID, or use visual_defaults with gameplay OFF when explicitly requested.', false],
     [/USER_CANCELLED/i, 'USER_CANCELLED', 'The operator cancelled this render.', 'Check the retained render checkpoint before starting a new attempt.', false],
     [/RENDER_STALLED/i, 'RENDER_STALLED', 'The worker produced no new frame for two minutes during frame rendering.', 'Check resource samples and the last worker checkpoint.', true],
     [/RENDER_TIMEOUT/i, 'RENDER_TIMEOUT', 'Rendering exceeded its execution budget.', 'Check measured frame throughput and resource samples before retrying.', true],
@@ -171,7 +174,9 @@ export class ProductionHarness {
     const tool = toolName as Tool;
     const keys: readonly string[] = definitions[tool].input;
     valid(b && typeof b === 'object' && !Array.isArray(b) &&
-      Object.keys(b).length === keys.length && keys.every(k => Object.prototype.hasOwnProperty.call(b,k)),
+      Object.keys(b).every(k => keys.includes(k) ||
+        (tool === 'visual_defaults' && k === 'gameplay' && ['PRESET','OFF'].includes(b[k]))) &&
+      keys.every(k => Object.prototype.hasOwnProperty.call(b,k)),
       'INVALID_TOOL_INPUT');
     valid(typeof b.requestId === 'string' && /^[\w-]{1,64}$/.test(b.requestId), 'INVALID_REQUEST_ID');
     if (keys.includes('sessionId'))
@@ -192,6 +197,7 @@ export class ProductionHarness {
     if (tool === 'render') allowed('RENDER');
 
     const input = Object.fromEntries(keys.map(key => [key, b[key]]));
+    if (tool === 'visual_defaults' && b.gameplay !== undefined) input.gameplay = b.gameplay;
     if (tool === 'search') input.query = b.query.trim();
     if (tool === 'collect') input.url = canonicalPost(b.url)!.url;
     const job = await this.studio.jobs.submit(b.sessionId || catalogScope, 'operator:' + tool, input, async (tick, id) => {
@@ -238,7 +244,7 @@ export class ProductionHarness {
         return { revision: next.revision, result: projectSummary(next) };
       }
       if (tool === 'visual_defaults') {
-        const next = await this.studio.applyAutomaticSeriousAssets(s.id, s.revision);
+        const next = await this.studio.applyAutomaticSeriousAssets(s.id, s.revision, b.gameplay);
         return { revision: next.revision, result: projectSummary(next) };
       }
       if (tool === 'pronunciation') {
