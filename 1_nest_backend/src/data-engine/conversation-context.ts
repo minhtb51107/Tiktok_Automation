@@ -95,7 +95,20 @@ export function observedContextViews(
     ...(c.observedCards || []),
   ]) {
     const own = canonicalPost(raw.url);
-    if (own && own.url !== root.url) records.set(own.url, raw);
+    if (own && own.url !== root.url) {
+      const prior = records.get(own.url);
+      records.set(
+        own.url,
+        prior
+          ? {
+              ...prior,
+              ...raw,
+              avatar: raw.avatar ?? prior.avatar ?? null,
+              media: raw.media?.length ? raw.media : (prior.media || []),
+            }
+          : raw,
+      );
+    }
   }
   for (const candidate of c.unverified) {
     const own = canonicalPost(candidate.url);

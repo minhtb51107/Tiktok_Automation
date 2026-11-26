@@ -7,6 +7,12 @@ import { createRemotionPreviewRequest } from './preview-adapter';
 import { defaultBgm, cardPages, normalizeVisual } from './scene-visual';
 import { editorSettings } from './editor-state';
 
+function isPlaceholderAvatarUrl(url?: string | null): boolean {
+  const v = (url ?? '').trim();
+  if (!v) return false;
+  return /static\.cdninstagram\.com\/rsrc\.php\/|\/rsrc\.php\/|anonymous_profile_pic|YW5vbnltb3VzX3Byb2ZpbGVfcGlj/i.test(v);
+}
+
 function buildTimedSubtitles(
   itemId: string,
   text: string,
@@ -231,8 +237,24 @@ export function buildStudioPreview(
               ),
               author: meta?.author || i.author.displayName,
               handle: meta?.handle ?? i.author.handle ?? null,
-              avatarUrl: s.sourceImages?.[i.id]?.status==='READY' && s.sourceImages[i.id].sourceUrl===(meta?.avatar??i.author.avatarUrl)
-                ? s.sourceImages[i.id].uri : meta?.avatar ?? i.author.avatarUrl ?? null,
+              avatarUrl: (() => {
+                const customAvatar =
+                  [i.author.avatarUrl, meta?.avatar, i.rawExtraction?.avatar].find(
+                    (u) =>
+                      typeof u === 'string' &&
+                      !!u.trim() &&
+                      !isPlaceholderAvatarUrl(u),
+                  ) ?? null;
+                const readyImage =
+                  s.sourceImages?.[i.id]?.status === 'READY' &&
+                  !isPlaceholderAvatarUrl(s.sourceImages[i.id].sourceUrl)
+                    ? s.sourceImages[i.id]
+                    : null;
+                return readyImage &&
+                  (!customAvatar || readyImage.sourceUrl === customAvatar)
+                  ? readyImage.uri
+                  : customAvatar;
+              })(),
               createdAt: meta?.createdAt ?? null,
               dateLabel: meta?.fields?.createdAt?.raw ?? null,
               sourceUrl: i.sourceUrl,

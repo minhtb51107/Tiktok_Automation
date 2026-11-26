@@ -19,7 +19,7 @@ export interface LocalSourceImage {
 }
 export function isPlaceholderAvatarUrl(raw: unknown): boolean {
   if (typeof raw !== 'string' || !raw.trim()) return true;
-  return /static\.cdninstagram\.com\/rsrc\.php|\/rsrc\.php\/v\d+\/|default_profile|anonymous_avatar/i.test(
+  return /static\.cdninstagram\.com\/rsrc\.php|\/rsrc\.php\/v\d+\/|default_profile|anonymous_avatar|anonymous_profile_pic|YW5vbnltb3VzX3Byb2ZpbGVfcGlj/i.test(
     raw,
   );
 }

@@ -17,6 +17,11 @@ async function verifyStillImages(uris, command) {
 async function renderSparse({ plan, dir, renderer, options, manifest, background, metrics, command, tick, check }) {
   const { fps, width, height, frameRange: [start, end] } = manifest;
   const total = end - start + 1;
+  const timelineFps = options.inputProps.timeline.fps;
+  const fpsScale = fps / timelineFps;
+  const tStart = Math.floor(start / fpsScale);
+  const tEnd = Math.floor(end / fpsScale);
+  const tTotal = tEnd - tStart + 1;
   const layer = renderLayer => ({
     ...options, inputProps: { ...options.inputProps, renderLayer },
     composition: { ...options.composition, props: { ...options.composition.props, renderLayer } },
@@ -40,32 +45,37 @@ async function renderSparse({ plan, dir, renderer, options, manifest, background
   let last = 0;
   const audio = await renderer.renderFrames({
     ...layer('AUDIO'),
-    outputDir: null, imageFormat: 'none', frameRange: [start, end], concurrency: 1,
+    outputDir: null, imageFormat: 'none', frameRange: [tStart, tEnd], concurrency: 1,
     onStart() {}, onFrameUpdate(done) {
-      if (Date.now() - last >= 1000 || done === total) {
+      if (Date.now() - last >= 1000 || done === tTotal) {
         last = Date.now();
-        tick('Collecting existing timeline audio', done, total);
+        tick('Collecting existing timeline audio', Math.min(total, Math.round(done * fpsScale)), total);
       }
     },
   });
   metrics.audioCollectionMs = Date.now() - audioStart;
   await renderer.stitchFramesToVideo({
     assetsInfo: audio.assetsInfo, codec: 'wav', audioCodec: 'pcm-16',
-    outputLocation: path.join(dir, 'mix.wav'), fps, width, height,
+    outputLocation: path.join(dir, 'mix.wav'), fps: timelineFps, width, height,
     cancelSignal: options.cancelSignal,
   });
   metrics.audioMixMs = Date.now() - audioStart - metrics.audioCollectionMs;
 
+  await options.puppeteerInstance?.close({ silent: true }).catch(() => {});
+
   check();
   const compositingStarted = Date.now();
   tick('Compositing gameplay and card states');
-  const phase = plan.loop ? start % plan.span : start;
+  const spanAtFps = Math.round(plan.span * fpsScale);
+  const phase = plan.loop ? start % spanAtFps : start;
   const filters = [`[0:v]trim=start_frame=${phase},setpts=N/(${fps}*TB)[base]`];
   let input = 'base';
   for (const [i, state] of plan.states.entries()) {
     const output = `v${i}`;
     // Half-frame margin avoids floating-point rounding at the frame boundary.
-    const from = (state.start - start - 0.5) / fps, until = (state.end - start - 0.5) / fps;
+    const sStart = Math.round(state.start * fpsScale);
+    const sEnd = Math.round(state.end * fpsScale);
+    const from = (sStart - start - 0.5) / fps, until = (sEnd - start - 0.5) / fps;
     filters.push(`[${input}][${i + 1}:v]overlay=enable='gte(t,${from})*lt(t,${until})'[${output}]`);
     input = output;
   }

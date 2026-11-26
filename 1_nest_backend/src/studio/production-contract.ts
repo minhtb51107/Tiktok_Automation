@@ -13,10 +13,15 @@ export const PRODUCTION_CONTRACT = 'SERIOUS/VERBATIM_THREADS/1';
 
 export function avatarState(item: StudioItem) {
   const observed = item.rawExtraction?.avatar;
-  const avatar = item.author.avatarUrl || observed;
-  if (!avatar) return 'AVATAR_UNAVAILABLE';
-  if (!isPlaceholderAvatarUrl(avatar)) return 'CUSTOM_AVATAR';
-  return observed === avatar ? 'DEFAULT_AVATAR' : 'AVATAR_UNAVAILABLE';
+  const candidates = [
+    item.author.avatarUrl,
+    item.metadata?.avatar,
+    observed,
+  ].filter((u): u is string => typeof u === 'string' && !!u.trim());
+  if (!candidates.length) return 'AVATAR_UNAVAILABLE';
+  if (candidates.some((u) => !isPlaceholderAvatarUrl(u)))
+    return 'CUSTOM_AVATAR';
+  return 'DEFAULT_AVATAR';
 }
 
 export function currentNarration(session: StudioSession, item: StudioItem) {

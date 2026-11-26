@@ -1,10 +1,12 @@
 import type { VideoPreviewProps } from '../video-pipeline/contracts';
 import type { RenderFailure } from './render-progress';
 export type RenderMode = 'DRAFT' | 'FINAL';
+export type RenderPreset = '1080P' | '1080P30' | '1080P60' | '720P';
 export interface RenderRequest {
   revision: number;
   mode: RenderMode;
-  preset: '1080P' | '720P';
+  preset: RenderPreset;
+  fps?: 30 | 60;
   backgroundMode?:'SAVED'|'FIT'|'LOOP';
   /** Inclusive frame range into the unchanged saved timeline; null means full. */
   frameRange?: [number, number];

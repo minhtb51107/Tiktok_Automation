@@ -207,8 +207,19 @@ export class StudioService {
   private async ensureCachedAvatars(s: StudioSession, forceAll = false) {
     s.sourceImages ??= {};
     for (const i of s.items.filter((i) => i.selected)) {
+      const customUrl = [
+        i.author.avatarUrl,
+        i.metadata?.avatar,
+        i.rawExtraction?.avatar,
+      ].find(
+        (u) =>
+          typeof u === 'string' && !!u.trim() && !isPlaceholderAvatarUrl(u),
+      );
       const url =
-        i.metadata?.avatar ?? i.rawExtraction?.avatar ?? i.author.avatarUrl;
+        customUrl ??
+        i.metadata?.avatar ??
+        i.rawExtraction?.avatar ??
+        i.author.avatarUrl;
       if (!url) continue;
       if (isPlaceholderAvatarUrl(url)) {
         s.sourceImages[i.id] = {
@@ -261,56 +272,168 @@ export class StudioService {
     });
   }
   private async adoptCachedAvatars(s: StudioSession) {
-    const pending = s.items.filter(item => item.selected &&
-      s.sourceImages?.[item.id]?.status !== 'READY');
-    if (!pending.length) return false;
-    const sources = new Map<string, {sessionId: string; image: NonNullable<StudioSession['sourceImages']>[string]}[]>();
+    const selected = s.items.filter((item) => item.selected);
+    if (!selected.length) return false;
+    const sources = new Map<
+      string,
+      {
+        sessionId: string;
+        image: NonNullable<StudioSession['sourceImages']>[string];
+      }[]
+    >();
+    const handlesBySha = new Map<string, Set<string>>();
+    const defaultByIdentity = new Map<string, string>();
     for (const name of await fs.readdir(this.root)) {
-      if (!/^[a-f0-9-]{36}\.json$/.test(name) || name === s.id + '.json') continue;
-      const prior = await this.load(name.slice(0,-5)).catch(() => null);
-      if (!prior?.sourceImages) continue;
+      if (!/^[a-f0-9-]{36}\.json$/.test(name) || name === s.id + '.json')
+        continue;
+      const prior = await this.load(name.slice(0, -5)).catch(() => null);
+      if (!prior) continue;
       for (const item of prior.items) {
         const identity = canonicalPost(item.sourceUrl);
         const handle = item.author.handle?.toLowerCase();
-        const image = prior.sourceImages[item.id];
-        if (!identity || !handle || image?.status !== 'READY' || image.provenance !== 'PUBLIC_CDN' ||
-            isPlaceholderAvatarUrl(image.sourceUrl) ||
-            image.sourceUrl !== (item.metadata?.avatar ?? item.rawExtraction?.avatar ?? item.author.avatarUrl) ||
-            !/^[a-f0-9]{64}$/.test(image.sha256 || '') ||
-            !new RegExp('^' + image.sha256 + '\\.(?:png|jpe?g|webp|gif)$').test(image.fileName || ''))
-          continue;
+        if (!identity || !handle) continue;
         const key = identity.id + ':' + handle;
+        const observedUrls = [
+          item.author.avatarUrl,
+          item.metadata?.avatar,
+          item.rawExtraction?.avatar,
+          prior.sourceImages?.[item.id]?.sourceUrl,
+        ].filter((u): u is string => typeof u === 'string' && !!u.trim());
+        const defaultUrl = observedUrls.find((u) => isPlaceholderAvatarUrl(u));
+        if (defaultUrl && !defaultByIdentity.has(key)) {
+          defaultByIdentity.set(key, defaultUrl);
+        }
+        const image = prior.sourceImages?.[item.id];
+        const customUrl = observedUrls.find((u) => !isPlaceholderAvatarUrl(u));
+        if (
+          image?.status !== 'READY' ||
+          image.provenance !== 'PUBLIC_CDN' ||
+          isPlaceholderAvatarUrl(image.sourceUrl) ||
+          image.sourceUrl !== customUrl ||
+          !/^[a-f0-9]{64}$/.test(image.sha256 || '') ||
+          !new RegExp(
+            '^' + image.sha256 + '\\.(?:png|jpe?g|webp|gif)$',
+          ).test(image.fileName || '')
+        )
+          continue;
+        const shaHandles = handlesBySha.get(image.sha256!) ?? new Set<string>();
+        shaHandles.add(handle);
+        handlesBySha.set(image.sha256!, shaHandles);
         const candidates = sources.get(key) ?? [];
-        candidates.push({sessionId: name.slice(0,-5), image});
+        candidates.push({ sessionId: name.slice(0, -5), image });
         sources.set(key, candidates);
       }
     }
     let changed = false;
+    for (const item of selected) {
+      const current = s.sourceImages?.[item.id];
+      if (
+        current?.status === 'READY' &&
+        (isPlaceholderAvatarUrl(current.sourceUrl) ||
+          (current.sha256 &&
+            (handlesBySha.get(current.sha256)?.size ?? 0) > 1))
+      ) {
+        s.sourceImages![item.id] = {
+          itemId: item.id,
+          sourceUrl: current.sourceUrl,
+          status: 'UNAVAILABLE',
+          uri: null,
+          error: 'AVATAR_UNAVAILABLE: generic static placeholder sprite',
+          provenance: 'PUBLIC_CDN',
+          checkedAt: new Date().toISOString(),
+        };
+        if (
+          item.metadata?.avatar &&
+          !isPlaceholderAvatarUrl(item.metadata.avatar)
+        ) {
+          item.metadata.avatar = current.sourceUrl;
+        }
+        changed = true;
+      }
+    }
+    const pending = selected.filter(
+      (item) => s.sourceImages?.[item.id]?.status !== 'READY',
+    );
     for (const item of pending) {
       const identity = canonicalPost(item.sourceUrl);
-      const avatar = item.metadata?.avatar ?? item.rawExtraction?.avatar ?? item.author.avatarUrl;
-      const candidates = (sources.get(identity?.id + ':' + item.author.handle?.toLowerCase()) || [])
-        .filter(candidate => !avatar || candidate.image.sourceUrl === avatar);
-      if (new Set(candidates.map(candidate => candidate.image.sha256)).size !== 1) continue;
-      for (const {sessionId, image} of candidates) {
-        const source = path.join(this.root, 'source-images', sessionId, image.fileName!);
-        const stat = await fs.lstat(source).catch(() => null);
-        if (!stat?.isFile() || !stat.size || stat.size > 10 * 1024 * 1024) continue;
-        const bytes = await fs.readFile(source);
-        if (createHash('sha256').update(bytes).digest('hex') !== image.sha256) continue;
-        const dir = path.join(this.root, 'source-images', s.id);
-        await fs.mkdir(dir, {recursive:true});
-        const target = path.join(dir, image.fileName!);
-        await fs.writeFile(target, bytes, {flag:'wx'}).catch(error => {
-          if (error.code !== 'EEXIST') throw error;
-        });
-        if (createHash('sha256').update(await fs.readFile(target)).digest('hex') !== image.sha256) continue;
-        s.sourceImages ??= {};
-        s.sourceImages[item.id] = {...image, itemId:item.id,
-          uri:`/api/studio/sessions/${s.id}/source-images/${image.sha256}`};
-        item.author.avatarUrl = image.sourceUrl;
-        changed = true;
-        break;
+      const handle = item.author.handle?.toLowerCase();
+      const key = identity?.id + ':' + handle;
+      const customAvatar =
+        [
+          item.author.avatarUrl,
+          item.metadata?.avatar,
+          item.rawExtraction?.avatar,
+        ].find(
+          (u) =>
+            typeof u === 'string' && !!u.trim() && !isPlaceholderAvatarUrl(u),
+        ) ?? null;
+      const candidates = (sources.get(key) || []).filter(
+        (candidate) =>
+          (!customAvatar || candidate.image.sourceUrl === customAvatar) &&
+          handlesBySha.get(candidate.image.sha256!)?.size === 1,
+      );
+      let adopted = false;
+      if (
+        new Set(candidates.map((candidate) => candidate.image.sha256)).size ===
+        1
+      ) {
+        for (const { sessionId, image } of candidates) {
+          const source = path.join(
+            this.root,
+            'source-images',
+            sessionId,
+            image.fileName!,
+          );
+          const stat = await fs.lstat(source).catch(() => null);
+          if (!stat?.isFile() || !stat.size || stat.size > 10 * 1024 * 1024)
+            continue;
+          const bytes = await fs.readFile(source);
+          if (createHash('sha256').update(bytes).digest('hex') !== image.sha256)
+            continue;
+          const dir = path.join(this.root, 'source-images', s.id);
+          await fs.mkdir(dir, { recursive: true });
+          const target = path.join(dir, image.fileName!);
+          await fs.writeFile(target, bytes, { flag: 'wx' }).catch((error) => {
+            if (error.code !== 'EEXIST') throw error;
+          });
+          if (
+            createHash('sha256')
+              .update(await fs.readFile(target))
+              .digest('hex') !== image.sha256
+          )
+            continue;
+          s.sourceImages ??= {};
+          s.sourceImages[item.id] = {
+            ...image,
+            itemId: item.id,
+            uri: `/api/studio/sessions/${s.id}/source-images/${image.sha256}`,
+          };
+          item.author.avatarUrl = image.sourceUrl;
+          if (
+            item.metadata &&
+            (!item.metadata.avatar ||
+              isPlaceholderAvatarUrl(item.metadata.avatar))
+          ) {
+            item.metadata.avatar = image.sourceUrl;
+          }
+          changed = true;
+          adopted = true;
+          break;
+        }
+      }
+      if (
+        !adopted &&
+        ![
+          item.author.avatarUrl,
+          item.metadata?.avatar,
+          item.rawExtraction?.avatar,
+        ].some((u) => typeof u === 'string' && !!u.trim())
+      ) {
+        const defaultUrl = defaultByIdentity.get(key);
+        if (defaultUrl) {
+          item.author.avatarUrl = defaultUrl;
+          changed = true;
+        }
       }
     }
     return changed;
@@ -400,6 +523,14 @@ export class StudioService {
       const disk = await fs.statfs(this.root);
       if (disk.bavail * disk.bsize < 3 * 1024 ** 3)
         throw new BadRequestException('Less than 3 GiB free on project drive');
+      const is1080 = input.preset !== '720P';
+      const targetFps =
+        input.preset === '1080P60' ? 60 : (input.fps ?? props.timeline.fps);
+      const fpsScale = targetFps / props.timeline.fps;
+      const outputRange: [number, number] = [
+        Math.round(range[0] * fpsScale),
+        Math.round((range[1] + 1) * fpsScale) - 1,
+      ];
       const manifest: RenderManifest = {
         schemaVersion: 1,
         backgroundMode: input.backgroundMode || 'SAVED',
@@ -412,11 +543,11 @@ export class StudioService {
         mode: input.mode,
         publishable: false,
         status: 'QUEUED',
-        width: input.preset === '1080P' ? 1080 : 720,
-        height: input.preset === '1080P' ? 1920 : 1280,
-        fps: props.timeline.fps,
-        totalFrames: props.timeline.totalFrames,
-        frameRange: range,
+        width: is1080 ? 1080 : 720,
+        height: is1080 ? 1920 : 1280,
+        fps: targetFps,
+        totalFrames: Math.round(props.timeline.totalFrames * fpsScale),
+        frameRange: outputRange,
         expectedDurationSeconds: (range[1] - range[0] + 1) / props.timeline.fps,
         sceneCount: props.timeline.scenes.length,
         codec: 'h264',

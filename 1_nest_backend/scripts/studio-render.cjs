@@ -8,7 +8,7 @@ const {replaceFile}=require('../dist/studio/atomic-file');
 const {planSparseCapture}=require('../dist/video-pipeline/sparse-capture');
 const {renderSparse,verifyStillImages}=require('./sparse-render.cjs');
 const muxers=new Set();
-const command=(exe,args,cancellable=false)=>new Promise((resolve,reject)=>{const child=execFile(exe,args,{windowsHide:true,timeout:120000,maxBuffer:2*1024*1024},(e,out)=>{muxers.delete(child);e?reject(e):resolve(out);});if(cancellable)muxers.add(child);});
+const command=(exe,args,cancellable=false)=>new Promise((resolve,reject)=>{const child=execFile(exe,args,{windowsHide:true,timeout:600000,maxBuffer:2*1024*1024},(e,out)=>{muxers.delete(child);e?reject(e):resolve(out);});if(cancellable)muxers.add(child);});
 let cancelled=false,stopReason;const signal=renderer.makeCancelSignal();
 const cancel=(reason)=>{if(cancelled)return;cancelled=true;stopReason=reason;signal.cancel();for(const child of muxers)child.kill();};
 process.on('message',m=>{if(m?.cancel)cancel(m.reason||'USER_CANCELLED');});
@@ -44,9 +44,12 @@ async function main(){
    }else throw Error(`Nonlocal required media: ${a.id}`);
   }
   for(const t of props.timeline.scenes){const c=t.scene.threadsCard;if(c?.avatarUrl){const uri=local(c.avatarUrl);if(uri)c.avatarUrl=uri;else{c.avatarUrl=null;m.warnings.push(`${t.scene.id}: remote avatar unavailable to offline render`);}}}
+  const timelineFps=props.timeline.fps,fpsScale=m.fps/timelineFps;
+  const timelineRange=[Math.floor(m.frameRange[0]/fpsScale),Math.floor(m.frameRange[1]/fpsScale)];
+  const supportedSparseTarget=(m.width===720&&m.height===1280&&m.fps===30)||(m.width===1080&&m.height===1920&&(m.fps===30||m.fps===60));
   const sparse=process.env.STUDIO_RENDER_STRATEGY!=='STANDARD_REMOTION' &&
-    m.mode==='DRAFT' && m.width===720 && m.height===1280 && m.fps===30
-    ? planSparseCapture(props,m.frameRange):null;
+    m.mode==='DRAFT' && supportedSparseTarget && Number.isInteger(fpsScale) && fpsScale>=1
+    ? planSparseCapture(props,timelineRange):null;
   let strategyReason=sparse?.reason || (sparse ? 'STATIC_THREADS_WITH_CONTINUOUS_GAMEPLAY' : 'STANDARD_REQUESTED_OR_NON_720P_DRAFT');
   if(sparse?.supported && !(await verifyStillImages(sparse.stillImages,command)))
    strategyReason='UNCONFIRMED_STATIC_IMAGE';
@@ -56,7 +59,8 @@ async function main(){
   for(const c of (props.backgroundTracks||[]).filter(x=>x.enabled)){
    const a=props.mediaAssets.find(x=>x.id===c.assetId);
    if(a&&a.kind==='VIDEO'&&typeof a.uri==='string'){
-    const before=Math.floor((c.sourceInMs*m.fps)/1000),after=Math.ceil((c.sourceOutMs*m.fps)/1000),span=Math.max(1,after-before);
+    const before=Math.floor((c.sourceInMs*m.fps)/1000),after=Math.ceil((c.sourceOutMs*m.fps)/1000),fullSpan=Math.max(1,after-before);
+    const span=Math.min(fullSpan,m.frameRange[1]+1);
     const sliceName=`bg-slice-${c.id}.mp4`,slicePath=path.join(dir,sliceName);
     tick('Normalizing background video GOP for frame-exact OffthreadVideo');
     await command('ffmpeg',['-v','error','-y','-ss',(before/m.fps).toFixed(6),'-i',a.uri,'-frames:v',String(span),'-r',String(m.fps),'-vf',`scale=${m.width}:${m.height}:force_original_aspect_ratio=increase,crop=${m.width}:${m.height}`,'-c:v','libx264','-preset','ultrafast','-crf','18','-g','6','-keyint_min','6','-bf','0','-sc_threshold','0','-pix_fmt','yuv420p','-movflags','+faststart','-an',slicePath],true);
@@ -68,7 +72,8 @@ async function main(){
   const sparseBackground=sparse?.supported ? sliceFiles['/bg-slice-'+sparse.backgroundId+'.mp4'] : undefined;
   if(strategyReason==='STATIC_THREADS_WITH_CONTINUOUS_GAMEPLAY'){
    const count=sparseBackground && await command('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=nb_frames','-of','csv=p=0',sparseBackground],true).catch(()=>'');
-   if(Number(count)!==sparse.span)strategyReason='UNVERIFIED_NORMALIZED_BACKGROUND_SPAN';
+   const expectedSpan=Math.min(Math.round(sparse.span*fpsScale),m.frameRange[1]+1);
+   if(Number(count)!==expectedSpan)strategyReason='UNVERIFIED_NORMALIZED_BACKGROUND_SPAN';
   }
   const sparseAllowed=strategyReason==='STATIC_THREADS_WITH_CONTINUOUS_GAMEPLAY';
   metrics.executionStrategy=sparseAllowed?'SPARSE_STATIC':'STANDARD_REMOTION';
@@ -99,7 +104,8 @@ async function main(){
    for(const c of (props.backgroundTracks||[]).filter(x=>x.enabled)){
     const sliceName=`bg-slice-${c.id}.mp4`;
     if(sliceFiles['/'+sliceName]){
-     const before=Math.floor((c.sourceInMs*m.fps)/1000),after=Math.ceil((c.sourceOutMs*m.fps)/1000),span=Math.max(1,after-before);
+     const before=Math.floor((c.sourceInMs*m.fps)/1000),after=Math.ceil((c.sourceOutMs*m.fps)/1000),fullSpan=Math.max(1,after-before);
+     const span=Math.min(fullSpan,m.frameRange[1]+1);
      const baseAsset=props.mediaAssets.find(x=>x.id===c.assetId);
      const clonedId=`${c.assetId}-${c.id}`;
      props.mediaAssets.push({...baseAsset,id:clonedId,uri:`http://127.0.0.1:${port}/${sliceName}`,durationMs:Math.round((span*1000)/m.fps)});
@@ -121,7 +127,7 @@ async function main(){
   browser=await renderer.openBrowser('chrome',{browserExecutable:snapshot.browserExecutable,onBrowserDownload:noDownload,logLevel:'error'});
   metrics.browserInitializationMs=Date.now()-init;check();
   const composition=await renderer.selectComposition({serveUrl,id:'SeriousTimelinePreview',inputProps:props,puppeteerInstance:browser,browserExecutable:snapshot.browserExecutable,onBrowserDownload:noDownload,timeoutInMilliseconds:60000,logLevel:'error'});
-  if(composition.durationInFrames!==m.totalFrames||composition.fps!==m.fps)throw Error('Composition metadata differs from saved timeline');
+  if(Math.round(composition.durationInFrames*fpsScale)!==m.totalFrames||Math.round(composition.fps*fpsScale)!==m.fps)throw Error('Composition metadata differs from saved timeline');
   const rendering=Date.now();let last=0;
   if(sparseAllowed){
    await renderSparse({plan:sparse,dir,renderer,manifest:m,background:sparseBackground,metrics,command,tick,check,

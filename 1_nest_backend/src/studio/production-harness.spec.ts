@@ -225,4 +225,59 @@ describe('Production Harness runtime', () => {
     expect(item.displayText).toBe(item.originalText);
     expect(item.pronunciationOverrides).toEqual({ đại: 'đại' });
   });
+
+  it('adopts cached custom avatars over placeholder sprites, classifies shared anonymous avatars as DEFAULT_AVATAR, and accepts 1080P30/1080P60 render presets', async () => {
+    const { isPlaceholderAvatarUrl } = await import('./source-images');
+    const { avatarState } = await import('./production-contract');
+    const { validateRenderRequest } = await import('./render-policy');
+
+    const anonUrl =
+      'https://scontent.cdninstagram.com/v/t51.89012-19/573323465_1219825463302212_7278921664109726296_n.png?stp=dst-jpg_s150x150_tt6&ig_cache_key=YW5vbnltb3VzX3Byb2ZpbGVfcGlj.3-ccb7-5';
+    const rsrcUrl =
+      'https://static.cdninstagram.com/rsrc.php/v1/yb/r/5OTfmveiK1K.jpg';
+    const customUrl =
+      'https://scontent.cdninstagram.com/v/t51.82787-19/774136660_17949648294263170_4439333333752552529_n.jpg?ig_cache_key=GFRjJC6COWwqHMU';
+
+    expect(isPlaceholderAvatarUrl(anonUrl)).toBe(true);
+    expect(isPlaceholderAvatarUrl(rsrcUrl)).toBe(true);
+    expect(isPlaceholderAvatarUrl(customUrl)).toBe(false);
+
+    expect(
+      avatarState({
+        author: { handle: 'coreofp', avatarUrl: customUrl },
+        metadata: { avatar: customUrl },
+        rawExtraction: { avatar: rsrcUrl },
+      } as any),
+    ).toBe('CUSTOM_AVATAR');
+
+    expect(
+      avatarState({
+        author: { handle: 'ivandre00486', avatarUrl: anonUrl },
+        metadata: { avatar: null },
+        rawExtraction: { avatar: null },
+      } as any),
+    ).toBe('DEFAULT_AVATAR');
+
+    const mockProps = {
+      timeline: { fps: 30, totalFrames: 1845, width: 1080, height: 1920 },
+    } as any;
+    expect(
+      validateRenderRequest(
+        { revision: 1, requestId: 'req-720', mode: 'DRAFT', preset: '720P', backgroundMode: 'SAVED' },
+        mockProps,
+      ),
+    ).toEqual([0, 1844]);
+    expect(
+      validateRenderRequest(
+        { revision: 1, requestId: 'req-1080-30', mode: 'DRAFT', preset: '1080P30', fps: 30, backgroundMode: 'SAVED' },
+        mockProps,
+      ),
+    ).toEqual([0, 1844]);
+    expect(
+      validateRenderRequest(
+        { revision: 1, requestId: 'req-1080-60', mode: 'DRAFT', preset: '1080P60', fps: 60, backgroundMode: 'SAVED' },
+        mockProps,
+      ),
+    ).toEqual([0, 1844]);
+  });
 });

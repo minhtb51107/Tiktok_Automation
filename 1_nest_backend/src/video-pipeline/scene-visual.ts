@@ -127,8 +127,11 @@ export function threadsDarkGameplayVisual(
 }
 export function dateLabel(value: string | null | undefined): string | null {
   if (!value) return null;
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return value;
-  const d = new Date(value);
+  const trimmed = value.trim();
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) return trimmed;
+  if (/^\d+\s*(?:giờ|phút|giây|ngày|tuần|tháng|năm|[smhdwy])$/i.test(trimmed))
+    return trimmed;
+  const d = new Date(trimmed);
   if (Number.isNaN(d.getTime())) return null;
   return new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Ho_Chi_Minh',
