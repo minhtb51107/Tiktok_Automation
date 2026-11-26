@@ -384,10 +384,19 @@ export class ProductionHarness {
       ...catalog.filter(job => searchIds.has(resultRef(job.result)?.id))]
       .map(job => [job.jobId, job])).values()]
       .sort((a, b) => a.queuedAt.localeCompare(b.queuedAt));
+    const renderStrategies = await Promise.all(jobs.filter(job => job.stage === 'RENDERING')
+      .map(async job => {
+        const manifest = await this.studio.renders.load(id, job.jobId).catch(() => null);
+        return {
+          jobId: job.jobId,
+          strategy: manifest?.metrics.executionStrategy ?? null,
+          reason: manifest?.metrics.executionStrategyReason ?? null,
+        };
+      }));
     const latest = jobs[jobs.length - 1];
     const recordedEnd = latest?.finishedAt || new Date().toISOString();
     return {
-      sessionId: id, contract: PRODUCTION_CONTRACT, jobs,
+      sessionId: id, contract: PRODUCTION_CONTRACT, jobs, renderStrategies,
       projectWallClockMs: jobs.length ? Date.parse(recordedEnd) - Date.parse(jobs[0].queuedAt) : null,
       observedExecutionMs: jobs.reduce((sum, job) => sum + (job.observedExecutionMs ?? 0), 0),
       queueWaitMs: jobs.reduce((sum, job) => sum + (job.queueWaitMs ?? 0), 0),

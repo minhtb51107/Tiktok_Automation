@@ -119,7 +119,7 @@ const SceneCard: React.FC<{
 };
 
 const TimelinePreviewComposition: React.FC<
-  VideoPreviewProps & { expectedStyle: ContentStyle }
+  VideoPreviewProps & { expectedStyle: ContentStyle; renderLayer?: 'CARDS' | 'AUDIO' }
 > = ({
   timeline,
   audioAssets,
@@ -127,6 +127,7 @@ const TimelinePreviewComposition: React.FC<
   expectedStyle,
   backgroundMusic,
   backgroundTracks = [],
+  renderLayer,
 }) => {
   const frame = useCurrentFrame();
   if (timeline.style !== expectedStyle) {
@@ -144,8 +145,8 @@ const TimelinePreviewComposition: React.FC<
 
   const activeBackground=backgroundTracks.slice().reverse().find(c=>{const r=frameRange(c.startMs,c.durationMs,timeline.fps);return c.enabled&&frame>=r.start&&frame<r.end;});
   return (
-    <AbsoluteFill style={{ backgroundColor: "#000000" }}>
-      {backgroundTracks
+    <AbsoluteFill style={{ backgroundColor: renderLayer ? "transparent" : "#000000" }}>
+      {!renderLayer && backgroundTracks
         .filter((c) => c.id===activeBackground?.id)
         .map((c) => {
           const a = mediaById.get(c.assetId);
@@ -180,7 +181,7 @@ const TimelinePreviewComposition: React.FC<
             </Sequence>
           ) : null;
         })}
-      {backgroundMusic?.enabled &&
+      {renderLayer !== 'CARDS' && backgroundMusic?.enabled &&
         backgroundMusic.assetId &&
         audioById.get(backgroundMusic.assetId) && (
           <Sequence
@@ -214,14 +215,14 @@ const TimelinePreviewComposition: React.FC<
           : undefined;
         return (
           <React.Fragment key={item.scene.id}>
-            <Sequence
+            {renderLayer !== 'AUDIO' && <Sequence
               from={item.startFrame}
               durationInFrames={item.durationInFrames}
             >
               <SceneCard
                 item={item}
                 style={expectedStyle}
-                transparent={!!activeBackground}
+                transparent={renderLayer === 'CARDS' || !!activeBackground}
                 background={
                   activeBackground && !item.scene.visual?.backgroundOverride
                     ? undefined
@@ -255,8 +256,8 @@ const TimelinePreviewComposition: React.FC<
                   </div>
                 </Sequence>
               ))}
-            </Sequence>
-            {item.scene.visual?.voiceEnabled !== false &&
+            </Sequence>}
+            {renderLayer !== 'CARDS' && item.scene.visual?.voiceEnabled !== false &&
             narration &&
             narration.availability === "AVAILABLE" &&
             item.audioStartFrame !== undefined &&
@@ -308,7 +309,7 @@ const TimelinePreviewComposition: React.FC<
                 />
               </Sequence>
             ) : null}
-            {item.scene.sfxLayer &&
+            {renderLayer !== 'CARDS' && item.scene.sfxLayer &&
               audioById.get(item.scene.sfxLayer.assetId) &&
               Math.ceil((item.scene.sfxLayer.startMs * timeline.fps) / 1000) <
                 item.durationInFrames && (
@@ -369,6 +370,6 @@ export const FunnyTimelinePreview: React.FC<VideoPreviewProps> = (props) => (
   <TimelinePreviewComposition {...props} expectedStyle="FUNNY" />
 );
 
-export const SeriousTimelinePreview: React.FC<VideoPreviewProps> = (props) => (
+export const SeriousTimelinePreview: React.FC<VideoPreviewProps & {renderLayer?: 'CARDS' | 'AUDIO'}> = (props) => (
   <TimelinePreviewComposition {...props} expectedStyle="SERIOUS" />
 );

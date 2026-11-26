@@ -5,6 +5,8 @@ const dir=path.resolve(process.argv[2]),project=path.resolve('../2_Remotion_Vide
 const requireVideo=createRequire(path.join(project,'package.json'));
 const renderer=requireVideo('@remotion/renderer'),{bundle}=requireVideo('@remotion/bundler');
 const {replaceFile}=require('../dist/studio/atomic-file');
+const {planSparseCapture}=require('../dist/video-pipeline/sparse-capture');
+const {renderSparse,verifyStillImages}=require('./sparse-render.cjs');
 const muxers=new Set();
 const command=(exe,args,cancellable=false)=>new Promise((resolve,reject)=>{const child=execFile(exe,args,{windowsHide:true,timeout:120000,maxBuffer:2*1024*1024},(e,out)=>{muxers.delete(child);e?reject(e):resolve(out);});if(cancellable)muxers.add(child);});
 let cancelled=false,stopReason;const signal=renderer.makeCancelSignal();
@@ -42,6 +44,12 @@ async function main(){
    }else throw Error(`Nonlocal required media: ${a.id}`);
   }
   for(const t of props.timeline.scenes){const c=t.scene.threadsCard;if(c?.avatarUrl){const uri=local(c.avatarUrl);if(uri)c.avatarUrl=uri;else{c.avatarUrl=null;m.warnings.push(`${t.scene.id}: remote avatar unavailable to offline render`);}}}
+  const sparse=process.env.STUDIO_RENDER_STRATEGY!=='STANDARD_REMOTION' &&
+    m.mode==='DRAFT' && m.width===720 && m.height===1280 && m.fps===30
+    ? planSparseCapture(props,m.frameRange):null;
+  let strategyReason=sparse?.reason || (sparse ? 'STATIC_THREADS_WITH_CONTINUOUS_GAMEPLAY' : 'STANDARD_REQUESTED_OR_NON_720P_DRAFT');
+  if(sparse?.supported && !(await verifyStillImages(sparse.stillImages,command)))
+   strategyReason='UNCONFIRMED_STATIC_IMAGE';
   const normalizationStart=Date.now();metrics.normalizedBackgroundTracks=0;
   // Pre-normalize active background video slices to short GOPs so OffthreadVideo
   // extracts every frame deterministically within a bounded 48 MiB frame cache.
@@ -57,6 +65,16 @@ async function main(){
    }
   }
   metrics.backgroundNormalizationMs=Date.now()-normalizationStart;
+  const sparseBackground=sparse?.supported ? sliceFiles['/bg-slice-'+sparse.backgroundId+'.mp4'] : undefined;
+  if(strategyReason==='STATIC_THREADS_WITH_CONTINUOUS_GAMEPLAY'){
+   const count=sparseBackground && await command('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=nb_frames','-of','csv=p=0',sparseBackground],true).catch(()=>'');
+   if(Number(count)!==sparse.span)strategyReason='UNVERIFIED_NORMALIZED_BACKGROUND_SPAN';
+  }
+  const sparseAllowed=strategyReason==='STATIC_THREADS_WITH_CONTINUOUS_GAMEPLAY';
+  metrics.executionStrategy=sparseAllowed?'SPARSE_STATIC':'STANDARD_REMOTION';
+  metrics.executionStrategyReason=strategyReason;
+  m.metrics=metrics;
+  await save();
   if(Object.keys(sliceFiles).length){
    sliceServer=http.createServer((req,res)=>{
     const file=sliceFiles[new URL(req.url,'http://127.0.0.1').pathname];
@@ -105,8 +123,15 @@ async function main(){
   const composition=await renderer.selectComposition({serveUrl,id:'SeriousTimelinePreview',inputProps:props,puppeteerInstance:browser,browserExecutable:snapshot.browserExecutable,onBrowserDownload:noDownload,timeoutInMilliseconds:60000,logLevel:'error'});
   if(composition.durationInFrames!==m.totalFrames||composition.fps!==m.fps)throw Error('Composition metadata differs from saved timeline');
   const rendering=Date.now();let last=0;
+  if(sparseAllowed){
+   await renderSparse({plan:sparse,dir,renderer,manifest:m,background:sparseBackground,metrics,command,tick,check,
+    options:{serveUrl,composition,inputProps:props,scale:m.width/props.timeline.width,
+     puppeteerInstance:browser,browserExecutable:snapshot.browserExecutable,onBrowserDownload:noDownload,
+     cancelSignal:signal.cancelSignal,timeoutInMilliseconds:60000,logLevel:'error'}});
+  }else{
   tick('Rendering frames',0,m.frameRange[1]-m.frameRange[0]+1);
   await renderer.renderMedia({serveUrl,composition,inputProps:props,codec:'h264',audioCodec:'pcm-16',separateAudioTo:path.join(dir,'mix.wav'),pixelFormat:'yuv420p',outputLocation:path.join(dir,'video-silent.mp4'),overwrite:false,concurrency:1,scale:m.width/props.timeline.width,frameRange:m.frameRange,puppeteerInstance:browser,browserExecutable:snapshot.browserExecutable,onBrowserDownload:noDownload,cancelSignal:signal.cancelSignal,timeoutInMilliseconds:60000,offthreadVideoThreads:1,offthreadVideoCacheSizeInBytes:48*1024*1024,mediaCacheSizeInBytes:48*1024*1024,disallowParallelEncoding:true,x264Preset:m.mode==='FINAL'?'fast':'veryfast',crf:m.mode==='FINAL'?19:20,logLevel:'error',metadata:{comment:`${m.mode}; session=${m.sessionId}; revision=${m.revision}; timeline=${m.timelineHash}`},onProgress:p=>{metrics.renderedDoneIn=p.renderedDoneIn;metrics.encodedDoneIn=p.encodedDoneIn;if(Date.now()-last>=1000||p.progress===1){last=Date.now();tick(p.renderedDoneIn===null?'Rendering frames':p.stitchStage==='muxing'?'Muxing audio/video':'Encoding',p.renderedFrames,m.frameRange[1]-m.frameRange[0]+1);}}});
+  }
   check();metrics.renderMediaMs=Date.now()-rendering;metrics.averageRenderedFps=(m.frameRange[1]-m.frameRange[0]+1)/(metrics.renderMediaMs/1000);
   tick('Encoding AAC and muxing MP4');const muxStart=Date.now();
   // Remotion's ADTS AAC intermediate loses libfdk's priming metadata (measured

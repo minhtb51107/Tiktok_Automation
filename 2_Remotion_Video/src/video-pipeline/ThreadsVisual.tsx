@@ -13,11 +13,8 @@ import type {
   MediaAsset,
   TimelineScene,
 } from "../../../1_nest_backend/src/video-pipeline/contracts";
-import {
-  cardPages,
-  dateLabel,
-  normalizeVisual,
-} from "../../../1_nest_backend/src/video-pipeline/scene-visual";
+import { dateLabel } from "../../../1_nest_backend/src/video-pipeline/scene-visual";
+import { threadsCardState } from "../../../1_nest_backend/src/video-pipeline/threads-card-state";
 const AvatarFallback: React.FC<{
   style: React.CSSProperties;
   label?: string | null;
@@ -83,25 +80,11 @@ export const ThreadsVisual: React.FC<{
   const frame = useCurrentFrame(),
     env = useRemotionEnvironment(),
     { fps } = useVideoConfig(),
-    v = normalizeVisual(item.scene.visual),
+    { visual: v, attachments, layout, contentStart, imageHeight, at } =
+      threadsCardState(item, mediaAssets, fps),
+    { pageIndex, visible } = at(frame),
     c = v.card,
     card = item.scene.threadsCard!;
-  const attachments = mediaAssets.filter(
-    (a) => a.id.startsWith("source-") && a.kind !== "VIDEO",
-  );
-  const imageHeight=attachments.length?Math.min(700,Math.max(...attachments.map(a=>a.width&&a.height?(c.width-2*c.padding)*c.scale/attachments.length*a.height/a.width:180))):0;
-  const layout = cardPages(item.scene.displayText, v, attachments.length,imageHeight),
-    contentStart = item.contentStartFrame - item.startFrame;
-  const pageIndex = Math.min(
-    layout.pages.length - 1,
-    Math.floor(
-      Math.max(0, frame - contentStart) /
-        Math.max(
-          1,
-          (item.contentEndFrame - item.contentStartFrame) / layout.pages.length,
-        ),
-    ),
-  );
   const meme = mediaAssets.find((a) => a.id === v.meme.assetId),
     memeY = v.meme.y ?? c.y + layout.height + v.meme.gap,
     memeX = v.meme.x ?? (1080 - v.meme.width) / 2;
@@ -181,7 +164,7 @@ export const ThreadsVisual: React.FC<{
         data-scene-id={item.scene.id}
         data-page={pageIndex + 1}
         style={{
-          display:c.enabled===false || frame < Math.ceil((c.startMs||0)*fps/1000) || c.durationMs!==undefined && frame>=Math.ceil(((c.startMs||0)+c.durationMs)*fps/1000)?"none":undefined,
+          display: visible ? undefined : "none",
           position: "absolute",
           left: c.x,
           top: c.y,
