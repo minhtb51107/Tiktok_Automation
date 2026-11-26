@@ -6,12 +6,11 @@ before editing; do not reset, clean, stash or overwrite unrelated work.
 ## Verified milestones and Git
 
 - After each meaningful implemented and verified milestone, commit the reviewed
-  source, tests and documentation with a clear message and push the feature branch.
-  The user has authorized ordinary commits/pushes; no repeated approval is needed.
-- Before the first push inspect remotes, branch and upstream. Never force push,
-  rewrite history or delete branches. Main integration/push requires explicit user
-  authorization. Report authentication/protection
-  failures without bypassing them.
+  source, tests and documentation with a clear message and push the completed
+  checkpoint to GitHub on the authorized branch.
+- Before the first push inspect remotes, branch and upstream. Follow the
+  repository and branch management policy below. Report authentication and
+  protection failures without bypassing them.
 - Inspect the exact file list before staging. Do not blindly use `git add .`.
   Exclude credentials, API keys, `.env`, local runtime configuration, model weights,
   voicepacks, browser profiles/cookies, session data, generated audio/video, caches
@@ -19,7 +18,27 @@ before editing; do not reset, clean, stash or overwrite unrelated work.
 - Fix failing tests before a completed milestone commit. If interrupted mid-task,
   a clearly labelled WIP checkpoint on the feature branch is allowed; document
   incomplete validation. Never label unfinished work complete.
-- Report commit SHA, branch, push status, remaining worktree changes and blockers.
+- Report the working directory, active branch, commit SHA, push status,
+  remaining worktree changes and blockers.
+
+## Repository and Branch Management Policy
+
+- `main` is the canonical integrated and tested version. Reuse the official
+  `Tiktok_Automation_main` working directory. The original `Tiktok_Automation`
+  checkout holds the shared Git directory and dependencies and must be preserved.
+- Reuse the existing branch and worktree for small tasks. Use at most one active
+  feature or fix branch unless the user explicitly needs parallel development.
+- Integrate completed and tested work into `main` with user authorization.
+  Prefer fast-forward integration when the history allows it.
+- Remove merged local branches after verifying ancestry, worktree use and data
+  preservation. Use tags for important milestones instead of keeping
+  historical branches. Remote branch deletion requires user approval.
+- Never force-push, rewrite shared history or delete unmerged work without
+  explicit authorization.
+- Keep secrets and runtime data out of Git. Maintain separate, access-controlled
+  backups for important local runtime artifacts.
+- Operator agents must not perform Git operations. Development handoffs must
+  identify the active branch, commit and working directory.
 
 ## Studio safety and validation
 
