@@ -54,6 +54,8 @@ async function main(){
   if(sparse?.supported && !(await verifyStillImages(sparse.stillImages,command)))
    strategyReason='UNCONFIRMED_STATIC_IMAGE';
   const rejectUnsupportedConversion=()=>{
+   if(m.requireSparse && strategyReason!=='STATIC_THREADS_WITH_CONTINUOUS_GAMEPLAY')
+    throw Error('RENDER_PRESET_UNSUPPORTED: '+strategyReason);
    if(fpsScale!==1 && strategyReason!=='STATIC_THREADS_WITH_CONTINUOUS_GAMEPLAY')
     throw Error('RENDER_FPS_CONVERSION_UNSUPPORTED: '+strategyReason);
   };

@@ -15,6 +15,7 @@ async function bootstrap() {
     throw Error('Operator mode requires an explicit Studio data root and a dedicated bearer token (minimum 32 characters)');
   const app = await NestFactory.create(AppModule);
   app.use(operatorBoundary);
+  app.enableShutdownHooks();
 
   // 1. Tối ưu Bắt lỗi toàn cục (Global Exception Filter)
   app.useGlobalFilters(new HttpExceptionFilter());

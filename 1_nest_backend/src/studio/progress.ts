@@ -117,6 +117,19 @@ export class StudioJobs {
     }
     return j;
   }
+  hasActive() { return [...this.live.values()].some(active); }
+  async findRequest(sessionId: string, operation: string, requestId: string) {
+    for(const name of await fs.readdir(this.root).catch(error=>{
+      if(error.code==='ENOENT')return [];
+      throw error;
+    })){
+      if(!/^[a-f0-9-]{36}\.json$/.test(name))continue;
+      const id=name.slice(0,-5);
+      const job=this.live.get(id)??JSON.parse(await fs.readFile(this.file(id),'utf8')) as StudioJob;
+      if(job.sessionId===sessionId&&job.operation===operation&&job.operatorRequestId===requestId)return this.load(id);
+    }
+    return undefined;
+  }
   async list(sessionId: string) {
     if (!/^[a-f0-9-]{36}$/.test(sessionId))
       throw new BadRequestException('Invalid session ID');

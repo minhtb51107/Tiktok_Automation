@@ -1,11 +1,11 @@
-import { BadRequestException, Injectable, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Optional } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { replaceFile } from './atomic-file';
 import { prepareTtsInput } from './speech-normalizer';
 import type { StudioSession } from './studio.contracts';
-import type { RenderManifest } from './render.types';
+import { isOperatorRenderPreset, type OperatorRenderPreset, type RenderManifest } from './render.types';
 import { StudioService } from './studio.service';
 import { ConversationStudioService } from '../data-engine/conversation.controller';
 import { AiContentStudioService } from '../data-engine/ai.controller';
@@ -15,6 +15,11 @@ import { observedContextViews } from '../data-engine/conversation-context';
 import { ContentQualityService } from '../data-engine/content-quality.controller';
 import { selectConversation } from '../data-engine/content-selection';
 import type { ThreadCollection, ConversationReview } from '../data-engine/conversation-contracts';
+import { assertRenderable, currentNarration, sourceBlockers } from './production-contract';
+import { validateDraftArtifact } from './production-artifact';
+import { snapshotHash } from './render-policy';
+import { canonicalPost } from '../data-engine/conversation-identity';
+import { spokenAmbiguities } from './voice-settings';
 import { DEEP_CONVERSATION_BUDGET } from '../data-engine/conversation-public';
 
 export type ProductStage =
@@ -87,12 +92,26 @@ export interface AutonomousVideoResult {
     | 'TTS_FAILED'
     | 'RENDER_FAILED'
     | 'ACCESS_BLOCKED'
-    | 'RESOURCE_STOPPED';
+    | 'RESOURCE_STOPPED'
+    | 'WAITING_HUMAN';
+  checkpoint?: 'RESERVED' | 'COLLECTED' | 'ASSESSED' | 'DRAFT' | 'PREPARED' | 'RENDER_SUBMITTED';
+  aiLedgerIds?: string[];
+  reviewChoice?: {type:'SELECT_ROOT'|'SELECT_REPLIES';options:{sourceId:string;preview:string}[]};
+  reviewedChoice?: {type:'SELECT_ROOT'|'SELECT_REPLIES';selectedSourceIds:string[]};
+  artifact?: Awaited<ReturnType<typeof validateDraftArtifact>>;
   selectedSourceIds: string[];
   estimatedSeconds: { minimum: number; maximum: number } | null;
   measuredSeconds: number | null;
   timelineSeconds: number | null;
   warnings: string[];
+}
+
+export interface AutomaticDispatch {
+  preset: OperatorRenderPreset;
+  aiRequestLimit: number;
+  reviewBeforeRender: boolean;
+  reviewSlots?:number;
+  dayKey: string;
 }
 
 export interface AutonomousProductBatch {
@@ -113,7 +132,13 @@ export interface AutonomousProductBatch {
   };
   status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'PARTIAL' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
   stage: AutonomousProductStage;
+  stageEvents?: Array<{at:string;stage:AutonomousProductStage;status:AutonomousProductBatch['status']}>;
   discoveryRunId: string | null;
+  dispatchRequestId?: string;
+  dispatch?: AutomaticDispatch;
+  discoveryResumeAttempted?: boolean;
+  restartAttempts?:number;
+  resumeCandidateUrl?:string;
   results: AutonomousVideoResult[];
   /** Prior side-effect-free evaluations retained when an explicit resume re-runs policy code. */
   priorResults?: Array<{
@@ -455,6 +480,19 @@ export class ProductPipelineService {
     'product-jobs',
   );
   private autoRunning = new Set<string>();
+  private autoAdmission: Promise<unknown> = Promise.resolve();
+  private autoWrites: Promise<unknown> = Promise.resolve();
+  private serializeAuto<T>(work: () => Promise<T>) {
+    const result = this.autoAdmission.then(work);
+    this.autoAdmission = result.catch(() => undefined);
+    return result;
+  }
+  hasActiveAuto() { return this.autoRunning.size !== 0; }
+  productionLiveAuthorized() {
+    return ['STUDIO_PRODUCT_AUTOMATION_LIVE_ENABLED','STUDIO_DATA_QUALITY_LIVE_ENABLED','STUDIO_DATA04_LIVE_ENABLED']
+      .every(key => process.env[key] === '1');
+  }
+
   constructor(
     readonly studio: StudioService,
     readonly conversations: ConversationStudioService,
@@ -482,14 +520,27 @@ export class ProductPipelineService {
       throw new BadRequestException('Invalid autonomous batch ID');
     return path.join(this.autoRoot(), id + '.json');
   }
-  private async saveAuto(job: AutonomousProductBatch) {
-    job.updatedAt = new Date().toISOString();
-    await fs.mkdir(this.autoRoot(), { recursive: true });
-    const tmp = this.autoFile(job.id) + '.tmp';
-    await fs.writeFile(tmp, JSON.stringify(job, null, 2));
-    await replaceFile(tmp, this.autoFile(job.id));
-    return job;
+  private async saveAuto(job: AutonomousProductBatch, clearCancellation = false) {
+    const write = this.autoWrites.then(async () => {
+      job.updatedAt = new Date().toISOString();
+      await fs.mkdir(this.autoRoot(), { recursive: true });
+      const file = this.autoFile(job.id), tmp = file + '.tmp';
+      const previous = await fs.readFile(file, 'utf8').catch(error => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      const old = previous ? JSON.parse(previous) as AutonomousProductBatch : null;
+      if (old?.cancelRequested && !clearCancellation) job.cancelRequested = true;
+      if(!old||old.stage!==job.stage||old.status!==job.status)
+        job.stageEvents=[...(old?.stageEvents??[]),{at:job.updatedAt,stage:job.stage,status:job.status}];
+      await fs.writeFile(tmp, JSON.stringify(job, null, 2));
+      await replaceFile(tmp, file);
+      return job;
+    });
+    this.autoWrites = write.catch(() => undefined);
+    return write;
   }
+
   async getAuto(id: string) {
     const job = JSON.parse(
       await fs.readFile(this.autoFile(id), 'utf8').catch(() => {
@@ -511,74 +562,118 @@ export class ProductPipelineService {
         rows.push(await this.getAuto(name.slice(0, -5)));
     return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
-  async startAuto(body: any) {
-    if (
-      body?.confirmLive !== true ||
-      process.env.STUDIO_PRODUCT_AUTOMATION_LIVE_ENABLED !== '1' ||
-      process.env.STUDIO_DATA_QUALITY_LIVE_ENABLED !== '1' ||
-      process.env.STUDIO_DATA04_LIVE_ENABLED !== '1'
-    ) throw new BadRequestException('AUTONOMOUS_LIVE_APPROVAL_REQUIRED');
-    if (!this.quality)
-      throw new BadRequestException('AUTONOMOUS_DISCOVERY_UNAVAILABLE');
-    const request = autonomousProductRequest(body),
-      requestKey = createHash('sha256')
-        .update(JSON.stringify({ version: 'product-auto-batch/1', request }))
-        .digest('hex');
-    for (const old of await this.listAuto())
-      if (old.requestKey === requestKey) return old;
-    const now = new Date().toISOString(),
-      job: AutonomousProductBatch = {
-        schemaVersion: 'product-auto-batch/1',
-        id: randomUUID(),
-        requestKey,
-        request,
-        status: 'QUEUED',
-        stage: 'DISCOVERING',
-        discoveryRunId: null,
-        results: [],
-        errors: [],
-        cancelRequested: false,
-        startedAt: null,
-        completedAt: null,
-        createdAt: now,
-        updatedAt: now,
+  startAuto(body: any, dispatch?: AutomaticDispatch) {
+    return this.serializeAuto(async () => {
+      if (body?.confirmLive !== true || !this.productionLiveAuthorized())
+        throw new BadRequestException('AUTONOMOUS_LIVE_APPROVAL_REQUIRED');
+      if (process.env.STUDIO_AUTOMATION_ENABLED==='1'&&!dispatch)throw new ConflictException('USE_AUTOMATION_SCHEDULER');
+      if (!this.quality) throw new BadRequestException('AUTONOMOUS_DISCOVERY_UNAVAILABLE');
+      const request = autonomousProductRequest(body);
+      const dispatchRequestId: string | undefined = body.requestId;
+      if (dispatchRequestId !== undefined &&
+          (typeof dispatchRequestId !== 'string' || !/^[\w-]{1,100}$/.test(dispatchRequestId)))
+        throw new BadRequestException('INVALID_DISPATCH_REQUEST_ID');
+      if (dispatch && (!dispatchRequestId || !isOperatorRenderPreset(dispatch.preset)))
+        throw new BadRequestException('INVALID_AUTOMATION_DISPATCH');
+      const requestKey = createHash('sha256').update(JSON.stringify(dispatchRequestId === undefined
+        ? { version: 'product-auto-batch/1', request }
+        : { version: 'product-auto-dispatch/1', request, dispatchRequestId, dispatch })).digest('hex');
+      const old = (await this.listAuto()).find(row => dispatchRequestId === undefined
+        ? row.requestKey === requestKey : row.dispatchRequestId === dispatchRequestId);
+      if (old) {
+        if (old.requestKey !== requestKey) throw new ConflictException('AUTOMATION_REQUEST_ID_CONFLICT');
+        return old;
+      }
+      if (this.hasActiveAuto() || this.studio.hasHeavyWorker()) throw new ConflictException('RESOURCE_BLOCKED');
+      const now = new Date().toISOString();
+      const job: AutonomousProductBatch = {
+        schemaVersion: 'product-auto-batch/1', id: randomUUID(), requestKey, request,
+        dispatchRequestId, dispatch, status: 'QUEUED', stage: 'DISCOVERING',
+        discoveryRunId: null, results: [], errors: [], cancelRequested: false,
+        startedAt: null, completedAt: null, createdAt: now, updatedAt: now,
       };
-    await this.saveAuto(job);
-    setImmediate(() => void this.executeAuto(job.id));
-    return job;
-  }
-  async cancelAuto(id: string) {
-    const job = await this.getAuto(id);
-    if (['QUEUED', 'RUNNING'].includes(job.status)) {
-      job.cancelRequested = true;
       await this.saveAuto(job);
-    }
-    return job;
+      this.scheduleAuto(job.id);
+      return job;
+    });
   }
-  async resumeAuto(id: string) {
-    const job = await this.getAuto(id);
-    if (this.autoRunning.has(id)) return job;
-    if (job.status === 'COMPLETED') return job;
-    if (job.status === 'BLOCKED')
-      throw new BadRequestException('A new LIVE authorization is required');
-    const partition = partitionAutomaticResumeResults(job.results);
-    if (partition.retryable.length) {
-      job.priorResults = [
-        ...(job.priorResults || []),
-        {
-          resumedAt: new Date().toISOString(),
-          reason: 'POLICY_REEVALUATION_NO_SIDE_EFFECTS',
-          results: partition.retryable,
-        },
-      ];
-      job.results = partition.retained;
-    }
-    job.cancelRequested = false;
-    job.status = 'QUEUED';
-    job.completedAt = null;
-    await this.saveAuto(job);
-    setImmediate(() => void this.executeAuto(id));
-    return job;
+  private scheduleAuto(id: string) {
+    this.autoRunning.add(id);
+    setImmediate(() => void this.executeAuto(id).catch(() => undefined));
+  }
+  cancelAuto(id: string) {
+    return this.serializeAuto(async () => {
+      const job = await this.getAuto(id);
+      if(job.dispatch)throw new ConflictException('USE_AUTOMATION_SCHEDULER');
+      if (['QUEUED', 'RUNNING'].includes(job.status)) {
+        // Queue behind checkpoint writes and update only the cancellation bit.
+        const write = this.autoWrites.then(async () => {
+          const current = await this.getAuto(id);
+          current.cancelRequested = true;
+          const file = this.autoFile(id);
+          await fs.writeFile(file + '.tmp', JSON.stringify(current, null, 2));
+          await replaceFile(file + '.tmp', file);
+          return current;
+        });
+        this.autoWrites = write.catch(() => undefined);
+        return write;
+      }
+      return job;
+    });
+  }
+  resumeAuto(id: string, scheduled=false) {
+    return this.serializeAuto(async () => {
+      const job = await this.getAuto(id);
+      if (job.dispatch&&!scheduled)throw new ConflictException('USE_AUTOMATION_SCHEDULER');
+      if (this.autoRunning.has(id) || job.status === 'COMPLETED') return job;
+      if (scheduled&&(job.restartAttempts??0)>=1)throw new ConflictException('AUTOMATION_ATTEMPT_LIMIT');
+      if (scheduled)job.restartAttempts=(job.restartAttempts??0)+1;
+      if (!this.productionLiveAuthorized() || job.status === 'BLOCKED')
+        throw new BadRequestException('A new LIVE authorization is required');
+      if (this.hasActiveAuto() || this.studio.hasHeavyWorker()) throw new ConflictException('RESOURCE_BLOCKED');
+      const partition = partitionAutomaticResumeResults(job.results);
+      if (partition.retryable.length) {
+        job.priorResults = [...(job.priorResults || []), {
+          resumedAt: new Date().toISOString(), reason: 'POLICY_REEVALUATION_NO_SIDE_EFFECTS', results: partition.retryable,
+        }];
+        job.results = partition.retained;
+      }
+      job.cancelRequested = false;
+      job.status = 'QUEUED';
+      job.completedAt = null;
+      await this.saveAuto(job, true);
+      this.scheduleAuto(id);
+      return job;
+    });
+  }
+  finalizeInterruptedCancellation(id:string) {
+    return this.serializeAuto(async()=>{
+      const batch=await this.getAuto(id);
+      if(!this.hasActiveAuto()&&batch.cancelRequested&&['QUEUED','RUNNING'].includes(batch.status)){
+        batch.status='CANCELLED';batch.completedAt=new Date().toISOString();
+        await this.saveAuto(batch);
+      }
+    });
+  }
+  resumeReviewed(id:string,sourceUrl:string,approved:boolean,choice?:AutonomousVideoResult['reviewedChoice']) {
+    return this.serializeAuto(async()=>{
+      if(!this.productionLiveAuthorized()||this.hasActiveAuto()||this.studio.hasHeavyWorker())
+        throw new ConflictException('RESOURCE_BLOCKED');
+      const batch=await this.getAuto(id);
+      const row=batch.results.find(x=>x.sourceUrl===sourceUrl&&x.status==='WAITING_HUMAN');
+      if(!row)return;
+      if(approved&&row.warnings[0]!=='REVIEW_BEFORE_RENDER')throw new BadRequestException('REVIEW_CANNOT_BYPASS_BLOCKER');
+      if(choice)row.reviewedChoice=choice;
+      if(!approved&&row.sessionId)row.checkpoint='DRAFT';
+      row.status='QUALITY_FAILED';
+      batch.resumeCandidateUrl=sourceUrl;
+      batch.status='QUEUED';batch.completedAt=null;
+      await this.saveAuto(batch);
+      this.scheduleAuto(id);
+    });
+  }
+  private async checkAuto(batch: AutonomousProductBatch) {
+    if ((await this.getAuto(batch.id)).cancelRequested) throw Error('AUTONOMOUS_CANCELLED');
   }
   async start(value: unknown) {
     const sourceUrl = threadsUrl(value),
@@ -864,7 +959,7 @@ export class ProductPipelineService {
       };
     return this.save(job);
   }
-  private async waitStudioJob(jobId: string, deadlineMs: number) {
+  async waitStudioJob(jobId: string, deadlineMs: number) {
     while (Date.now() < deadlineMs) {
       const job = await this.studio.jobs.load(jobId);
       if (!['QUEUED', 'RUNNING'].includes(job.status)) return job;
@@ -872,409 +967,264 @@ export class ProductPipelineService {
     }
     throw Error('AUTONOMOUS_STAGE_TIMEOUT');
   }
-  private async continueAutomaticDraft(
-    batch: AutonomousProductBatch,
-    result: AutonomousVideoResult,
-    index: number,
-  ): Promise<AutonomousVideoResult> {
+  async renderPreparedDraft(session: StudioSession, preset: OperatorRenderPreset, requestId: string) {
+    const prior = await this.studio.jobs.findRequest(session.id, 'operator:automation-render', requestId);
+    if (prior) return prior;
+    return this.studio.jobs.submit(session.id, 'operator:automation-render', {
+      requestId, revision: session.revision, preset,
+    }, (tick, jobId) => this.studio.runOperatorDraft(session.id, session.revision, requestId, tick, jobId, preset,
+      async (current, props) => {
+        assertRenderable(current, props);
+        if (snapshotHash(current.project.timeline) !== snapshotHash(props.timeline)) throw Error('STALE_REVISION');
+        await this.requireNarration(current);
+      }, true));
+  }
+
+  private async requireNarration(session: StudioSession) {
+    const assets = [];
+    for (const item of session.items.filter(x => x.selected)) {
+      const asset = currentNarration(session, item);
+      if (!asset || (await fs.stat(await this.studio.audioFile(session.id, asset.id))).size <= 44)
+        throw Error('CURRENT_MEASURED_AUDIO_REQUIRED:' + item.id);
+      assets.push(asset);
+    }
+    return assets;
+  }
+
+  private async continueAutomaticDraft(batch: AutonomousProductBatch, result: AutonomousVideoResult) {
     if (!result.sessionId) throw Error('AUTONOMOUS_DRAFT_SESSION_MISSING');
-    let current = await this.studio.load(result.sessionId);
-    current = await this.studio.normalizeAutomaticDraft(
-      result.sessionId,
-      current.revision,
-    );
-    current = await this.studio.applyAutomaticSeriousAssets(
-      result.sessionId,
-      current.revision,
-    );
-    const normalizationWarnings = current.items
-      .filter(
-        (item) =>
-          item.selected &&
-          (item.automaticNormalization?.ambiguousTerms.length || 0) > 0,
-      )
-      .map(
-        (item) =>
-          `${item.id}: ambiguous spoken tokens retained (${item.automaticNormalization!.ambiguousTerms.join(', ')})`,
-      );
-    result.warnings = [...new Set([...result.warnings, ...normalizationWarnings])];
-    batch.stage = 'GENERATING_VOICE';
-    await this.saveAuto(batch);
-    await this.studio.runtime(result.sessionId);
-    current = await this.studio.load(result.sessionId);
-    for (const item of current.items
-      .filter((row) => row.selected)
-      .sort((a, b) => a.order - b.order)) {
-      if (currentAudio(current, item.id)) continue;
-      current = await this.studio.voiceAction(result.sessionId, item.id, {
-        revision: current.revision,
-        action: 'GENERATE',
-        voice: batch.request.voice,
-        speed: batch.request.speed,
-        draft: true,
-      });
-      const latest = current.voiceJobs?.slice(-1)[0];
-      if (latest?.status === 'ERROR') {
-        result.status = latest.error?.includes('RESOURCE_GUARD_STOP')
-          ? 'RESOURCE_STOPPED'
-          : 'TTS_FAILED';
-        result.warnings = [latest.error || 'Kokoro generation failed'];
-        return result;
+    const id = result.sessionId, preset = batch.dispatch?.preset ?? '1080P60';
+    const requestId = 'auto-render-' + batch.id + '-' + canonicalPost(result.sourceUrl)?.id;
+    let current = await this.studio.load(id);
+    const existing = result.renderJobId
+      ? await this.studio.jobs.load(result.renderJobId)
+      : await this.studio.jobs.findRequest(id, 'operator:automation-render', requestId);
+    if (result.checkpoint !== 'PREPARED' && !existing) {
+      await this.checkAuto(batch);
+      const blockers = sourceBlockers(current);
+      if (blockers.length) throw Error(blockers.join('; '));
+      current = await this.studio.restoreOperatorAvatars(id, current.revision);
+      current = await this.studio.applyAutomaticSeriousAssets(id, current.revision);
+      current = await this.studio.normalizeAutomaticDraft(id, current.revision);
+      const ambiguous = current.items.filter(item => item.selected).flatMap(item =>
+        [...spokenAmbiguities(item.spokenText,item.pronunciationOverrides),
+        ...(item.automaticNormalization?.ambiguousTerms ?? [])].filter(term =>
+          !Object.keys(item.pronunciationOverrides ?? {}).some(key => key.toLowerCase() === term.toLowerCase())));
+      if (ambiguous.length) {
+        result.status = 'WAITING_HUMAN';
+        result.warnings = ['PRONUNCIATION_REVIEW_REQUIRED', ...new Set(ambiguous)];
+        return;
       }
+      batch.stage = 'GENERATING_VOICE';
+      await this.saveAuto(batch);
+      for (const item of current.items.filter(row => row.selected).sort((a,b) => a.order-b.order)) {
+        await this.checkAuto(batch);
+        const cached = currentNarration(current, item);
+        if (cached && (await fs.stat(await this.studio.audioFile(id,cached.id)).catch(() => null))?.size > 44) continue;
+        current = await this.studio.voiceAction(id, item.id, {
+          revision: current.revision, action:'GENERATE', voice:batch.request.voice, speed:batch.request.speed, draft:true,
+        });
+      }
+      const assets = await this.requireNarration(current);
+      result.measuredSeconds = assets.reduce((sum, asset) => sum + asset.durationMs / 1000, 0);
+      batch.stage = 'PREPARING_TIMELINE';
+      await this.saveAuto(batch);
+      await this.studio.preparePreview(id, current.revision, true);
+      current = await this.studio.load(id);
+      const timeline = current.project.timeline;
+      if (!timeline) throw Error('AUTONOMOUS_TIMELINE_MISSING');
+      const props = (await this.studio.preview(id)).request.inputProps;
+      assertRenderable(current, props);
+      result.timelineSeconds = timeline.totalFrames / timeline.fps;
+      if (['TOO_SHORT','TOO_LONG'].includes(seriousDraftDurationStatus(result.timelineSeconds))) {
+        result.status = 'NOT_ENOUGH_CONTENT';
+        result.warnings = ['MEASURED_DURATION_OUT_OF_RANGE'];
+        return;
+      }
+      result.checkpoint = 'PREPARED';
+      if (batch.dispatch?.reviewBeforeRender) {
+        result.status = 'WAITING_HUMAN';
+        result.warnings = ['REVIEW_BEFORE_RENDER'];
+        return;
+      }
+      await this.saveAuto(batch);
     }
-    current = await this.studio.load(result.sessionId);
-    const selectedItemIds = new Set(
-        current.items.filter((row) => row.selected).map((row) => row.id),
-      ),
-      currentAssets = new Map<
-        string,
-        NonNullable<StudioSession['voiceAssets']>[number]
-      >();
-    for (const asset of current.voiceAssets || [])
-      if (selectedItemIds.has(asset.itemId) && asset.status !== 'STALE')
-        currentAssets.set(asset.itemId, asset);
-    if (currentAssets.size !== selectedItemIds.size) {
-      result.status = 'TTS_FAILED';
-      result.warnings = ['One or more selected scenes have no current audio'];
-      return result;
-    }
-    const measured = [...currentAssets.values()].reduce(
-      (sum, asset) => sum + asset.durationMs / 1000,
-      0,
-    );
-    result.measuredSeconds = Number(measured.toFixed(3));
-    batch.stage = 'PREPARING_TIMELINE';
-    await this.saveAuto(batch);
-    await this.studio.preparePreview(result.sessionId, current.revision);
-    current = await this.studio.load(result.sessionId);
-    const timeline = current.project.timeline;
-    if (!timeline) throw Error('AUTONOMOUS_TIMELINE_MISSING');
-    if (timeline.scenes.some((scene) => scene.subtitles.length))
-      throw Error('AUTONOMOUS_SUBTITLES_NOT_OFF');
-    const timelineSeconds = timeline.totalFrames / timeline.fps;
-    result.timelineSeconds = Number(timelineSeconds.toFixed(3));
-    const timelineStatus = seriousDraftDurationStatus(timelineSeconds);
-    if (timelineStatus === 'TOO_SHORT' || timelineStatus === 'TOO_LONG') {
-      result.status = 'NOT_ENOUGH_CONTENT';
-      result.warnings = [
-        `Measured timeline ${result.timelineSeconds}s is outside the 60-90s SERIOUS DRAFT range (65-90s preferred)`,
-      ];
-      return result;
-    }
+    await this.checkAuto(batch);
     batch.stage = 'RENDERING';
     await this.saveAuto(batch);
-    const renderJob = await this.studio.startJob(result.sessionId, {
-      operation: 'render',
-      input: {
-        revision: current.revision,
-        mode: 'DRAFT',
-        preset: '720P',
-        requestId: `auto-${batch.id}-${index}`,
-        backgroundMode: 'SAVED',
-      },
-    });
-    result.renderJobId = renderJob.jobId;
-    const completed = await this.waitStudioJob(
-      renderJob.jobId,
-      Date.now() + Math.min(batch.request.maxRunMs, 30 * 60_000),
-    );
-    if (completed.status !== 'SUCCEEDED') {
-      result.status = 'RENDER_FAILED';
+    const submitted = existing ?? await this.renderPreparedDraft(current, preset, requestId);
+    result.renderJobId = submitted.jobId;
+    result.checkpoint = 'RENDER_SUBMITTED';
+    await this.saveAuto(batch);
+    const completed = await this.waitStudioJob(submitted.jobId, Date.now() + batch.request.maxRunMs);
+    const finishedManifest = await this.studio.renders.load(id, submitted.jobId).catch(()=>null);
+    if (completed.status !== 'SUCCEEDED' && finishedManifest?.status!=='COMPLETED') {
+      result.status = /RENDER_PRESET_UNSUPPORTED|RENDER_FPS_CONVERSION_UNSUPPORTED/.test(completed.error ?? '')
+        ? 'WAITING_HUMAN' : 'RENDER_FAILED';
       result.warnings = [completed.error || completed.status];
-      return result;
+      return;
     }
     batch.stage = 'VERIFYING';
     await this.saveAuto(batch);
-    const manifest = await this.studio.renders.load(
-      result.sessionId,
-      renderJob.jobId,
-      ),
-      mp4Seconds = measuredMp4Duration(manifest);
-    if (
-      manifest.status !== 'COMPLETED' ||
-      mp4Seconds === null ||
-      ['TOO_SHORT', 'TOO_LONG'].includes(
-        seriousDraftDurationStatus(mp4Seconds ?? Number.NaN),
-      ) ||
-      manifest.sceneCount !== selectedItemIds.size
-    ) {
-      result.status = 'RENDER_FAILED';
-      result.warnings = ['MP4 manifest/probe failed product acceptance'];
-      return result;
-    }
+    const artifact = await validateDraftArtifact(this.studio, id, submitted.jobId, preset, submitted.inputRevision);
+    if (['TOO_SHORT','TOO_LONG'].includes(seriousDraftDurationStatus(artifact.durationSeconds)))
+      throw Error('MP4_DURATION_OUT_OF_RANGE');
+    result.artifact = artifact;
+    result.timelineSeconds = artifact.durationSeconds;
     result.status = 'COMPLETED';
-    result.timelineSeconds = Number(mp4Seconds.toFixed(3));
-    result.warnings = [...manifest.warnings];
-    return result;
   }
-  private async processAutomaticCollection(
-    batch: AutonomousProductBatch,
-    collection: ThreadCollection,
-    index: number,
-  ): Promise<AutonomousVideoResult> {
-    const result: AutonomousVideoResult = {
-      sourceUrl: collection.root.url,
-      collectionId: null,
-      assessmentId: null,
-      sessionId: null,
-      renderJobId: null,
-      status: 'QUALITY_FAILED',
-      selectedSourceIds: [],
-      estimatedSeconds: null,
-      measuredSeconds: null,
-      timelineSeconds: null,
-      warnings: [],
-    };
-    const terms = [batch.request.topic, ...batch.request.keywords],
-      initial = selectConversation(
-        collection,
-        'SERIOUS',
-        new Date().toISOString(),
-        terms,
-      ),
-      eligibleComments = initial.comments
-        .filter(
-          (row) =>
-            row.useful &&
-            (row.relationship === 'PARENT_VERIFIED' ||
-              (row.membershipStatus === 'THREAD_UI_CONFIRMED' &&
-                row.context.classification === 'OBSERVED_RELATIONSHIP_UNVERIFIED')),
-        )
-        .sort(
-          (a, b) =>
-            Number(b.relationship === 'PARENT_VERIFIED') -
-              Number(a.relationship === 'PARENT_VERIFIED') ||
-            b.score - a.score ||
-            a.id.localeCompare(b.id),
-        )
-        .slice(0, 8),
-      ruleIds = eligibleComments.map((row) => row.id),
-      eligible = ruleIds.length
-        ? selectConversation(
-            collection,
-            'SERIOUS',
-            new Date().toISOString(),
-            terms,
-            { selectedIds: ruleIds },
-          )
-        : initial;
-    result.estimatedSeconds = {
-      minimum: eligible.estimate.minimumSeconds,
-      maximum: eligible.estimate.maximumSeconds,
-    };
-    if (!ruleIds.length || eligible.estimate.maximumSeconds < 60) {
-      result.status = 'NOT_ENOUGH_CONTENT';
-      result.warnings.push(...eligible.reasons);
-      return result;
-    }
-    batch.stage = 'VALIDATING';
-    await this.saveAuto(batch);
-    const imported = await this.conversations.engine.importCollection(
-        collection,
-        `auto-${batch.id.slice(0, 8)}-${index}`,
-      ),
-      collectionId = imported.results[0]?.collectionId;
+
+  private async processAutomaticCollection(batch: AutonomousProductBatch, collection: ThreadCollection,
+    result: AutonomousVideoResult, index: number) {
+    const identity = canonicalPost(collection.root.url);
+    if (!identity || collection.root.provenance.synthetic || !collection.root.originalText.trim())
+      throw Error('INVALID_SOURCE_PROJECTION');
+    if (result.sessionId) return this.continueAutomaticDraft(batch, result);
+    const terms = [batch.request.topic, ...batch.request.keywords];
+    const prior = selectConversation(collection,'SERIOUS',new Date().toISOString(),terms);
+    const verified = new Set(collection.replies.filter(reply=>!reply.provenance.synthetic && canonicalPost(reply.url)).map(reply=>reply.id));
+    const ruleIds = prior.comments.filter(row => verified.has(row.id)&&row.useful && row.relationship === 'PARENT_VERIFIED')
+      .sort((a,b) => b.score-a.score || a.id.localeCompare(b.id)).slice(0,8).map(row => row.id);
+    const estimate = (selectedIds: string[]) =>
+      selectConversation(collection,'SERIOUS',new Date().toISOString(),terms,{ selectedIds }).estimate;
+    const eligible = estimate(ruleIds);
+    result.estimatedSeconds = {minimum:eligible.minimumSeconds,maximum:eligible.maximumSeconds};
+    if (eligible.maximumSeconds < 60) { result.status = 'NOT_ENOUGH_CONTENT'; return; }
+    await this.checkAuto(batch);
+    const imported = await this.conversations.engine.importCollection(collection, 'auto-' + batch.id + '-' + index);
+    const collectionId = imported.results[0]?.collectionId;
     if (!collectionId) throw Error('AUTONOMOUS_COLLECTION_IMPORT_FAILED');
     result.collectionId = collectionId;
+    result.checkpoint = 'COLLECTED';
     batch.stage = 'SCORING';
     await this.saveAuto(batch);
-    let assessment: any;
+    let assessment;
     try {
-      assessment = await this.ai.evaluator.evaluate({
-        collectionId,
-        collection,
-        style: 'SERIOUS',
-        heuristic: imported.results[0]?.evaluation,
-      });
+      assessment = result.assessmentId
+        ? await this.ai.evaluator.get(result.assessmentId)
+        : await this.ai.evaluator.evaluate({collectionId, collection, style:'SERIOUS', heuristic:imported.results[0]?.evaluation},
+          undefined, async ledgerId => {
+            await this.checkAuto(batch);
+            const spent = batch.results.reduce((n,row) => n+(row.aiLedgerIds?.length ?? 0),0);
+            if (spent >= (batch.dispatch?.aiRequestLimit ?? 30)) throw Error('DAILY_AI_LIMIT_REACHED');
+            (result.aiLedgerIds ??= []).push(ledgerId);
+            await this.saveAuto(batch);
+          }, new Set(ruleIds));
     } catch (error) {
+      if ((error as Error).message === 'AUTONOMOUS_CANCELLED') throw error;
       result.status = 'AI_FAILED';
-      result.warnings.push(
-        error instanceof Error ? error.message : 'AI evaluation failed',
-      );
-      return result;
+      result.warnings = [(error as Error).message];
+      return;
     }
     result.assessmentId = assessment.id;
-    const aiSelected = new Set<string>(assessment.selectedSourceIds || []),
-      selectedIds = ruleIds.filter((id) => aiSelected.has(id));
-    if (!selectedIds.length) {
-      result.status = 'QUALITY_FAILED';
-      result.warnings.push('AI selected no rule-eligible verified replies');
-      return result;
+    result.checkpoint = 'ASSESSED';
+    await this.saveAuto(batch);
+    const aiEligible = ruleIds.filter(id => assessment.selectedSourceIds.includes(id));
+    let selectedIds = aiEligible;
+    if (result.reviewedChoice?.type==='SELECT_REPLIES') {
+      selectedIds=aiEligible.filter(id=>result.reviewedChoice.selectedSourceIds.includes(id));
+      if(selectedIds.length!==result.reviewedChoice.selectedSourceIds.length)throw Error('REVIEW_CANNOT_BYPASS_BLOCKER');
     }
-    const selected = selectConversation(
-      collection,
-      'SERIOUS',
-      new Date().toISOString(),
-      terms,
-      { selectedIds },
-    );
-    result.selectedSourceIds = [collection.root.id, ...selectedIds];
-    result.estimatedSeconds = {
-      minimum: selected.estimate.minimumSeconds,
-      maximum: selected.estimate.maximumSeconds,
-    };
-    if (
-      selected.estimate.maximumSeconds < 60 ||
-      selected.estimate.minimumSeconds > 90
-    ) {
+    const chosen = estimate(selectedIds);
+    result.selectedSourceIds = [collection.root.id,...selectedIds];
+    result.estimatedSeconds = {minimum:chosen.minimumSeconds,maximum:chosen.maximumSeconds};
+    if (chosen.maximumSeconds < 60 || chosen.minimumSeconds > 90) {
       result.status = 'NOT_ENOUGH_CONTENT';
-      result.warnings.push(
-        `Exact selected source estimate is ${selected.estimate.minimumSeconds}-${selected.estimate.maximumSeconds}s`,
-      );
-      return result;
+      return;
     }
+    if(!result.reviewedChoice&&prior.topicRelevance.status==='UNCERTAIN') {
+      result.reviewChoice={type:'SELECT_ROOT',options:[{sourceId:collection.root.id,preview:collection.root.originalText.slice(0,280)}]};
+      result.status='WAITING_HUMAN';result.warnings=['ROOT_TOPIC_REVIEW_REQUIRED'];return;
+    }
+    if(result.reviewedChoice?.type!=='SELECT_REPLIES'&&assessment.candidates.some(c=>selectedIds.includes(c.sourceId)&&c.requiresHumanReview)){
+      result.reviewChoice={type:'SELECT_REPLIES',options:collection.replies.filter(r=>aiEligible.includes(r.id))
+        .map(r=>({sourceId:r.id,preview:r.originalText.slice(0,280)}))};
+      result.status='WAITING_HUMAN';result.warnings=['REPLY_SELECTION_REVIEW_REQUIRED'];return;
+    }
+    result.reviewChoice=undefined;
+    await this.checkAuto(batch);
     batch.stage = 'NORMALIZING';
     await this.saveAuto(batch);
-    const persistedReview = await this.conversations.engine.review(collectionId),
-      verifiedIdSet = new Set(collection.replies.map((reply) => reply.id)),
-      selectedReplyIds = selectedIds.filter((id) => verifiedIdSet.has(id)),
-      selectedObservedUrls = selectedIds
-        .filter((id) => !verifiedIdSet.has(id))
-        .map((id) => selected.comments.find((row) => row.id === id)?.url)
-        .filter((url): url is string => !!url),
-      draftReview: ConversationReview = {
-        ...persistedReview,
-        selectedReplyIds,
-        selectedObservedUrls,
-        decision: 'NEEDS_REVIEW',
-        reason:
-          'AUTOMATIC_VERIFIED_AND_CONFIRMED_SOURCE_SELECTION_FOR_DRAFT_NOT_USER_APPROVAL',
-      },
-      draft = await this.studio.createConversationDraft(collection, draftReview);
+    const review = await this.conversations.engine.review(collectionId);
+    const draftReview: ConversationReview = {...review, selectedReplyIds:selectedIds, selectedObservedUrls:[],
+      decision:'NEEDS_REVIEW', reason:'AUTOMATIC_VERIFIED_SOURCE_SELECTION_FOR_DRAFT'};
+    const draft = await this.studio.createConversationDraft(collection,draftReview,'auto-'+batch.id+'-'+identity.id,true);
     result.sessionId = draft.id;
-    await this.registerAutomaticDraft(
-      collection.root.url,
-      draft,
-      collectionId,
-      assessment.id,
-    );
-    return this.continueAutomaticDraft(batch, result, index);
+    result.checkpoint = 'DRAFT';
+    await this.saveAuto(batch);
+    await this.registerAutomaticDraft(collection.root.url,draft,collectionId,assessment.id);
+    await this.continueAutomaticDraft(batch,result);
   }
+
   private async executeAuto(id: string) {
-    if (this.autoRunning.has(id)) return;
-    this.autoRunning.add(id);
-    let job: AutonomousProductBatch | null = null;
+    let job: AutonomousProductBatch;
     try {
       job = await this.getAuto(id);
-      if (!this.quality) throw Error('AUTONOMOUS_DISCOVERY_UNAVAILABLE');
-      job.status = 'RUNNING';
-      job.startedAt ??= new Date().toISOString();
-      job.stage = 'DISCOVERING';
-      await this.saveAuto(job);
-      const run = job.discoveryRunId
-        ? await this.quality.engine.get(job.discoveryRunId)
-        : await this.quality.data.studio.withControlledCollection(() =>
-            this.quality!.engine.start({
-              requestId: `auto-${job!.id}`,
-              style: 'SERIOUS',
-              topic: job!.request.topic,
-              keywords: job!.request.keywords,
-              maxPosts: job!.request.maxCandidates,
-              maxEnrich: job!.request.maxEnrich,
-              priority: 'HOT',
-              minInteractions: 0,
-              maxRunMs: job!.request.maxRunMs,
-              collectionBudget: DEEP_CONVERSATION_BUDGET,
-            }),
-          );
-      job.discoveryRunId = run.id;
-      job.stage = 'COLLECTING';
-      job.errors.push(
-        ...autonomousDiscoveryErrors(run).filter(
-          (error) => !job!.errors.includes(error),
-        ),
-      );
-      await this.saveAuto(job);
-      if (run.status === 'BLOCKED') {
-        job.status = 'BLOCKED';
-        job.errors.push(...run.errors);
-        return;
-      }
-      for (let index = 0; index < run.collections.length; index++) {
-        if (job.cancelRequested) {
-          job.status = 'CANCELLED';
-          return;
-        }
-        const collection = run.collections[index];
-        const existingIndex = job.results.findIndex(
-          (row) => row.sourceUrl === collection.root.url,
-        );
-        if (existingIndex >= 0) {
-          const existing = job.results[existingIndex];
-          if (resumableAutomaticVoiceResult(existing)) {
-            try {
-              job.results[existingIndex] = await this.continueAutomaticDraft(
-                job,
-                existing,
-                index,
-              );
-            } catch (error) {
-              existing.status = /RESOURCE/u.test(
-                error instanceof Error ? error.message : '',
-              )
-                ? 'RESOURCE_STOPPED'
-                : 'TTS_FAILED';
-              existing.warnings = [
-                error instanceof Error ? error.message : 'UNKNOWN',
-              ];
-            }
-            await this.saveAuto(job);
-          }
-          continue;
-        }
-        let result: AutonomousVideoResult;
-        try {
-          result = await this.processAutomaticCollection(job, collection, index);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'UNKNOWN';
-          result = {
-            sourceUrl: collection.root.url,
-            collectionId: null,
-            assessmentId: null,
-            sessionId: null,
-            renderJobId: null,
-            status: /RESOURCE/.test(message)
-              ? 'RESOURCE_STOPPED'
-              : /ACCESS|CAPTCHA|LOGIN/.test(message)
-                ? 'ACCESS_BLOCKED'
-                : 'QUALITY_FAILED',
-            selectedSourceIds: [],
-            estimatedSeconds: null,
-            measuredSeconds: null,
-            timelineSeconds: null,
-            warnings: [message],
-          };
-        }
-        job.results.push(result);
+      await this.studio.withProductionWorker(async () => {
+        await this.checkAuto(job);
+        if (!this.quality) throw Error('AUTONOMOUS_DISCOVERY_UNAVAILABLE');
+        job.status = 'RUNNING';
+        job.startedAt ??= new Date().toISOString();
         await this.saveAuto(job);
-        if (
-          job.results.filter((row) => row.status === 'COMPLETED').length >=
-          job.request.targetVideos
-        ) break;
-      }
-      const complete = job.results.filter((row) => row.status === 'COMPLETED').length;
-      job.status =
-        complete >= job.request.targetVideos
-          ? 'COMPLETED'
-          : complete
-            ? 'PARTIAL'
-            : 'FAILED';
-      job.stage = 'COMPLETED';
+        let run = job.discoveryRunId ? await this.quality.engine.get(job.discoveryRunId)
+          : await this.quality.data.studio.withControlledCollection(() => this.quality.engine.start({
+            requestId:'auto-'+id, style:'SERIOUS', topic:job.request.topic, keywords:job.request.keywords,
+            maxPosts:job.request.maxCandidates, maxEnrich:job.request.maxEnrich, priority:'HOT',
+            minInteractions:0, maxRunMs:job.request.maxRunMs, collectionBudget:DEEP_CONVERSATION_BUDGET,
+          }));
+        job.discoveryRunId = run.id;
+        job.errors = [...new Set([...job.errors,...autonomousDiscoveryErrors(run)])];
+        await this.saveAuto(job);
+        if (run.status === 'BLOCKED') {job.status='BLOCKED';return;}
+        if (run.status === 'RUNNING') {
+          if(job.discoveryResumeAttempted)throw Error('DISCOVERY_INTERRUPTED');
+          job.discoveryResumeAttempted=true;
+          await this.saveAuto(job);
+          run=await this.quality.data.studio.withControlledCollection(()=>this.quality.engine.resume(run.id));
+        }
+        const known = new Set((await this.listAuto()).filter(row => row.id !== id)
+          .flatMap(row => row.results.map(result => canonicalPost(result.sourceUrl)?.id).filter(Boolean)));
+        for (const [index,collection] of run.collections.entries()) {
+          await this.checkAuto(job);
+          if(job.resumeCandidateUrl&&job.resumeCandidateUrl!==collection.root.url)continue;
+          if (!job.resumeCandidateUrl&&(job.results.filter(row=>row.status==='COMPLETED').length>=job.request.targetVideos ||
+              job.results.filter(row=>row.status==='COMPLETED'||row.status==='WAITING_HUMAN').length>=(job.dispatch?.reviewSlots??10))) break;
+          const key = canonicalPost(collection.root.url)?.id;
+          if (!key || known.has(key)) continue;
+          let result = job.results.find(row=>canonicalPost(row.sourceUrl)?.id===key);
+          if (!result) {
+            result = {sourceUrl:collection.root.url, collectionId:null,assessmentId:null,sessionId:null,
+              renderJobId:null, status:'QUALITY_FAILED', checkpoint:'RESERVED', selectedSourceIds:[],
+              estimatedSeconds:null,measuredSeconds:null,timelineSeconds:null,warnings:[]};
+            job.results.push(result);
+            await this.saveAuto(job);
+          } else if (!result.checkpoint || result.status === 'COMPLETED' || result.status === 'WAITING_HUMAN' ||
+            result.status === 'NOT_ENOUGH_CONTENT' || result.status === 'AI_FAILED') continue;
+          try {
+            await this.processAutomaticCollection(job,collection,result,index);
+          } catch (error) {
+            const message=(error as Error).message;
+            if (message === 'AUTONOMOUS_CANCELLED') throw error;
+            result.status=/RESOURCE/.test(message)?'RESOURCE_STOPPED':result.renderJobId?'RENDER_FAILED':result.sessionId?'TTS_FAILED':'QUALITY_FAILED';
+            result.warnings=[message];
+          }
+          await this.saveAuto(job);
+        }
+        delete job.resumeCandidateUrl;
+        const complete=job.results.filter(row=>row.status==='COMPLETED').length;
+        job.status=complete>=job.request.targetVideos?'COMPLETED':complete||job.results.some(row=>row.status==='WAITING_HUMAN')?'PARTIAL':'FAILED';
+        job.stage='COMPLETED';
+      });
     } catch (error) {
       if (job) {
-        job.status = /ACCESS|CAPTCHA|LOGIN/.test(
-          error instanceof Error ? error.message : '',
-        )
-          ? 'BLOCKED'
-          : 'FAILED';
-        job.errors.push(error instanceof Error ? error.message : 'UNKNOWN');
+        const message=(error as Error).message;
+        job.status=message==='AUTONOMOUS_CANCELLED'?'CANCELLED':/ACCESS|CAPTCHA|LOGIN/.test(message)?'BLOCKED':'FAILED';
+        job.errors.push(message);
       }
     } finally {
-      if (job) {
-        job.completedAt = new Date().toISOString();
-        await this.saveAuto(job);
-      }
-      this.autoRunning.delete(id);
+      try {
+        if (job) {job.completedAt=new Date().toISOString();await this.saveAuto(job);}
+      } finally { this.autoRunning.delete(id); }
     }
   }
   async list() {

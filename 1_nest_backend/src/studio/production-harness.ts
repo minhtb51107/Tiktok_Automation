@@ -1,3 +1,4 @@
+import { validateDraftArtifact } from './production-artifact';
 import {
   BadRequestException, Body, ConflictException, Controller, ForbiddenException,
   Get, Injectable, NotFoundException, Param, Post, Query, StreamableFile,
@@ -201,6 +202,7 @@ export class ProductionHarness {
     if (tool === 'audio') allowed('TTS');
     if (tool === 'render') allowed('RENDER');
 
+    this.studio.assertProductionAccess?.();
     const input = Object.fromEntries(keys.map(key => [key, b[key]]));
     const renderPreset = isOperatorRenderPreset(b.preset) ? b.preset : '720P';
     // Preserve the original persisted request and effect hashes for 720P.
@@ -433,34 +435,8 @@ export class ProductionHarness {
   }
 
   async validateOutput(sessionId: string, jobId: string, preset: OperatorRenderPreset = '720P', revision?: number) {
-    const m = await this.studio.renders.load(sessionId, jobId);
-    const file = await this.studio.renders.output(sessionId, jobId);
-    const target = OPERATOR_RENDER_PRESETS[preset];
-    const probe = m.probe as { streams?: Array<{ codec_type: string; codec_name: string;
-      width?: number; height?: number; avg_frame_rate?: string; nb_read_frames?: string; duration?: string }>;
-      format?: { duration?: string } };
-    const durationSeconds = Number(probe?.format?.duration);
-    const video = probe?.streams?.find(s => s.codec_type === 'video');
-    const audio = probe?.streams?.find(s => s.codec_type === 'audio');
-    const [fpsNumerator, fpsDenominator] = (video?.avg_frame_rate || '').split('/').map(Number);
-    const expectedSeconds = m.totalFrames / target.fps;
-    const durationMatches = (seconds: number) => Number.isFinite(seconds) && seconds > 0 &&
-      Math.abs(seconds - expectedSeconds) <= 1 / target.fps + 0.001;
-    valid(m.sessionId === sessionId && m.jobId === jobId && (revision === undefined || m.revision === revision) &&
-      m.mode === 'DRAFT' && (m.preset ?? '720P') === preset &&
-      m.width === target.width && m.height === target.height && m.fps === target.fps &&
-      Number.isSafeInteger(m.totalFrames) && m.totalFrames > 0 &&
-      m.frameRange?.[0] === 0 && m.frameRange?.[1] === m.totalFrames - 1 &&
-      Math.abs(m.expectedDurationSeconds - expectedSeconds) <= 0.001 &&
-      durationMatches(durationSeconds) && durationMatches(Number(video?.duration)) &&
-      video?.codec_name === 'h264' && video.width === target.width && video.height === target.height &&
-      fpsNumerator / fpsDenominator === target.fps && Number(video.nb_read_frames) === m.totalFrames &&
-      audio?.codec_name === 'aac' && durationMatches(Number(audio.duration)), 'RENDER_PROBE_INVALID');
-    const hash = createHash('sha256');
-    for await (const chunk of createReadStream(file)) hash.update(chunk);
-    return { validation: 'MACHINE_VALIDATED', humanAcceptance: 'PENDING', sha256: hash.digest('hex'),
-      preset, durationSeconds, fps: m.fps, frames: m.totalFrames, width: m.width, height: m.height,
-      metrics: m.metrics, artifact: base + '/jobs/' + jobId + '/video' };
+    const result = await validateDraftArtifact(this.studio, sessionId, jobId, preset, revision);
+    return { ...result, artifact: base + '/jobs/' + jobId + '/video' };
   }
 
   async video(id: string) {

@@ -1,3 +1,4 @@
+import { prepareTtsInput } from './speech-normalizer';
 import { autonomousDiscoveryErrors, autonomousProductRequest, measuredMp4Duration, partitionAutomaticResumeResults, ProductPipelineService, productStageSnapshot, resumableAutomaticVoiceResult, seriousDraftDurationStatus } from './product-pipeline';
 import { describe, expect, it, jest } from '@jest/globals';
 import { mkdtemp, writeFile, rm } from 'fs/promises';
@@ -113,13 +114,23 @@ describe('product pipeline snapshot', () => {
     try {
       const text = 'Nguồn thật đã chọn';
       const crypto = require('crypto');
+      const url = 'https://www.threads.com/@root/post/ROOT';
+      const ref = {entityId:'ROOT',entityType:'POST'};
+      const ttsInputHash=prepareTtsInput(text).ttsInputHash;
+      const audioFile=path.join(dir,'audio.wav');
+      await writeFile(audioFile,Buffer.alloc(100));
       const active = session({
         id: '00000000-0000-4000-8000-000000000003',
         items: [
           {
             id: 'root',
             selected: true,
-            spokenText: text,
+            spokenText: text, originalText:text, displayText:text,
+            sourceReference:ref, sourceUrl:url, author:{handle:'root'},
+            rawExtraction:{url,text,handle:'root'},
+            voiceSettings:{voice:'my_yen',speed:1.3},
+            automaticNormalization:{ttsInputHash,ambiguousTerms:[]},
+
             order: 0,
           },
         ],
@@ -129,7 +140,7 @@ describe('product pipeline snapshot', () => {
             itemId: 'root',
             status: 'GENERATED',
             textHash: crypto.createHash('sha256').update(text).digest('hex'),
-            durationMs: 59000,
+            durationMs: 59000, durationEvidence:'FFPROBE',ttsInputHash,voice:'my_yen',speed:1.3,
           },
         ],
         project: {
@@ -137,12 +148,17 @@ describe('product pipeline snapshot', () => {
           timeline: {
             totalFrames: 1799,
             fps: 30,
-            scenes: [{ scene: { id: 'root' }, subtitles: [] }],
+            scenes: [{ scene: { id:'root',displayText:text,narrationText:text,subtitles:[],
+              sourceReferences:[ref],styleProperties:{style:'SERIOUS'},audioAssetId:'audio' },
+              subtitles:[],audioDurationMs:59000 }],
           },
         },
       });
       const studio: any = {
-        runtime: jest.fn(async () => ({})),
+        jobs:{findRequest:async()=>null},
+        audioFile:async()=>audioFile,
+        restoreOperatorAvatars:async()=>active,
+        preview:async()=>({request:{inputProps:{timeline:active.project.timeline,audioAssets:[],mediaAssets:[]}}}),
         load: jest.fn(async () => active),
         normalizeAutomaticDraft: jest.fn(async () => active),
         applyAutomaticSeriousAssets: jest.fn(async () => active),
@@ -185,11 +201,9 @@ describe('product pipeline snapshot', () => {
         timelineSeconds: null,
         warnings: ['prior runtime failure'],
       };
-      const resumed = await (service as any).continueAutomaticDraft(
-        batch,
-        result,
-        0,
-      );
+      batch.results.push(result);
+      await (service as any).saveAuto(batch);
+      await (service as any).continueAutomaticDraft(batch,result);
       expect(studio.normalizeAutomaticDraft).toHaveBeenCalledWith(
         active.id,
         active.revision,
@@ -199,10 +213,10 @@ describe('product pipeline snapshot', () => {
         active.revision,
       );
       expect(studio.voiceAction).not.toHaveBeenCalled();
-      expect(resumed).toMatchObject({
+      expect(result).toMatchObject({
         status: 'NOT_ENOUGH_CONTENT',
         measuredSeconds: 59,
-        timelineSeconds: 59.967,
+        timelineSeconds: 1799/30,
       });
     } finally {
       await rm(dir, { recursive: true, force: true });

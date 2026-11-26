@@ -367,11 +367,16 @@ export class AiContentEvaluator {
   async evaluate(
     input: AiCollectionInput,
     signal?: AbortSignal,
+    beforeInvocation?: (ledgerId: string) => Promise<void>,
+    eligibleReplyIds?: ReadonlySet<string>,
   ): Promise<AiContentAssessment> {
-    const observed = observedContextViews(input.collection, input.style),
-      replyIds = new Set(input.collection.replies.map((reply) => reply.id)),
+    const observed = eligibleReplyIds ? [] : observedContextViews(input.collection, input.style),
+      replies = eligibleReplyIds
+        ? input.collection.replies.filter((reply) => eligibleReplyIds.has(reply.id))
+        : input.collection.replies,
+      replyIds = new Set(replies.map((reply) => reply.id)),
       candidates = [
-        ...input.collection.replies.map((reply) => {
+        ...replies.map((reply) => {
           const quality = (input.heuristic as any)?.replyQuality?.find(
             (row: any) => row.replyId === reply.id,
           );
@@ -455,6 +460,7 @@ export class AiContentEvaluator {
           rightsStatus: 'UNKNOWN',
         },
         maxTokens: cfg.maxTokens,
+        beforeInvocation,
         signal,
       });
       candidateRows.push(

@@ -16,6 +16,7 @@ export interface RenderRequest {
   mode: RenderMode;
   preset: RenderPreset;
   fps?: 30 | 60;
+  requireSparse?: boolean;
   backgroundMode?:'SAVED'|'FIT'|'LOOP';
   /** Inclusive frame range into the unchanged saved timeline; null means full. */
   frameRange?: [number, number];
@@ -24,6 +25,7 @@ export interface RenderRequest {
 export interface RenderManifest {
   schemaVersion: 1;
   preset?: RenderPreset;
+  requireSparse?: boolean;
   backgroundMode?:'SAVED'|'FIT'|'LOOP';
   jobId: string;
   sessionId: string;

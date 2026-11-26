@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { sessionReadiness } from './session-readiness';
 import { cleanSourceProjection } from './source-quality';
 import { classifyContext } from './context-classification';
@@ -533,6 +534,7 @@ export class StudioService {
       const manifest: RenderManifest = {
         schemaVersion: 1,
         preset: input.preset,
+        requireSparse: input.requireSparse,
         backgroundMode: input.backgroundMode || 'SAVED',
         jobId,
         sessionId: id,
@@ -585,8 +587,9 @@ export class StudioService {
     id: string, revision: number, requestId: string, tick: ProgressSink, jobId: string,
     preset: OperatorRenderPreset,
     gate: NonNullable<Parameters<StudioService['renderJob']>[4]>,
+    requireSparse = false,
   ) {
-    return this.renderJob(id, {revision, requestId, mode: 'DRAFT', preset, backgroundMode: 'SAVED'}, tick, jobId, gate);
+    return this.renderJob(id, {revision, requestId, mode: 'DRAFT', preset, backgroundMode: 'SAVED', requireSparse}, tick, jobId, gate);
   }
   readonly publicAssets = new PublicAssets();
   /**
@@ -858,6 +861,8 @@ export class StudioService {
     await this.progress?.(step, completed, total);
   }
   async startJob(id: string, body: any) {
+    if (this.productionOwner && this.productionScope.getStore() !== this.productionOwner)
+      throw new ConflictException('RESOURCE_BLOCKED');
     const snapshot = await this.load(id),
       operation = body?.operation,
       input = body?.input || {};
@@ -1289,9 +1294,28 @@ export class StudioService {
     await replaceFile(f + '.tmp', f);
     return s;
   }
+  private readonly productionScope = new AsyncLocalStorage<symbol>();
+  private productionOwner?: symbol;
+  async productionRuntimeReady() {
+    assertNoLocalProbe();
+    return (await this.voice.preflight()).status==='READY';
+  }
+  assertProductionAccess() {
+    if(this.productionOwner&&this.productionScope.getStore()!==this.productionOwner)
+      throw new ConflictException('RESOURCE_BLOCKED');
+  }
+  hasHeavyWorker() { return this.busy || !!this.productionOwner || this.jobs.hasActive(); }
+  async withProductionWorker<T>(work: () => Promise<T>) {
+    assertNoLocalProbe();
+    if (this.hasHeavyWorker()) throw new ConflictException('RESOURCE_BLOCKED');
+    const owner = Symbol('production');
+    this.productionOwner = owner;
+    try { return await this.productionScope.run(owner, work); }
+    finally { this.productionOwner = undefined; }
+  }
   private async exclusive<T>(fn: () => Promise<T>, leaseToken?: string) {
     assertNoLocalProbe(leaseToken);
-    if (this.busy)
+    if (this.busy || this.productionOwner && this.productionScope.getStore() !== this.productionOwner)
       throw new ConflictException(
         'Another source operation is running. Try again after it finishes.',
       );

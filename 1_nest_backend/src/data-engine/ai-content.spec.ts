@@ -294,6 +294,16 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
       editorialStatus: 'SELECT_REQUIRES_HUMAN_REVIEW',
       requiresHumanReview: true,
     });
+    const automatic = await new AiContentEvaluator(data, provider).evaluate({
+      collectionId,
+      collection: record.collection,
+      style: 'SERIOUS',
+      heuristic: record.evaluation,
+    }, undefined, undefined, new Set<string>());
+    expect(automatic.selectedSourceIds).toEqual([]);
+    expect(automatic.candidates).toEqual([]);
+    expect(automatic.id).not.toBe(assessment.id);
+    expect(provider.calls).toHaveLength(1);
   });
 
   test('model planner invokes bounded tools and returns only a DRAFT', async () => {

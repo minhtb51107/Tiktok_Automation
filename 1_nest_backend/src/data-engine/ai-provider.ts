@@ -13,6 +13,7 @@ import * as path from 'node:path';
 import type { AiCompletion, AiProviderConfig, AiUsage } from './ai-contracts';
 
 export interface AiJsonRequest {
+  beforeInvocation?: (ledgerId: string) => Promise<void>;
   system: string;
   input: unknown;
   maxTokens?: number;
@@ -391,6 +392,7 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
           }),
         )
         .digest('hex');
+    await request.beforeInvocation?.(ledgerId);
     this.ledger.append({
       schemaVersion: 'ai-inference-ledger/1',
       ledgerId,

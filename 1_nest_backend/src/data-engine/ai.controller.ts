@@ -125,6 +125,7 @@ export class AiContentStudioService {
           ? 'AI_FUNNY_LEGACY_DISABLED'
           : 'AI_EXPLICIT_LIVE_CONFIRMATION_REQUIRED',
       );
+    this.data.studio?.assertProductionAccess?.();
     const record = await this.conversations.engine.collection(id);
     return this.evaluator.evaluate({
       collectionId: id,
