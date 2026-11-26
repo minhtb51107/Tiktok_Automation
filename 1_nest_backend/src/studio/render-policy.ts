@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { BadRequestException } from '@nestjs/common';
 import type { StudioSession } from './studio.contracts';
 import type { VideoPreviewProps } from '../video-pipeline/contracts';
-import type { RenderRequest } from './render.types';
+import { isOperatorRenderPreset, OPERATOR_RENDER_PRESETS, type RenderRequest } from './render.types';
 import { textHash } from './kokoro-runtime';
 import { spokenAmbiguities } from './voice-settings';
 import { fitBackground } from '../video-pipeline/editing';
@@ -17,16 +17,24 @@ export function renderBackground(props:VideoPreviewProps,mode:'SAVED'|'FIT'|'LOO
 }
 
 export const snapshotHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+export function renderTarget(body: RenderRequest, timelineFps: number) {
+  if (isOperatorRenderPreset(body?.preset)) {
+    const target = OPERATOR_RENDER_PRESETS[body.preset];
+    if (body.fps !== undefined && body.fps !== target.fps)
+      throw new BadRequestException('Render preset and FPS conflict');
+    return target;
+  }
+  if (body?.preset === '1080P') return { width: 1080, height: 1920, fps: body.fps ?? timelineFps };
+  throw new BadRequestException('Invalid render preset');
+}
 export function validateRenderRequest(body: RenderRequest, props: VideoPreviewProps) {
-  const validPresets = ['1080P', '1080P30', '1080P60', '720P'];
-  const targetFps = body?.preset === '1080P60' ? 60 : (body?.fps ?? props.timeline.fps);
   if (!body || !Number.isInteger(body.revision) || !['DRAFT','FINAL'].includes(body.mode) ||
-      !validPresets.includes(body.preset) || ![30, 60].includes(targetFps) ||
-      (body.preset === '720P' && targetFps !== 30) ||
-      (body.preset === '1080P30' && targetFps !== 30) ||
-      (body.preset === '1080P60' && targetFps !== 60) ||
       typeof body.requestId !== 'string' ||
       !/^[a-zA-Z0-9-]{1,100}$/.test(body.requestId)) throw new BadRequestException('Invalid render request');
+  const target = renderTarget(body, props.timeline.fps);
+  if (![30, 60].includes(target.fps) || ![30, 60].includes(props.timeline.fps) ||
+      target.fps < props.timeline.fps || (target.fps !== props.timeline.fps && body.mode !== 'DRAFT'))
+    throw new BadRequestException('RENDER_FPS_CONVERSION_UNSUPPORTED');
   const range = body.frameRange ?? [0, props.timeline.totalFrames - 1];
   if (!Array.isArray(range) || range.length !== 2 || range.some(n=>!Number.isInteger(n)) || range[0]<0 || range[1]<range[0] || range[1]>=props.timeline.totalFrames)
     throw new BadRequestException('Frame range must be inside the saved timeline');

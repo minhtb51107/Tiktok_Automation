@@ -1,7 +1,16 @@
 import type { VideoPreviewProps } from '../video-pipeline/contracts';
 import type { RenderFailure } from './render-progress';
 export type RenderMode = 'DRAFT' | 'FINAL';
-export type RenderPreset = '1080P' | '1080P30' | '1080P60' | '720P';
+export const OPERATOR_RENDER_PRESETS = {
+  '720P': { width: 720, height: 1280, fps: 30 },
+  '1080P30': { width: 1080, height: 1920, fps: 30 },
+  '1080P60': { width: 1080, height: 1920, fps: 60 },
+} as const;
+export type OperatorRenderPreset = keyof typeof OPERATOR_RENDER_PRESETS;
+export type RenderPreset = '1080P' | OperatorRenderPreset;
+export function isOperatorRenderPreset(value: unknown): value is OperatorRenderPreset {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(OPERATOR_RENDER_PRESETS, value);
+}
 export interface RenderRequest {
   revision: number;
   mode: RenderMode;
@@ -14,6 +23,7 @@ export interface RenderRequest {
 }
 export interface RenderManifest {
   schemaVersion: 1;
+  preset?: RenderPreset;
   backgroundMode?:'SAVED'|'FIT'|'LOOP';
   jobId: string;
   sessionId: string;

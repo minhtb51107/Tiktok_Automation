@@ -30,6 +30,9 @@ describe('Render safety contracts OFFLINE (not live MP4 proof)',()=>{
    expect(v.blockers).toEqual([]);expect(v.finalBlockers.length).toBeGreaterThan(0);
    const request={revision:s.revision,mode:'DRAFT' as const,preset:'1080P' as const,requestId:'same-click',frameRange:[1,20] as [number,number]};
    const hash=snapshotHash(props);expect(validateRenderRequest(request,props)).toEqual([1,20]);expect(snapshotHash(props)).toBe(hash);
+   expect(validateRenderRequest({...request,preset:'1080P60'},props)).toEqual([1,20]);
+   expect(()=>validateRenderRequest({...request,preset:'1080P60',fps:30},props)).toThrow('Render preset and FPS conflict');
+   expect(()=>validateRenderRequest({...request,preset:'1080P60',mode:'FINAL'},props)).toThrow('RENDER_FPS_CONVERSION_UNSUPPORTED');
    for(const frameRange of [[-1,20],[20,1],[0,props.timeline.totalFrames],[0,1.5]])expect(()=>validateRenderRequest({...request,frameRange:frameRange as [number,number]},props)).toThrow();
    i.spokenText+=' changed';expect(renderValidation(s,props).blockers).toHaveLength(1);
    expect(i.originalText).toBe(before);expect(s.voiceAssets[0].approvedAt).toBeNull();

@@ -14,6 +14,7 @@ import { StudioService } from './studio.service';
 import { avatarState, assertRenderable, currentNarration, PRODUCTION_CONTRACT, sourceBlockers } from './production-contract';
 import { prepareTtsInput } from './speech-normalizer';
 import { snapshotHash } from './render-policy';
+import { isOperatorRenderPreset, OPERATOR_RENDER_PRESETS, type OperatorRenderPreset } from './render.types';
 import type { StudioJob } from './progress';
 import type { StudioSession } from './studio.contracts';
 
@@ -47,7 +48,9 @@ const definitions = {
   prepare: { input: ['requestId','sessionId','revision'], output: 'ProjectSummary', stage: 'PREPARING_TIMELINE', budget: 'Existing timeline preparation' },
   visual_defaults: { input: ['requestId','sessionId','revision'], optional: ['gameplay: PRESET | OFF'], output: 'ProjectSummary', stage: 'CONFIGURING_EDITOR', budget: 'Existing local asset registry' },
   restore_cached_avatars: { input: ['requestId','sessionId','revision'], output: 'ProjectSummary', stage: 'RESTORING_CACHED_AVATARS', budget: 'Local hash-verified cache only' },
-  render: { input: ['requestId','sessionId','revision'], output: 'MachineValidation', stage: 'RENDERING', budget: 'Existing 45 minute render watchdog, 720P, concurrency 1' },
+  render: { input: ['requestId','sessionId','revision'], optional: ['preset'],
+    presets: OPERATOR_RENDER_PRESETS, defaultPreset: '720P',
+    output: 'MachineValidation', stage: 'RENDERING', budget: 'Existing 45 minute render watchdog, concurrency 1' },
 } as const;
 type Tool = keyof typeof definitions;
 const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
@@ -97,6 +100,7 @@ export function operatorFailure(error: string | null, stage: string, attempts: n
   // Public messages are fixed text. Runtime errors can include local paths,
   // provider bodies or credentials and are never echoed at this boundary.
   const rules = [
+    [/RENDER_FPS_CONVERSION_UNSUPPORTED/i, 'RENDER_FPS_CONVERSION_UNSUPPORTED', 'The saved timeline cannot be converted to the requested FPS with its available renderer.', 'Use a preset at the saved timeline FPS, or use supported static gameplay for 30-to-60 FPS conversion.', false],
     [/GAMEPLAY_ASSET_UNAVAILABLE/i, 'GAMEPLAY_ASSET_UNAVAILABLE', 'No configured gameplay asset passed the local video probe.', 'Ask the operator host to configure a verified gameplay asset ID, or use visual_defaults with gameplay OFF when explicitly requested.', false],
     [/USER_CANCELLED/i, 'USER_CANCELLED', 'The operator cancelled this render.', 'Check the retained render checkpoint before starting a new attempt.', false],
     [/RENDER_STALLED/i, 'RENDER_STALLED', 'The worker produced no new frame for two minutes during frame rendering.', 'Check resource samples and the last worker checkpoint.', true],
@@ -175,6 +179,7 @@ export class ProductionHarness {
     const keys: readonly string[] = definitions[tool].input;
     valid(b && typeof b === 'object' && !Array.isArray(b) &&
       Object.keys(b).every(k => keys.includes(k) ||
+        (tool === 'render' && k === 'preset' && isOperatorRenderPreset(b[k])) ||
         (tool === 'visual_defaults' && k === 'gameplay' && ['PRESET','OFF'].includes(b[k]))) &&
       keys.every(k => Object.prototype.hasOwnProperty.call(b,k)),
       'INVALID_TOOL_INPUT');
@@ -197,6 +202,9 @@ export class ProductionHarness {
     if (tool === 'render') allowed('RENDER');
 
     const input = Object.fromEntries(keys.map(key => [key, b[key]]));
+    const renderPreset = isOperatorRenderPreset(b.preset) ? b.preset : '720P';
+    // Preserve the original persisted request and effect hashes for 720P.
+    if (tool === 'render' && renderPreset !== '720P') input.preset = renderPreset;
     if (tool === 'visual_defaults' && b.gameplay !== undefined) input.gameplay = b.gameplay;
     if (tool === 'search') input.query = b.query.trim();
     if (tool === 'collect') input.url = canonicalPost(b.url)!.url;
@@ -287,7 +295,7 @@ export class ProductionHarness {
       }
       valid(s.project.timeline, 'PREPARED_TIMELINE_REQUIRED');
       try {
-        const result = await this.studio.runOperatorDraft(s.id, s.revision, id, tick, id, async (current, props) => {
+        const result = await this.studio.runOperatorDraft(s.id, s.revision, id, tick, id, renderPreset, async (current, props) => {
           assertRenderable(current, props);
           valid(snapshotHash(current.project.timeline) === snapshotHash(props.timeline), 'PREPARED_TIMELINE_STALE');
           for (const i of current.items.filter(i => i.selected))
@@ -299,7 +307,7 @@ export class ProductionHarness {
           urls.forEach(uri => workerMedia.add(uri));
         });
         await tick('QUALITY_CHECK');
-        return { ...result, result: await this.validateOutput(s.id, id) };
+        return { ...result, result: await this.validateOutput(s.id, id, renderPreset, s.revision) };
       } finally {
         workerMedia.clear();
       }
@@ -424,24 +432,34 @@ export class ProductionHarness {
     }
   }
 
-  async validateOutput(sessionId: string, jobId: string) {
+  async validateOutput(sessionId: string, jobId: string, preset: OperatorRenderPreset = '720P', revision?: number) {
     const m = await this.studio.renders.load(sessionId, jobId);
     const file = await this.studio.renders.output(sessionId, jobId);
+    const target = OPERATOR_RENDER_PRESETS[preset];
     const probe = m.probe as { streams?: Array<{ codec_type: string; codec_name: string;
-      width?: number; height?: number; avg_frame_rate?: string; nb_read_frames?: string }>;
+      width?: number; height?: number; avg_frame_rate?: string; nb_read_frames?: string; duration?: string }>;
       format?: { duration?: string } };
     const durationSeconds = Number(probe?.format?.duration);
     const video = probe?.streams?.find(s => s.codec_type === 'video');
+    const audio = probe?.streams?.find(s => s.codec_type === 'audio');
     const [fpsNumerator, fpsDenominator] = (video?.avg_frame_rate || '').split('/').map(Number);
-    valid(m.mode === 'DRAFT' && m.width === 720 && m.height === 1280 &&
-      Number.isFinite(durationSeconds) && durationSeconds > 0 &&
-      video?.codec_name === 'h264' && video.width === 720 && video.height === 1280 &&
-      fpsNumerator / fpsDenominator === m.fps && Number(video.nb_read_frames) === m.totalFrames &&
-      probe?.streams?.some(s => s.codec_type === 'audio' && s.codec_name === 'aac'), 'RENDER_PROBE_INVALID');
+    const expectedSeconds = m.totalFrames / target.fps;
+    const durationMatches = (seconds: number) => Number.isFinite(seconds) && seconds > 0 &&
+      Math.abs(seconds - expectedSeconds) <= 1 / target.fps + 0.001;
+    valid(m.sessionId === sessionId && m.jobId === jobId && (revision === undefined || m.revision === revision) &&
+      m.mode === 'DRAFT' && (m.preset ?? '720P') === preset &&
+      m.width === target.width && m.height === target.height && m.fps === target.fps &&
+      Number.isSafeInteger(m.totalFrames) && m.totalFrames > 0 &&
+      m.frameRange?.[0] === 0 && m.frameRange?.[1] === m.totalFrames - 1 &&
+      Math.abs(m.expectedDurationSeconds - expectedSeconds) <= 0.001 &&
+      durationMatches(durationSeconds) && durationMatches(Number(video?.duration)) &&
+      video?.codec_name === 'h264' && video.width === target.width && video.height === target.height &&
+      fpsNumerator / fpsDenominator === target.fps && Number(video.nb_read_frames) === m.totalFrames &&
+      audio?.codec_name === 'aac' && durationMatches(Number(audio.duration)), 'RENDER_PROBE_INVALID');
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(file)) hash.update(chunk);
     return { validation: 'MACHINE_VALIDATED', humanAcceptance: 'PENDING', sha256: hash.digest('hex'),
-      durationSeconds, fps: m.fps, frames: m.totalFrames, width: m.width, height: m.height,
+      preset, durationSeconds, fps: m.fps, frames: m.totalFrames, width: m.width, height: m.height,
       metrics: m.metrics, artifact: base + '/jobs/' + jobId + '/video' };
   }
 
@@ -449,8 +467,11 @@ export class ProductionHarness {
     const j = await this.job(id);
     if (j.operation !== 'operator:render' || j.status !== 'SUCCEEDED' || !j.result)
       throw new NotFoundException('OPERATOR_VIDEO_NOT_READY');
-    const current = await this.validateOutput(j.sessionId, id);
-    if (current.sha256 !== (j.result as any).sha256) throw new ConflictException('ARTIFACT_HASH_CHANGED');
+    const accepted = j.result as {preset?: unknown; sha256?: string};
+    const preset = accepted.preset ?? '720P';
+    if (!isOperatorRenderPreset(preset)) throw new ConflictException('RENDER_PROBE_INVALID');
+    const current = await this.validateOutput(j.sessionId, id, preset, j.revision ?? j.inputRevision);
+    if (current.sha256 !== accepted.sha256) throw new ConflictException('ARTIFACT_HASH_CHANGED');
     return new StreamableFile(createReadStream(await this.studio.renders.output(j.sessionId,id)), {
       type: 'video/mp4', disposition: 'attachment; filename="draft.mp4"',
     });

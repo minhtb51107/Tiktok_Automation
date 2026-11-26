@@ -27,6 +27,79 @@ function rootSession(): any {
 }
 
 describe('Production Harness runtime', () => {
+  it('preserves 720P request hashes and distinguishes high-resolution effects', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'operator-render-presets-'));
+    const jobs = new StudioJobs(root);
+    const session = rootSession();
+    const studio = { jobs, load: async () => session };
+    const harness = new ProductionHarness(studio as any, null, null, null);
+    const old = process.env.STUDIO_OPERATOR_RENDER;
+    process.env.STUDIO_OPERATOR_RENDER = '1';
+    const input = { requestId: 'render-legacy', sessionId: session.id, revision: 1 };
+    const settle = async (id: string) => {
+      for (let i = 0; i < 100; i++) {
+        const job = await jobs.load(id);
+        if (job.status === 'FAILED') return job;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      throw Error('fixture render did not settle');
+    };
+    try {
+      // Missing timeline intentionally prevents the worker from starting.
+      const first = await settle((await harness.run('render', input)).jobId);
+      const explicit = await harness.run('render', { ...input, preset: '720P' });
+      expect(explicit.jobId).toBe(first.jobId);
+      await expect(harness.run('render', { ...input, preset: '1080P' })).rejects.toThrow('INVALID_TOOL_INPUT');
+      await expect(harness.run('render', { ...input, preset: '1080P60' })).rejects.toThrow('OPERATOR_REQUEST_ID_CONFLICT');
+      const high30 = await settle((await harness.run('render', { ...input, requestId: '30', preset: '1080P30' })).jobId);
+      const high60 = await settle((await harness.run('render', { ...input, requestId: '60', preset: '1080P60' })).jobId);
+      expect(new Set([first.operatorEffectKey, high30.operatorEffectKey, high60.operatorEffectKey]).size).toBe(3);
+      expect((await harness.run('render', { ...input, requestId: '60', preset: '1080P60' })).jobId).toBe(high60.jobId);
+    } finally {
+      if (old === undefined) delete process.env.STUDIO_OPERATOR_RENDER;
+      else process.env.STUDIO_OPERATOR_RENDER = old;
+    }
+  });
+
+  it('requires preset-specific full-length probes for validation and download', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'operator-render-probes-'));
+    const file = join(root, 'video.mp4');
+    await writeFile(file, 'digest fixture');
+    const sessionId = rootSession().id, jobId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+    const video = { codec_type: 'video', codec_name: 'h264', width: 1080, height: 1920,
+      avg_frame_rate: '60/1', nb_read_frames: '120', duration: '2' };
+    const audio = { codec_type: 'audio', codec_name: 'aac', duration: '2' };
+    const streams: Array<typeof video | typeof audio> = [video, audio];
+    const manifest = { sessionId, jobId, revision: 1, mode: 'DRAFT', preset: '1080P60',
+      width: 1080, height: 1920, fps: 60, totalFrames: 120, frameRange: [0, 119],
+      expectedDurationSeconds: 2, metrics: {}, probe: { streams, format: { duration: '2' } } };
+    const job = { jobId, sessionId, revision: 1, operation: 'operator:render', status: 'SUCCEEDED', result: {} };
+    const studio = { renders: { load: async () => manifest, output: async () => file }, jobs: { load: async () => job } };
+    const harness = new ProductionHarness(studio as any, null, null, null);
+    const accepted = await harness.validateOutput(sessionId, jobId, '1080P60', 1);
+    expect(accepted).toMatchObject({ preset: '1080P60', fps: 60, frames: 120, durationSeconds: 2 });
+    job.result = accepted;
+    const stream = (await harness.video(jobId)).getStream();
+    for await (const chunk of stream) expect(chunk.toString()).toBe('digest fixture');
+    await expect(harness.validateOutput(sessionId, jobId, '1080P30')).rejects.toThrow('RENDER_PROBE_INVALID');
+    for (const corrupt of [{ avg_frame_rate: '30/1' }, { nb_read_frames: '119' }, { duration: '1' }, { width: 720 }]) {
+      manifest.probe.streams[0] = { ...video, ...corrupt };
+      await expect(harness.video(jobId)).rejects.toThrow('RENDER_PROBE_INVALID');
+    }
+    manifest.probe.streams[0] = video;
+    await writeFile(file, 'different bytes');
+    await expect(harness.video(jobId)).rejects.toThrow('ARTIFACT_HASH_CHANGED');
+
+    // Historical results and manifests did not persist a preset.
+    delete manifest.preset;
+    Object.assign(manifest, {width: 720, height: 1280, fps: 30, totalFrames: 60, frameRange: [0, 59]});
+    manifest.probe.streams[0] = {...video, width: 720, height: 1280, avg_frame_rate: '30/1', nb_read_frames: '60'};
+    const legacy = await harness.validateOutput(sessionId, jobId);
+    job.result = {sha256: legacy.sha256};
+    const legacyStream = (await harness.video(jobId)).getStream();
+    for await (const chunk of legacyStream) expect(chunk.toString()).toBe('different bytes');
+  });
+
   it('classifies historical and runtime failures without echoing the underlying message', () => {
     const stage = 'GENERATING_AUDIO';
     for (const [raw, code] of [

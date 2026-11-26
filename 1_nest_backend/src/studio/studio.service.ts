@@ -19,10 +19,11 @@ import { RenderStore } from './render-store';
 import {
   renderValidation,
   validateRenderRequest,
+  renderTarget,
   snapshotHash,
   renderBackground,
 } from './render-policy';
-import type { RenderRequest, RenderManifest } from './render.types';
+import type { OperatorRenderPreset, RenderRequest, RenderManifest } from './render.types';
 import {
   BadRequestException,
   ConflictException,
@@ -523,16 +524,15 @@ export class StudioService {
       const disk = await fs.statfs(this.root);
       if (disk.bavail * disk.bsize < 3 * 1024 ** 3)
         throw new BadRequestException('Less than 3 GiB free on project drive');
-      const is1080 = input.preset !== '720P';
-      const targetFps =
-        input.preset === '1080P60' ? 60 : (input.fps ?? props.timeline.fps);
-      const fpsScale = targetFps / props.timeline.fps;
+      const target = renderTarget(input, props.timeline.fps);
+      const fpsScale = target.fps / props.timeline.fps;
       const outputRange: [number, number] = [
         Math.round(range[0] * fpsScale),
         Math.round((range[1] + 1) * fpsScale) - 1,
       ];
       const manifest: RenderManifest = {
         schemaVersion: 1,
+        preset: input.preset,
         backgroundMode: input.backgroundMode || 'SAVED',
         jobId,
         sessionId: id,
@@ -543,9 +543,7 @@ export class StudioService {
         mode: input.mode,
         publishable: false,
         status: 'QUEUED',
-        width: is1080 ? 1080 : 720,
-        height: is1080 ? 1920 : 1280,
-        fps: targetFps,
+        ...target,
         totalFrames: Math.round(props.timeline.totalFrames * fpsScale),
         frameRange: outputRange,
         expectedDurationSeconds: (range[1] - range[0] + 1) / props.timeline.fps,
@@ -585,9 +583,10 @@ export class StudioService {
   }
   runOperatorDraft(
     id: string, revision: number, requestId: string, tick: ProgressSink, jobId: string,
+    preset: OperatorRenderPreset,
     gate: NonNullable<Parameters<StudioService['renderJob']>[4]>,
   ) {
-    return this.renderJob(id, {revision, requestId, mode: 'DRAFT', preset: '720P', backgroundMode: 'SAVED'}, tick, jobId, gate);
+    return this.renderJob(id, {revision, requestId, mode: 'DRAFT', preset, backgroundMode: 'SAVED'}, tick, jobId, gate);
   }
   readonly publicAssets = new PublicAssets();
   /**

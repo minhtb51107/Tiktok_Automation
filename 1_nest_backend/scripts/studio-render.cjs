@@ -50,21 +50,30 @@ async function main(){
   const sparse=process.env.STUDIO_RENDER_STRATEGY!=='STANDARD_REMOTION' &&
     m.mode==='DRAFT' && supportedSparseTarget && Number.isInteger(fpsScale) && fpsScale>=1
     ? planSparseCapture(props,timelineRange):null;
-  let strategyReason=sparse?.reason || (sparse ? 'STATIC_THREADS_WITH_CONTINUOUS_GAMEPLAY' : 'STANDARD_REQUESTED_OR_NON_720P_DRAFT');
+  let strategyReason=sparse?.reason || (sparse ? 'STATIC_THREADS_WITH_CONTINUOUS_GAMEPLAY' : 'STANDARD_REQUESTED_OR_UNSUPPORTED_SPARSE_TARGET');
   if(sparse?.supported && !(await verifyStillImages(sparse.stillImages,command)))
    strategyReason='UNCONFIRMED_STATIC_IMAGE';
+  const rejectUnsupportedConversion=()=>{
+   if(fpsScale!==1 && strategyReason!=='STATIC_THREADS_WITH_CONTINUOUS_GAMEPLAY')
+    throw Error('RENDER_FPS_CONVERSION_UNSUPPORTED: '+strategyReason);
+  };
+  rejectUnsupportedConversion();
   const normalizationStart=Date.now();metrics.normalizedBackgroundTracks=0;
+  const normalizedSpans=new Map();
   // Pre-normalize active background video slices to short GOPs so OffthreadVideo
   // extracts every frame deterministically within a bounded 48 MiB frame cache.
   for(const c of (props.backgroundTracks||[]).filter(x=>x.enabled)){
    const a=props.mediaAssets.find(x=>x.id===c.assetId);
    if(a&&a.kind==='VIDEO'&&typeof a.uri==='string'){
-    const before=Math.floor((c.sourceInMs*m.fps)/1000),after=Math.ceil((c.sourceOutMs*m.fps)/1000),fullSpan=Math.max(1,after-before);
-    const span=Math.min(fullSpan,m.frameRange[1]+1);
+    const wasSparse=strategyReason==='STATIC_THREADS_WITH_CONTINUOUS_GAMEPLAY';
+    const before=wasSparse?sparse.sourceIn*fpsScale:Math.floor((c.sourceInMs*m.fps)/1000);
+    const fullSpan=wasSparse?sparse.span*fpsScale:Math.max(1,Math.ceil((c.sourceOutMs*m.fps)/1000)-before);
+    const span=wasSparse?Math.min(fullSpan,m.frameRange[1]+1):fullSpan;
     const sliceName=`bg-slice-${c.id}.mp4`,slicePath=path.join(dir,sliceName);
     tick('Normalizing background video GOP for frame-exact OffthreadVideo');
     await command('ffmpeg',['-v','error','-y','-ss',(before/m.fps).toFixed(6),'-i',a.uri,'-frames:v',String(span),'-r',String(m.fps),'-vf',`scale=${m.width}:${m.height}:force_original_aspect_ratio=increase,crop=${m.width}:${m.height}`,'-c:v','libx264','-preset','ultrafast','-crf','18','-g','6','-keyint_min','6','-bf','0','-sc_threshold','0','-pix_fmt','yuv420p','-movflags','+faststart','-an',slicePath],true);
     sliceFiles['/'+sliceName]=slicePath;
+    normalizedSpans.set(c.id,span);
     metrics.normalizedBackgroundTracks++;
    }
   }
@@ -80,6 +89,7 @@ async function main(){
   metrics.executionStrategyReason=strategyReason;
   m.metrics=metrics;
   await save();
+  rejectUnsupportedConversion();
   if(Object.keys(sliceFiles).length){
    sliceServer=http.createServer((req,res)=>{
     const file=sliceFiles[new URL(req.url,'http://127.0.0.1').pathname];
@@ -104,8 +114,7 @@ async function main(){
    for(const c of (props.backgroundTracks||[]).filter(x=>x.enabled)){
     const sliceName=`bg-slice-${c.id}.mp4`;
     if(sliceFiles['/'+sliceName]){
-     const before=Math.floor((c.sourceInMs*m.fps)/1000),after=Math.ceil((c.sourceOutMs*m.fps)/1000),fullSpan=Math.max(1,after-before);
-     const span=Math.min(fullSpan,m.frameRange[1]+1);
+     const span=normalizedSpans.get(c.id);
      const baseAsset=props.mediaAssets.find(x=>x.id===c.assetId);
      const clonedId=`${c.assetId}-${c.id}`;
      props.mediaAssets.push({...baseAsset,id:clonedId,uri:`http://127.0.0.1:${port}/${sliceName}`,durationMs:Math.round((span*1000)/m.fps)});
@@ -128,6 +137,7 @@ async function main(){
   metrics.browserInitializationMs=Date.now()-init;check();
   const composition=await renderer.selectComposition({serveUrl,id:'SeriousTimelinePreview',inputProps:props,puppeteerInstance:browser,browserExecutable:snapshot.browserExecutable,onBrowserDownload:noDownload,timeoutInMilliseconds:60000,logLevel:'error'});
   if(Math.round(composition.durationInFrames*fpsScale)!==m.totalFrames||Math.round(composition.fps*fpsScale)!==m.fps)throw Error('Composition metadata differs from saved timeline');
+  if(!sparseAllowed && composition.fps!==m.fps)throw Error('RENDER_FPS_CONVERSION_UNSUPPORTED: STANDARD_REMOTION');
   const rendering=Date.now();let last=0;
   if(sparseAllowed){
    await renderSparse({plan:sparse,dir,renderer,manifest:m,background:sparseBackground,metrics,command,tick,check,
@@ -147,7 +157,8 @@ async function main(){
   check();metrics.finalAudioEncodeMuxMs=Date.now()-muxStart;
   tick('FFprobe validation');const probe=JSON.parse(await command('ffprobe',['-v','error','-count_frames','-show_streams','-show_format','-of','json',path.join(dir,'video.mp4')]));
   const v=probe.streams.find(s=>s.codec_type==='video'),a=probe.streams.find(s=>s.codec_type==='audio'),frames=m.frameRange[1]-m.frameRange[0]+1;
-  if(v?.codec_name!=='h264'||a?.codec_name!=='aac'||v.width!==m.width||v.height!==m.height||Number(v.nb_read_frames)!==frames||Math.abs(Number(v.duration)-m.expectedDurationSeconds)>1/m.fps+0.001)throw Error('Output does not match codec/resolution/frame/duration contract');
+  const [fpsNumerator,fpsDenominator]=(v?.avg_frame_rate||'').split('/').map(Number);
+  if(v?.codec_name!=='h264'||a?.codec_name!=='aac'||v.width!==m.width||v.height!==m.height||fpsNumerator/fpsDenominator!==m.fps||Number(v.nb_read_frames)!==frames||!Number.isFinite(Number(v.duration))||Math.abs(Number(v.duration)-m.expectedDurationSeconds)>1/m.fps+0.001)throw Error('Output does not match codec/resolution/frame/duration contract');
   m.probe={streams:probe.streams,format:{...probe.format,filename:'video.mp4'}};m.bytes=(await fs.stat(path.join(dir,'video.mp4'))).size;m.status='COMPLETED';m.downloadUrl=`/api/studio/sessions/${m.sessionId}/renders/${m.jobId}/video`;
   // DRAFT never becomes publishable. FINAL still requires the publishing stage's own gate.
   m.publishable=false;tick('Completed',frames,frames);

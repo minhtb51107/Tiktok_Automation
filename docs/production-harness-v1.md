@@ -15,7 +15,7 @@ other heavy workers first. Set the following variables in the launcher environme
 | `STUDIO_OPERATOR_COLLECTION` | `1` authorizes bounded public collection, subject to the existing `STUDIO_DATA_QUALITY_LIVE_ENABLED` gate |
 | `STUDIO_OPERATOR_AI` | `1` authorizes evaluation within the existing provider configuration and inference budget |
 | `STUDIO_OPERATOR_TTS` | `1` authorizes local DRAFT narration |
-| `STUDIO_OPERATOR_RENDER` | `1` authorizes local 720P DRAFT render |
+| `STUDIO_OPERATOR_RENDER` | `1` authorizes local DRAFT rendering with the listed presets |
 
 Start with `node dist/main.js`. Leave the four execution flags unset for saved
 source inspection and preparation without those side effects. Send the secret
@@ -51,7 +51,21 @@ tool and session scope. Session mutations require the current `revision`.
 | pronunciation | sessionId, revision, itemId, term, reading | Update one existing term's pronunciation without changing original/display text |
 | audio | sessionId, revision, itemId | Create or reuse current measured DRAFT WAV for a selected scene |
 | prepare | sessionId, revision | Require current WAVs and build the measured timeline |
-| render | sessionId, revision | Require a current conforming timeline. Render 720P DRAFT and check the worker probe and MP4 SHA-256 |
+| render | sessionId, revision, optional preset | Require a current conforming timeline. Render a DRAFT with `720P` (default, 30 FPS), `1080P30` or `1080P60`. The manifest, probe and MP4 SHA-256 are checked again at download |
+
+Use a separate request ID for each preset. Omitted preset and explicit
+`720P` use the same job keys as existing 720P clients. For a 30 FPS saved
+timeline, 60 FPS output requires sparse rendering with supported static
+cards and gameplay. Unsupported conversion fails with
+`RENDER_FPS_CONVERSION_UNSUPPORTED`. The standard renderer operates at
+the saved timeline FPS.
+
+Backend acceptance on the copied IELTS revision 22 returned `DRAFT_READY`
+through the authenticated Operator render endpoint at 1080×1920, 60 FPS
+and 3,690 frames over 61.500 seconds. The download matched the accepted
+SHA-256. Both streams start at zero and the decoded AAC matches the existing
+Argon benchmark. The saved timeline remains at 1,845 frames and 30 FPS.
+Standalone Studio currently provides 720P and legacy Full HD choices.
 
 Read `/collections` for saved collection IDs and `/collections/:id` for the root,
 verified replies, quality and eligibility.
