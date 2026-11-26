@@ -7,6 +7,9 @@ import {
   normalizeVisual,
   defaultSceneVisual,
   defaultBgm,
+  mobileThreadsVisual,
+  desktopThreadsVisual,
+  type ThreadsCardLayoutPreset,
 } from "../../../1_nest_backend/src/video-pipeline/scene-visual";
 import type { StudioItem } from "../../../1_nest_backend/src/studio/studio.contracts";
 export function EditorInspector({
@@ -164,13 +167,43 @@ export function EditorInspector({
             {n("Section gap", v.card.gap, 0, 60, (gap) => card({ gap }))}
           </div>
           <label>
+            Card layout preset
+            <select
+              aria-label="Card layout preset"
+              value={v.card.layoutPreset ?? "MOBILE_THREADS"}
+              disabled={disabled}
+              onChange={(e) => {
+                const nextPreset = e.target.value as ThreadsCardLayoutPreset;
+                const nextVisual =
+                  nextPreset === "DESKTOP_THREADS"
+                    ? desktopThreadsVisual(v, v.card.appearance ?? "DARK")
+                    : mobileThreadsVisual(v, "LIGHT");
+                update({ visual: nextVisual });
+              }}
+            >
+              <option value="MOBILE_THREADS">
+                Mobile Threads (TikTok 9:16 default)
+              </option>
+              <option value="DESKTOP_THREADS">
+                Desktop Threads (640px proportional)
+              </option>
+            </select>
+          </label>
+          <label>
             Card appearance
             <select
               aria-label="Card appearance"
-              value={v.card.appearance ?? "DARK"}
+              value={
+                v.card.layoutPreset
+                  ? (v.card.appearance ?? "LIGHT")
+                  : "LIGHT"
+              }
               disabled={disabled}
               onChange={(e) =>
-                card({ appearance: e.target.value as "LIGHT" | "DARK" })
+                card({
+                  layoutPreset: v.card.layoutPreset ?? "MOBILE_THREADS",
+                  appearance: e.target.value as "LIGHT" | "DARK",
+                })
               }
             >
               <option value="LIGHT">Light card</option>

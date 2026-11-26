@@ -44,6 +44,11 @@ export function validateVisual(
   number(c.lineHeight ?? 1.45, 1.1, 2);
   if (!['LIGHT', 'DARK'].includes(c.appearance ?? 'DARK'))
     throw new BadRequestException('Invalid card appearance');
+  if (
+    c.layoutPreset !== undefined &&
+    !['MOBILE_THREADS', 'DESKTOP_THREADS'].includes(c.layoutPreset)
+  )
+    throw new BadRequestException('Invalid card layout preset');
   if (c.x + c.width * c.scale > 1080 || c.width <= c.padding * 2 + 100)
     throw new BadRequestException(
       'Card leaves canvas or has no usable body width',

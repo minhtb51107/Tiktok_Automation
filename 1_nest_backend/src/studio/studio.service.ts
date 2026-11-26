@@ -626,13 +626,14 @@ export class StudioService {
           }
         }
         if (!chosen) throw new BadRequestException('GAMEPLAY_ASSET_UNAVAILABLE');
+        const stableInMs = chosen.stableSourceInMs ?? 0;
         settings.backgroundTracks = [
           {
             id: 'bg-threads-gameplay',
             assetId: chosen.id,
             startMs: 0,
             durationMs: chosen.durationMs,
-            sourceInMs: 0,
+            sourceInMs: stableInMs,
             sourceOutMs: chosen.durationMs,
             loop: true,
             enabled: true,
@@ -641,6 +642,16 @@ export class StudioService {
         ];
         appliedAssetIds.add(chosen.id);
         changed = true;
+      } else if (settings.automaticGameplay !== 'OFF' && settings.backgroundTracks?.length) {
+        for (const clip of settings.backgroundTracks) {
+          if (clip.id === 'bg-threads-gameplay' && (clip.sourceInMs ?? 0) === 0 && clip.assetId.startsWith('pub-')) {
+            const asset = await this.publicAssets.resolve(clip.assetId).catch(() => null);
+            if (asset?.stableSourceInMs && asset.stableSourceInMs > 0) {
+              clip.sourceInMs = asset.stableSourceInMs;
+              changed = true;
+            }
+          }
+        }
       }
       if (selected.bgm && !settings.backgroundMusic?.assetId) {
         settings.backgroundMusic = {
@@ -687,6 +698,14 @@ export class StudioService {
       if (c.assetId.startsWith('pub-')) ids.add(c.assetId);
     const rows = [];
     for (const id of ids) rows.push(await this.publicAssets.resolve(id));
+    for (const c of s.editor?.backgroundTracks || []) {
+      if (c.id === 'bg-threads-gameplay' && (c.sourceInMs ?? 0) === 0) {
+        const resolved = rows.find((r) => r.id === c.assetId);
+        if (resolved?.stableSourceInMs && resolved.stableSourceInMs > 0) {
+          c.sourceInMs = resolved.stableSourceInMs;
+        }
+      }
+    }
     return rows;
   }
   async mapTopic(id: string, itemId: string, body: any) {

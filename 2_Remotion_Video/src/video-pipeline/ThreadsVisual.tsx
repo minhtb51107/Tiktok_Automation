@@ -75,6 +75,53 @@ const AvatarFollowBadge: React.FC<{
   </svg>
 );
 
+const ThreadsBrandLogo: React.FC<{
+  u: number;
+  color: string;
+}> = ({ u, color }) => (
+  <div
+    data-testid="threads-brand-logo"
+    aria-hidden="true"
+    style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 6 * u,
+      flexShrink: 0,
+      marginLeft: 12 * u,
+      color,
+      userSelect: "none",
+    }}
+  >
+    <svg
+      width={38 * u}
+      height={42 * u}
+      viewBox="0 0 24 26"
+      fill="none"
+      stroke={color}
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M16.8 11.2c-.3-2.5-2.1-4.1-4.7-4.1-2.8 0-4.8 2.1-4.8 5.2 0 3.1 2 5.1 4.8 5.1 2.2 0 3.9-1.2 4.4-3.1" />
+      <path d="M16.5 8.8v5.5c0 1.6 1 2.6 2.3 2.6 1.8 0 3-1.8 3-4.6 0-5.4-4-9.3-9.7-9.3-5.8 0-9.9 4.1-9.9 10s4.1 10 10.1 10c3.3 0 6.1-1.1 8-3.1" />
+    </svg>
+    <span
+      style={{
+        fontFamily:
+          'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+        fontSize: 44 * u,
+        fontWeight: 700,
+        fontStyle: "italic",
+        letterSpacing: `${-0.8 * u}px`,
+        lineHeight: 1,
+        color,
+      }}
+    >
+      threads
+    </span>
+  </div>
+);
+
 const Image: React.FC<{
   uri: string;
   style: React.CSSProperties;
@@ -111,10 +158,9 @@ export const ThreadsVisual: React.FC<{
     { visual: v, attachments, layout, contentStart, imageHeight, at } =
       threadsCardState(item, mediaAssets, fps),
     { pageIndex, visible } = at(frame),
-    c = v.card,
     card = item.scene.threadsCard!;
   const meme = mediaAssets.find((a) => a.id === v.meme.assetId),
-    memeY = v.meme.y ?? c.y + layout.height + v.meme.gap,
+    memeY = v.meme.y ?? layout.y + layout.height + v.meme.gap,
     memeX = v.meme.x ?? (1080 - v.meme.width) / 2;
   const showMeme =
     v.meme.enabled &&
@@ -122,18 +168,422 @@ export const ThreadsVisual: React.FC<{
     frame >= Math.ceil((v.meme.startMs * fps) / 1000) &&
     frame < Math.ceil(((v.meme.startMs + v.meme.durationMs) * fps) / 1000);
   const date = dateLabel(card.dateLabel) || dateLabel(card.createdAt);
-  const dark = c.appearance === "DARK",
-    palette = {
+  const isMobile = layout.layoutPreset !== "DESKTOP_THREADS";
+  const dark = layout.appearance === "DARK";
+
+  if (isMobile) {
+    const palette = {
       background: dark ? "#101010" : "#ffffff",
-      text: dark ? "#f3f5f7" : "#10141b",
-      muted: dark ? "#777777" : "#677180",
-      action: dark ? "#cccccc" : "#3c4043",
-      border: dark ? "#2d2d2d" : "#e4e7eb",
+      username: dark ? "#f3f5f7" : "#1a1a1a",
+      text: dark ? "#f3f5f7" : "#000000",
+      muted: dark ? "#8e8e8e" : "#969696",
+      action: dark ? "#d4d4d4" : "#363636",
+      brand: dark ? "#f3f5f7" : "#000000",
       avatar: "#f4f5f7",
     };
+    const u = layout.font / 40.5;
+    const padScale = layout.pad / 31;
+    const avatarSize = 118 * u;
+    const lineHeightPx = 67.6 * u * ((layout.lineHeight ?? 1.52) / 1.52);
 
-  // Uniform desktop reference unit: u = 1.0 at 15px desktop font (640px card width),
-  // scaling all components uniformly when rendered on 9:16 video canvases.
+    return (
+      <AbsoluteFill
+        style={{
+          background: transparent
+            ? "transparent"
+            : v.backgroundColor || "#0f1115",
+          fontFamily:
+            'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+          fontSize: 40.5 * u,
+          fontWeight: 400,
+          lineHeight: `${lineHeightPx}px`,
+          color: palette.text,
+          WebkitFontSmoothing: "antialiased",
+        }}
+      >
+        {background && (
+          <AbsoluteFill data-editor-object="BACKGROUND">
+            {background.kind === "VIDEO" ? (
+              env.isRendering ? (
+                <OffthreadVideo
+                  data-testid="video-background"
+                  src={background.uri}
+                  muted
+                  style={{
+                    position: "absolute",
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                  }}
+                />
+              ) : (
+                <Video
+                  data-testid="video-background"
+                  src={background.uri}
+                  muted
+                  loop
+                  preload="metadata"
+                  style={{
+                    position: "absolute",
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                  }}
+                />
+              )
+            ) : (
+              <Image
+                uri={background.uri}
+                style={{
+                  position: "absolute",
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                }}
+              />
+            )}
+          </AbsoluteFill>
+        )}
+        <article
+          data-testid="threads-video-card"
+          data-editor-object="CARD"
+          data-layout-preset="MOBILE_THREADS"
+          data-appearance={layout.appearance}
+          data-scene-id={item.scene.id}
+          data-page={pageIndex + 1}
+          style={{
+            display: visible ? undefined : "none",
+            position: "absolute",
+            left: layout.x,
+            top: layout.y,
+            width: layout.width,
+            boxSizing: "border-box",
+            paddingTop: 25 * padScale,
+            paddingRight: 31 * padScale,
+            paddingBottom: 48 * padScale,
+            paddingLeft: 31 * padScale,
+            background: palette.background,
+            color: palette.text,
+            border: "none",
+            borderRadius: 0,
+            boxShadow: "none",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              gap: 28 * u,
+              alignItems: "center",
+              minHeight: avatarSize,
+              marginBottom: 14.5 * u,
+            }}
+          >
+            <div
+              style={{
+                position: "relative",
+                width: avatarSize,
+                height: avatarSize,
+                minWidth: avatarSize,
+                flexShrink: 0,
+              }}
+            >
+              {card.avatarUrl ? (
+                <Image
+                  key={card.avatarUrl}
+                  uri={card.avatarUrl}
+                  avatar
+                  style={{
+                    width: avatarSize,
+                    height: avatarSize,
+                    minWidth: avatarSize,
+                    borderRadius: "50%",
+                    background: palette.avatar,
+                    objectFit: "cover",
+                  }}
+                />
+              ) : (
+                <AvatarFallback
+                  label={card.handle || card.author}
+                  style={{
+                    width: avatarSize,
+                    height: avatarSize,
+                    minWidth: avatarSize,
+                    borderRadius: "50%",
+                    background: palette.avatar,
+                  }}
+                />
+              )}
+            </div>
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                display: "flex",
+                alignItems: "baseline",
+                flexWrap: "wrap",
+                columnGap: 15.5 * u,
+                rowGap: 4 * u,
+                fontSize: 40 * u,
+                lineHeight: `${50 * u}px`,
+                overflowWrap: "anywhere",
+              }}
+            >
+              <strong
+                style={{
+                  fontWeight: 600,
+                  color: palette.username,
+                  letterSpacing: 0,
+                }}
+              >
+                {card.handle || card.author}
+              </strong>
+              {date && (
+                <span
+                  data-testid="card-date"
+                  style={{
+                    fontSize: 38 * u,
+                    fontWeight: 400,
+                    color: palette.muted,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {date}
+                </span>
+              )}
+              {item.scene.editorial?.kind === "PARAPHRASE" && (
+                <small style={{ fontSize: 30 * u, color: palette.muted }}>
+                  {" "}
+                  · Diễn giải của biên tập
+                </small>
+              )}
+              {card.topic && (
+                <>
+                  <span style={{ color: palette.muted }}>›</span>
+                  <span
+                    data-testid="card-topic"
+                    style={{ color: palette.muted, overflowWrap: "anywhere" }}
+                  >
+                    {card.topic}
+                  </span>
+                </>
+              )}
+            </div>
+            <ThreadsBrandLogo u={u} color={palette.brand} />
+          </div>
+          <div
+            data-testid="composition-display-text"
+            style={{
+              fontSize: 40.5 * u,
+              fontWeight: 400,
+              textAlign: "left",
+              wordSpacing: "normal",
+              letterSpacing: 0,
+              lineHeight: `${lineHeightPx}px`,
+              width: "100%",
+              minWidth: 0,
+              color: palette.text,
+              whiteSpace: "pre-wrap",
+              overflowWrap: "break-word",
+            }}
+          >
+            {layout.pages[pageIndex]}
+          </div>
+          {attachments.length > 0 && (
+            <div
+              data-testid="threads-attachments"
+              style={{
+                display: "flex",
+                gap: 16 * u,
+                height: imageHeight,
+                marginTop: 22 * u,
+                overflow: "hidden",
+              }}
+            >
+              {attachments.map((a) => (
+                <Image
+                  key={a.id}
+                  uri={a.uri}
+                  style={{
+                    width: `${100 / attachments.length}%`,
+                    height: imageHeight,
+                    objectFit: "contain",
+                    transform:
+                      v.imageMode === "PAN"
+                        ? `translate(${(v.imagePanX || 0) * Math.min(1, Math.max(0, frame - contentStart) / Math.max(1, item.contentEndFrame - item.contentStartFrame))}%, ${(v.imagePanY || 0) * Math.min(1, Math.max(0, frame - contentStart) / Math.max(1, item.contentEndFrame - item.contentStartFrame))}%) scale(${v.imageZoom || 1})`
+                        : undefined,
+                    borderRadius: 14 * u,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-start",
+              flexWrap: "wrap",
+              columnGap: 58 * u,
+              rowGap: 14 * u,
+              marginTop: 15 * u,
+              minHeight: 44.4 * u,
+              color: palette.action,
+              fontSize: 36 * u,
+              lineHeight: `${44.4 * u}px`,
+              fontWeight: 400,
+            }}
+          >
+            {(["likes", "replies", "reposts", "shares"] as const).map((k) => {
+              const label = card.countLabels?.[k] ?? card.counts[k];
+              const showCount =
+                card.counts[k] !== null && label !== null && label !== "";
+              return (
+                <div
+                  key={k}
+                  data-count={k}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14.5 * u,
+                    minWidth: !showCount ? 44 * u : undefined,
+                  }}
+                >
+                  {k === "likes" && (
+                    <svg
+                      width={46 * u}
+                      height={43 * u}
+                      viewBox="0 0 19 18"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.65"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M13.8 1.8c-1.7 0-3.2.9-4.3 2.5C8.4 2.7 6.9 1.8 5.2 1.8 2.7 1.8 1 3.7 1 6.3c0 4.2 4.4 7.1 8.5 9.9 4.1-2.8 8.5-5.7 8.5-9.9 0-2.6-1.7-4.5-4.2-4.5Z" />
+                    </svg>
+                  )}
+                  {k === "replies" && (
+                    <svg
+                      width={44 * u}
+                      height={44 * u}
+                      viewBox="0 0 18 18"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.65"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M15.3 12.7A7.2 7.2 0 1 0 12.7 15.3L16.2 16.2Z" />
+                    </svg>
+                  )}
+                  {k === "reposts" && (
+                    <svg
+                      width={44 * u}
+                      height={44 * u}
+                      viewBox="0 0 18 18"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.65"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M2.3 6.4A7.1 7.1 0 0 1 16 6.5" />
+                      <path d="M2 2.2v4.3h4.3" />
+                      <path d="M15.7 11.6A7.1 7.1 0 0 1 2 11.5" />
+                      <path d="M16 15.8v-4.3h-4.3" />
+                    </svg>
+                  )}
+                  {k === "shares" && (
+                    <svg
+                      width={43 * u}
+                      height={44 * u}
+                      viewBox="0 0 17 18"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.65"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M1.8 2.1 15.6 9 1.8 15.9 3.1 9 1.8 2.1Z" />
+                      <line x1="3.1" y1="9" x2="15.6" y2="9" />
+                    </svg>
+                  )}
+                  {showCount && <span>{label}</span>}
+                </div>
+              );
+            })}
+            <div
+              data-count="bookmark"
+              style={{ display: "flex", alignItems: "center" }}
+            >
+              <svg
+                width={39 * u}
+                height={44 * u}
+                viewBox="0 0 16 18"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.65"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M1.8 3.6A1.6 1.6 0 0 1 3.4 2h9.2a1.6 1.6 0 0 1 1.6 1.6v12.6L8 12.3l-6.2 3.9V3.6Z" />
+              </svg>
+            </div>
+            {layout.pages.length > 1 && (
+              <div
+                data-testid="card-page-indicator"
+                style={{
+                  marginLeft: "auto",
+                  fontSize: 28 * u,
+                  color: palette.muted,
+                  fontWeight: 500,
+                }}
+              >
+                {pageIndex + 1}/{layout.pages.length}
+              </div>
+            )}
+          </div>
+        </article>
+        {showMeme && (
+          <div
+            data-testid="scene-meme"
+            data-editor-object="MEME"
+            style={{
+              position: "absolute",
+              left: memeX,
+              top: memeY,
+              width: v.meme.width,
+              height: v.meme.height,
+            }}
+          >
+            <Image
+              key={meme!.id}
+              uri={meme!.uri}
+              animated={meme!.kind === "GIF"}
+              startMs={v.meme.startMs}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                borderRadius: 18,
+              }}
+            />
+          </div>
+        )}
+      </AbsoluteFill>
+    );
+  }
+
+  // DESKTOP_THREADS layout preset (preserved Desktop Golden Reference card)
+  const palette = {
+    background: dark ? "#101010" : "#ffffff",
+    text: dark ? "#f3f5f7" : "#10141b",
+    muted: dark ? "#777777" : "#677180",
+    action: dark ? "#cccccc" : "#3c4043",
+    border: dark ? "#2d2d2d" : "#e4e7eb",
+    avatar: "#f4f5f7",
+  };
   const u = layout.font / 15;
   const cardScale = layout.width / 640;
   const padScale = layout.pad / 24;
@@ -201,14 +651,15 @@ export const ThreadsVisual: React.FC<{
       <article
         data-testid="threads-video-card"
         data-editor-object="CARD"
-        data-appearance={c.appearance ?? "DARK"}
+        data-layout-preset="DESKTOP_THREADS"
+        data-appearance={layout.appearance}
         data-scene-id={item.scene.id}
         data-page={pageIndex + 1}
         style={{
           display: visible ? undefined : "none",
           position: "absolute",
-          left: c.x,
-          top: c.y,
+          left: layout.x,
+          top: layout.y,
           width: layout.width,
           boxSizing: "border-box",
           paddingTop: 23 * padScale,

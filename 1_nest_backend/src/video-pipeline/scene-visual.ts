@@ -1,4 +1,5 @@
 import { ARIAL_METRICS } from './arial-metrics';
+export type ThreadsCardLayoutPreset = 'MOBILE_THREADS' | 'DESKTOP_THREADS';
 export interface SceneVisual {
   subtitlesEnabled?: boolean;
   backgroundColor?: string;
@@ -19,6 +20,7 @@ export interface SceneVisual {
     gap: number;
     lineHeight?: number;
     appearance?: 'LIGHT' | 'DARK';
+    layoutPreset?: ThreadsCardLayoutPreset;
   };
   meme: {
     lockAspect?:boolean;
@@ -101,6 +103,56 @@ export const defaultBgm = (): BackgroundMusic => ({
   duckVolume: 0.025,
 });
 
+export function mobileThreadsVisual(
+  current?: Partial<SceneVisual>,
+  appearance: 'LIGHT' | 'DARK' = 'LIGHT',
+): SceneVisual {
+  const visual = normalizeVisual(current);
+  return {
+    ...visual,
+    backgroundColor: '#0f1115',
+    subtitlesEnabled: false,
+    card: {
+      ...visual.card,
+      layoutPreset: 'MOBILE_THREADS',
+      appearance,
+      x: 20,
+      y: 406,
+      width: 1040,
+      scale: 1,
+      padding: 31,
+      fontSize: 41,
+      gap: 24,
+      lineHeight: 1.52,
+    },
+  };
+}
+
+export function desktopThreadsVisual(
+  current?: Partial<SceneVisual>,
+  appearance: 'LIGHT' | 'DARK' = 'DARK',
+): SceneVisual {
+  const visual = normalizeVisual(current);
+  return {
+    ...visual,
+    backgroundColor: '#0f1115',
+    subtitlesEnabled: false,
+    card: {
+      ...visual.card,
+      layoutPreset: 'DESKTOP_THREADS',
+      appearance,
+      x: 90,
+      y: 288,
+      width: 900,
+      scale: 1,
+      padding: 40,
+      fontSize: 40,
+      gap: 22,
+      lineHeight: 1.45,
+    },
+  };
+}
+
 /**
  * Visual-only part of the Threads gameplay preset. The caller must attach an
  * explicitly rights-reviewed local background asset; this helper never picks
@@ -110,20 +162,27 @@ export function threadsDarkGameplayVisual(
   current?: Partial<SceneVisual>,
 ): SceneVisual {
   const visual = normalizeVisual(current);
-  return {
-    ...visual,
-    backgroundColor: '#0f1115',
-    subtitlesEnabled: false,
-    card: {
-      ...visual.card,
-      appearance: 'DARK',
-      // Keep the card inside the portrait safe area while leaving gameplay
-      // visible above and below it.
-      x: Math.max(48, Math.min(visual.card.x, 90)),
-      y: Math.max(220, visual.card.y),
-      width: Math.min(900, visual.card.width),
-    },
-  };
+  if (visual.card.layoutPreset === 'DESKTOP_THREADS') {
+    return {
+      ...visual,
+      backgroundColor: '#0f1115',
+      subtitlesEnabled: false,
+      card: {
+        ...visual.card,
+        layoutPreset: 'DESKTOP_THREADS',
+        appearance: visual.card.appearance ?? 'DARK',
+        x: Math.max(48, Math.min(visual.card.x, 90)),
+        y: Math.max(220, visual.card.y),
+        width: Math.min(900, visual.card.width),
+      },
+    };
+  }
+  return mobileThreadsVisual(
+    visual,
+    visual.card.layoutPreset === 'MOBILE_THREADS'
+      ? (visual.card.appearance ?? 'LIGHT')
+      : 'LIGHT',
+  );
 }
 export function dateLabel(value: string | null | undefined): string | null {
   if (!value) return null;

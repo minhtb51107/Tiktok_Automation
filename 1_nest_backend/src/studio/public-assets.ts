@@ -14,6 +14,7 @@ export interface LibraryAsset {
   durationMs?: number;
   width?: number;
   height?: number;
+  stableSourceInMs?: number;
   usage?: 'SERIOUS_GAMEPLAY';
 }
 // Reviewed local library entries. Folder membership alone does not establish
@@ -134,15 +135,88 @@ export class PublicAssets {
         const durationMs = Math.floor((streamDuration > 0 ? streamDuration : Number(probe.format?.duration)) * 1000);
         if (!Number.isFinite(durationMs) || durationMs <= 0)
           throw new BadRequestException('Public asset duration unavailable');
+        let stableSourceInMs = 0;
+        if (asset.kind === 'VIDEO' && durationMs >= 4000) {
+          stableSourceInMs = await this.detectStableVideoStartMs(file, durationMs);
+        }
         meta = {
           durationMs,
           width: video?.width,
           height: video?.height,
+          ...(asset.kind === 'VIDEO' ? { stableSourceInMs } : {}),
         };
         this.probes.set(key, meta);
       }
       return { ...asset, ...meta };
     }
     return asset;
+  }
+
+  private async detectStableVideoStartMs(file: string, durationMs: number): Promise<number> {
+    try {
+      const raw = await new Promise<Buffer>((resolve, reject) =>
+        execFile(
+          'ffmpeg',
+          [
+            '-v',
+            'error',
+            '-t',
+            '4.0',
+            '-i',
+            file,
+            '-vf',
+            'fps=10,scale=64:64',
+            '-f',
+            'rawvideo',
+            '-pix_fmt',
+            'gray',
+            '-',
+          ],
+          { windowsHide: true, timeout: 15000, maxBuffer: 512 * 1024, encoding: 'buffer' },
+          (e, out) => (e ? reject(e) : resolve(out)),
+        ),
+      );
+      const frameBytes = 64 * 64;
+      const count = Math.floor(raw.length / frameBytes);
+      if (count < 6) return 0;
+      const lumas: number[] = [];
+      const sharps: number[] = [];
+      for (let f = 0; f < count; f++) {
+        const offset = f * frameBytes;
+        let sum = 0;
+        let grad = 0;
+        for (let y = 0; y < 64; y++) {
+          const row = offset + y * 64;
+          for (let x = 0; x < 64; x++) {
+            const v = raw[row + x];
+            sum += v;
+            if (x > 0) grad += Math.abs(v - raw[row + x - 1]);
+            if (y > 0) grad += Math.abs(v - raw[row - 64 + x]);
+          }
+        }
+        lumas.push(sum / frameBytes);
+        sharps.push(grad / (63 * 64));
+      }
+      const tailStart = Math.min(15, count - 1);
+      const tailLumas = lumas.slice(tailStart).sort((a, b) => a - b);
+      const tailSharps = sharps.slice(tailStart).sort((a, b) => a - b);
+      const p65Luma = tailLumas[Math.min(tailLumas.length - 1, Math.floor(tailLumas.length * 0.65))];
+      const medianSharp = tailSharps[Math.floor(tailSharps.length * 0.5)];
+      const targetLuma = p65Luma * 0.88;
+      const targetSharp = medianSharp * 0.78;
+      if (lumas[0] >= targetLuma && sharps[0] >= targetSharp) return 0;
+      for (let i = 1; i < count - 1; i++) {
+        if (
+          lumas[i] >= targetLuma &&
+          sharps[i] >= targetSharp &&
+          lumas[i] - lumas[i - 1] < 8.0
+        ) {
+          return Math.min(i * 100, Math.max(0, durationMs - 1000));
+        }
+      }
+      return 0;
+    } catch {
+      return 0;
+    }
   }
 }

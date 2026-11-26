@@ -222,7 +222,7 @@ export function ProfessionalEditor({
             assetId: gameplayDetails.id,
             startMs: 0,
             durationMs: gameplayDetails.durationMs,
-            sourceInMs: 0,
+            sourceInMs: gameplayDetails.stableSourceInMs ?? 0,
             sourceOutMs: gameplayDetails.durationMs,
             loop: true,
             enabled: true,
