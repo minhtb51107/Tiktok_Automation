@@ -102,6 +102,7 @@ function postFromObject(
   row: Record<string, unknown>,
   pointer: string,
   input: StructuredPayloadInput,
+  payloadHash: string,
 ): (StructuredPostObservation & { altIds?: string[] }) | null {
   const code = scalar(row.code),
     pk = scalar(row.pk),
@@ -169,7 +170,7 @@ function postFromObject(
     endpointPath: input.endpointPath,
     responseType: input.responseType,
     queryName: input.queryName,
-    payloadHash: hash(input.payload),
+    payloadHash,
     pointer,
     fieldNames: Object.keys(row).sort().slice(0, 100),
   };
@@ -281,6 +282,9 @@ export function extractStructuredEvidence(
     .sort((a, b) => inputPriority(a) - inputPriority(b))
     .slice(0, 80);
   for (const input of prioritizedInputs) {
+    // Every observation references the same immutable payload. Canonicalize it
+    // once instead of reprocessing it for each post or pagination edge.
+    const payloadHash = hash(input.payload);
     const posts: Array<StructuredPostObservation & { altIds?: string[] }> = [],
       fields = new Set<string>(),
       relationships = new Set<string>(),
@@ -303,7 +307,7 @@ export function extractStructuredEvidence(
         const hasNext = pageInfo.has_next_page ?? pageInfo.hasNextPage,
           endCursor = pageInfo.end_cursor ?? pageInfo.endCursor;
         pagination.push({
-          payloadHash: hash(input.payload),
+          payloadHash,
           pointer,
           edgeCount: Array.isArray(row.edges) ? row.edges.length : null,
           hasNextPage: typeof hasNext === 'boolean' ? hasNext : null,
@@ -315,7 +319,7 @@ export function extractStructuredEvidence(
         fields.add(key);
         if (relationKeys.has(key)) relationships.add(key);
       }
-      const post = postFromObject(row, pointer, input);
+      const post = postFromObject(row, pointer, input, payloadHash);
       if (post) posts.push(post);
       for (const [key, child] of Object.entries(row))
         walk(child, `${pointer}/${key}`, depth + 1);
@@ -326,7 +330,7 @@ export function extractStructuredEvidence(
       endpointPath: input.endpointPath,
       responseType: input.responseType,
       queryName: input.queryName,
-      payloadHash: hash(input.payload),
+      payloadHash,
       topLevelFields: Object.keys(object(input.payload) ?? {})
         .sort()
         .slice(0, 100),

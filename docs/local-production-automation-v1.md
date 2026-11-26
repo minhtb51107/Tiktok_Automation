@@ -67,6 +67,30 @@ visual layout is unchanged. Discovery reports its existing aggregate timings;
 individual browser stages remain in the discovery run rather than being
 reconstructed by the scheduler.
 
+## V1.1 recovery
+
+Browser measurement faults appear under `infrastructure` in `/status` and
+`/report`. The diagnostic reference identifies the existing discovery run and
+its browser audits. The scheduler requires verified browser cleanup, waits
+60 seconds and admits one retry only after the native health probe reads four
+consecutive valid samples. Uncertain cleanup, a failed probe or a repeat
+incident blocks further dispatch and queues an operator notification. This
+recovery has its own counter. Existing daily ledger entries remain intact.
+
+The scheduler gives eligible budget-blocked assessments priority. It uses
+the exact saved collection, verifies its integrity and public provenance, and
+requires a capture at most 24 hours old for the pilot. A recovery dispatch
+references the old batch and adds a new reservation. Earlier provider debits
+still apply to the original production day. A checkpoint from V1.1 reuses only
+an exact candidate result. V1 history preserves its charges, but does not
+contain reusable per-candidate assessments.
+
+When an assessment cannot finish, look for `AI_BUDGET_EXHAUSTED` and the
+remaining source IDs in the candidate checkpoint. Individual responses still
+use one candidate per provider call with strict source coverage. Configure a
+remaining budget through the official policy API. A provider hard cap still
+applies independently of the automation daily cap.
+
 ## Discord
 
 Set STUDIO_AUTOMATION_DISCORD_ENABLED=1 only after configuring

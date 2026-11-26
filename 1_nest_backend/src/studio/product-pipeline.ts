@@ -8,6 +8,8 @@ import type { StudioSession } from './studio.contracts';
 import { isOperatorRenderPreset, type OperatorRenderPreset, type RenderManifest } from './render.types';
 import { StudioService } from './studio.service';
 import { ConversationStudioService } from '../data-engine/conversation.controller';
+import { AiAssessmentBudgetBlocked, type AiAssessmentProgress } from '../data-engine/ai-content';
+import { isBrowserInfrastructureFailure } from '../data-engine/browser-resource-policy';
 import { AiContentStudioService } from '../data-engine/ai.controller';
 import { EditorialStudioService } from '../data-engine/editorial.controller';
 import type { EditorialPlan, EditorialSection } from '../data-engine/editorial-contracts';
@@ -89,6 +91,7 @@ export interface AutonomousVideoResult {
     | 'NOT_ENOUGH_CONTENT'
     | 'QUALITY_FAILED'
     | 'AI_FAILED'
+    | 'AI_BUDGET_EXHAUSTED'
     | 'TTS_FAILED'
     | 'RENDER_FAILED'
     | 'ACCESS_BLOCKED'
@@ -96,6 +99,9 @@ export interface AutonomousVideoResult {
     | 'WAITING_HUMAN';
   checkpoint?: 'RESERVED' | 'COLLECTED' | 'ASSESSED' | 'DRAFT' | 'PREPARED' | 'RENDER_SUBMITTED';
   aiLedgerIds?: string[];
+  aiAssessmentProgress?: AiAssessmentProgress;
+  failureCode?: 'AI_BUDGET_EXHAUSTED' | 'AI_PROVIDER_FAILED' | 'AI_SCHEMA_INVALID' |
+    'CONTENT_NOT_ENOUGH' | 'CONTENT_DURATION_TOO_LONG' | 'CONTENT_QUALITY_FAILED';
   reviewChoice?: {type:'SELECT_ROOT'|'SELECT_REPLIES';options:{sourceId:string;preview:string}[]};
   reviewedChoice?: {type:'SELECT_ROOT'|'SELECT_REPLIES';selectedSourceIds:string[]};
   artifact?: Awaited<ReturnType<typeof validateDraftArtifact>>;
@@ -112,6 +118,7 @@ export interface AutomaticDispatch {
   reviewBeforeRender: boolean;
   reviewSlots?:number;
   dayKey: string;
+  recovery?: { batchId: string; collectionId: string; sourceUrl: string };
 }
 
 export interface AutonomousProductBatch {
@@ -134,6 +141,7 @@ export interface AutonomousProductBatch {
   stage: AutonomousProductStage;
   stageEvents?: Array<{at:string;stage:AutonomousProductStage;status:AutonomousProductBatch['status']}>;
   discoveryRunId: string | null;
+  browserInfrastructure?: { failureCode: string; cleanupVerified: boolean; diagnosticReference: string };
   dispatchRequestId?: string;
   dispatch?: AutomaticDispatch;
   discoveryResumeAttempted?: boolean;
@@ -1038,6 +1046,7 @@ export class ProductPipelineService {
       result.timelineSeconds = timeline.totalFrames / timeline.fps;
       if (['TOO_SHORT','TOO_LONG'].includes(seriousDraftDurationStatus(result.timelineSeconds))) {
         result.status = 'NOT_ENOUGH_CONTENT';
+        result.failureCode = result.timelineSeconds > 90 ? 'CONTENT_DURATION_TOO_LONG' : 'CONTENT_NOT_ENOUGH';
         result.warnings = ['MEASURED_DURATION_OUT_OF_RANGE'];
         return;
       }
@@ -1089,31 +1098,50 @@ export class ProductPipelineService {
       selectConversation(collection,'SERIOUS',new Date().toISOString(),terms,{ selectedIds }).estimate;
     const eligible = estimate(ruleIds);
     result.estimatedSeconds = {minimum:eligible.minimumSeconds,maximum:eligible.maximumSeconds};
-    if (eligible.maximumSeconds < 60) { result.status = 'NOT_ENOUGH_CONTENT'; return; }
+    if (eligible.maximumSeconds < 60) {
+      result.status = 'NOT_ENOUGH_CONTENT';
+      result.failureCode = 'CONTENT_NOT_ENOUGH';
+      return;
+    }
     await this.checkAuto(batch);
-    const imported = await this.conversations.engine.importCollection(collection, 'auto-' + batch.id + '-' + index);
-    const collectionId = imported.results[0]?.collectionId;
+    const stored = result.collectionId ?? batch.dispatch?.recovery?.collectionId;
+    const imported = stored ? null : await this.conversations.engine.importCollection(collection, 'auto-' + batch.id + '-' + index);
+    const collectionId = stored ?? imported?.results[0]?.collectionId;
     if (!collectionId) throw Error('AUTONOMOUS_COLLECTION_IMPORT_FAILED');
+    const heuristic = stored
+      ? (await this.conversations.engine.collection(collectionId)).evaluation
+      : imported.results[0]?.evaluation;
     result.collectionId = collectionId;
     result.checkpoint = 'COLLECTED';
     batch.stage = 'SCORING';
     await this.saveAuto(batch);
     let assessment;
+    const spent = () => batch.results.reduce((n,row) => n+(row.aiLedgerIds?.length ?? 0),0);
+    const aiLimit = batch.dispatch?.aiRequestLimit ?? 30;
     try {
       assessment = result.assessmentId
         ? await this.ai.evaluator.get(result.assessmentId)
-        : await this.ai.evaluator.evaluate({collectionId, collection, style:'SERIOUS', heuristic:imported.results[0]?.evaluation},
+        : await this.ai.evaluator.evaluate({collectionId, collection, style:'SERIOUS', heuristic},
           undefined, async ledgerId => {
             await this.checkAuto(batch);
-            const spent = batch.results.reduce((n,row) => n+(row.aiLedgerIds?.length ?? 0),0);
-            if (spent >= (batch.dispatch?.aiRequestLimit ?? 30)) throw Error('DAILY_AI_LIMIT_REACHED');
+            if (spent() >= aiLimit) throw Error('DAILY_AI_LIMIT_REACHED');
             (result.aiLedgerIds ??= []).push(ledgerId);
             await this.saveAuto(batch);
-          }, new Set(ruleIds));
+          }, new Set(ruleIds), {remainingRequests: Math.max(0, aiLimit-spent()), resumable:true});
     } catch (error) {
       if ((error as Error).message === 'AUTONOMOUS_CANCELLED') throw error;
+      if (error instanceof AiAssessmentBudgetBlocked) {
+        result.status = 'AI_BUDGET_EXHAUSTED';
+        result.failureCode = 'AI_BUDGET_EXHAUSTED';
+        result.aiAssessmentProgress = error.progress;
+        result.warnings = [error.budgetCode, 'AI_BUDGET_EXHAUSTED'];
+        return;
+      }
       result.status = 'AI_FAILED';
-      result.warnings = [(error as Error).message];
+      const code=(error as Error).message;
+      result.failureCode = /^AI_(SCHEMA_|JSON_)/.test(code) ? 'AI_SCHEMA_INVALID' : 'AI_PROVIDER_FAILED';
+      result.warnings = [result.failureCode,
+        ...(/^AI_[A-Z0-9_]+$/.test(code) ? [code] : [])];
       return;
     }
     result.assessmentId = assessment.id;
@@ -1130,6 +1158,7 @@ export class ProductPipelineService {
     result.estimatedSeconds = {minimum:chosen.minimumSeconds,maximum:chosen.maximumSeconds};
     if (chosen.maximumSeconds < 60 || chosen.minimumSeconds > 90) {
       result.status = 'NOT_ENOUGH_CONTENT';
+      result.failureCode = chosen.minimumSeconds > 90 ? 'CONTENT_DURATION_TOO_LONG' : 'CONTENT_NOT_ENOUGH';
       return;
     }
     if(!result.reviewedChoice&&prior.topicRelevance.status==='UNCERTAIN') {
@@ -1156,41 +1185,73 @@ export class ProductPipelineService {
     await this.continueAutomaticDraft(batch,result);
   }
 
+  async savedAssessmentCandidate(batch: AutonomousProductBatch, result: AutonomousVideoResult, now = Date.now()) {
+    if (!result.collectionId || result.sessionId || result.assessmentId ||
+        !['AI_BUDGET_EXHAUSTED','AI_FAILED'].includes(result.status) ||
+        !result.warnings.some(code => code === 'DAILY_AI_LIMIT_REACHED' || /^AI_(REQUEST|TOKEN|COST)_BUDGET_EXCEEDED$/.test(code)))
+      return null;
+    const record = await this.conversations.engine.collection(result.collectionId);
+    const root = record.collection.root;
+    const identity = canonicalPost(root.url);
+    const observedAt = Date.parse(root.provenance.observedAt);
+    if (!identity || identity.url !== canonicalPost(result.sourceUrl)?.url ||
+        root.provenance.synthetic || !root.originalText.trim() ||
+        !Number.isFinite(observedAt) || observedAt > now || now-observedAt > 24*60*60_000)
+      return null;
+    return { batchId:batch.id, collectionId:result.collectionId, sourceUrl:identity.url };
+  }
+
   private async executeAuto(id: string) {
     let job: AutonomousProductBatch;
     try {
       job = await this.getAuto(id);
       await this.studio.withProductionWorker(async () => {
         await this.checkAuto(job);
-        if (!this.quality) throw Error('AUTONOMOUS_DISCOVERY_UNAVAILABLE');
         job.status = 'RUNNING';
         job.startedAt ??= new Date().toISOString();
         await this.saveAuto(job);
-        let run = job.discoveryRunId ? await this.quality.engine.get(job.discoveryRunId)
-          : await this.quality.data.studio.withControlledCollection(() => this.quality.engine.start({
-            requestId:'auto-'+id, style:'SERIOUS', topic:job.request.topic, keywords:job.request.keywords,
-            maxPosts:job.request.maxCandidates, maxEnrich:job.request.maxEnrich, priority:'HOT',
-            minInteractions:0, maxRunMs:job.request.maxRunMs, collectionBudget:DEEP_CONVERSATION_BUDGET,
-          }));
-        job.discoveryRunId = run.id;
-        job.errors = [...new Set([...job.errors,...autonomousDiscoveryErrors(run)])];
-        await this.saveAuto(job);
-        if (run.status === 'BLOCKED') {job.status='BLOCKED';return;}
-        if (run.status === 'RUNNING') {
-          if(job.discoveryResumeAttempted)throw Error('DISCOVERY_INTERRUPTED');
-          job.discoveryResumeAttempted=true;
+        const recovery=job.dispatch?.recovery;
+        let collections: ThreadCollection[];
+        if (recovery) {
+          const original=await this.getAuto(recovery.batchId);
+          const saved=original.results.find(row=>row.collectionId===recovery.collectionId && row.sourceUrl===recovery.sourceUrl);
+          if (!saved || !await this.savedAssessmentCandidate(original,saved)) throw Error('SAVED_COLLECTION_RECOVERY_INELIGIBLE');
+          collections=[(await this.conversations.engine.collection(recovery.collectionId)).collection];
+        } else {
+          if (!this.quality) throw Error('AUTONOMOUS_DISCOVERY_UNAVAILABLE');
+          let run = job.discoveryRunId ? await this.quality.engine.get(job.discoveryRunId)
+            : await this.quality.data.studio.withControlledCollection(() => this.quality.engine.start({
+              requestId:'auto-'+id, style:'SERIOUS', topic:job.request.topic, keywords:job.request.keywords,
+              maxPosts:job.request.maxCandidates, maxEnrich:job.request.maxEnrich, priority:'HOT',
+              minInteractions:0, maxRunMs:job.request.maxRunMs, collectionBudget:DEEP_CONVERSATION_BUDGET,
+            }));
+          job.discoveryRunId=run.id;
+          if (run.status==='RUNNING') {
+            if(job.discoveryResumeAttempted)throw Error('DISCOVERY_INTERRUPTED');
+            job.discoveryResumeAttempted=true;
+            await this.saveAuto(job);
+            run=await this.quality.data.studio.withControlledCollection(()=>this.quality.engine.resume(run.id));
+          }
+          job.errors = [...new Set([...job.errors,...autonomousDiscoveryErrors(run)])];
+          const fault=run.errors.find(isBrowserInfrastructureFailure);
+          if (fault) {
+            const audits=(run.accessAudits??[]).filter(a=>isBrowserInfrastructureFailure(a.outcome));
+            job.browserInfrastructure = {failureCode:fault, diagnosticReference:run.id,
+              cleanupVerified:audits.length>0&&audits.every(a=>a.resources?.cleanupVerified&&a.resources.monitorExited&&a.resources.remainingPids?.length===0)};
+          }
           await this.saveAuto(job);
-          run=await this.quality.data.studio.withControlledCollection(()=>this.quality.engine.resume(run.id));
+          if (fault || run.status === 'BLOCKED') {job.status='BLOCKED';return;}
+          collections=run.collections;
         }
         const known = new Set((await this.listAuto()).filter(row => row.id !== id)
           .flatMap(row => row.results.map(result => canonicalPost(result.sourceUrl)?.id).filter(Boolean)));
-        for (const [index,collection] of run.collections.entries()) {
+        for (const [index,collection] of collections.entries()) {
           await this.checkAuto(job);
           if(job.resumeCandidateUrl&&job.resumeCandidateUrl!==collection.root.url)continue;
           if (!job.resumeCandidateUrl&&(job.results.filter(row=>row.status==='COMPLETED').length>=job.request.targetVideos ||
               job.results.filter(row=>row.status==='COMPLETED'||row.status==='WAITING_HUMAN').length>=(job.dispatch?.reviewSlots??10))) break;
           const key = canonicalPost(collection.root.url)?.id;
-          if (!key || known.has(key)) continue;
+          if (!key || (!recovery && known.has(key))) continue;
           let result = job.results.find(row=>canonicalPost(row.sourceUrl)?.id===key);
           if (!result) {
             result = {sourceUrl:collection.root.url, collectionId:null,assessmentId:null,sessionId:null,
@@ -1199,20 +1260,21 @@ export class ProductPipelineService {
             job.results.push(result);
             await this.saveAuto(job);
           } else if (!result.checkpoint || result.status === 'COMPLETED' || result.status === 'WAITING_HUMAN' ||
-            result.status === 'NOT_ENOUGH_CONTENT' || result.status === 'AI_FAILED') continue;
+            result.status === 'NOT_ENOUGH_CONTENT' || result.status === 'AI_FAILED' || result.status === 'AI_BUDGET_EXHAUSTED') continue;
           try {
             await this.processAutomaticCollection(job,collection,result,index);
           } catch (error) {
             const message=(error as Error).message;
             if (message === 'AUTONOMOUS_CANCELLED') throw error;
             result.status=/RESOURCE/.test(message)?'RESOURCE_STOPPED':result.renderJobId?'RENDER_FAILED':result.sessionId?'TTS_FAILED':'QUALITY_FAILED';
+            if(result.status==='QUALITY_FAILED')result.failureCode='CONTENT_QUALITY_FAILED';
             result.warnings=[message];
           }
           await this.saveAuto(job);
         }
         delete job.resumeCandidateUrl;
         const complete=job.results.filter(row=>row.status==='COMPLETED').length;
-        job.status=complete>=job.request.targetVideos?'COMPLETED':complete||job.results.some(row=>row.status==='WAITING_HUMAN')?'PARTIAL':'FAILED';
+        job.status=complete>=job.request.targetVideos?'COMPLETED':complete||job.results.some(row=>row.status==='WAITING_HUMAN'||row.status==='AI_BUDGET_EXHAUSTED')?'PARTIAL':'FAILED';
         job.stage='COMPLETED';
       });
     } catch (error) {

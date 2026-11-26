@@ -58,10 +58,13 @@ describe('Browser resource policy — OFFLINE, no Chromium/network',()=>{
     const m=new FakeMonitor(),g=new BrowserResourceGuard(5000,m);
     try{await g.start();m.onStop('CONVERSATION_RESOURCE_MEASUREMENT_UNAVAILABLE');expect(()=>g.check()).toThrow('MEASUREMENT_UNAVAILABLE')}finally{await g.close()}
     expect(g.report.failureCategory).toBe('UNKNOWN');
+    expect(g.report.measurementCause).toBe('MEASUREMENT_UNAVAILABLE');
   });
   test('stale resource measurements stop the operation instead of running blind',async()=>{
     const g=new BrowserResourceGuard(5000,new FakeMonitor());
     try{await g.start();await new Promise(r=>setTimeout(r,2300));expect(()=>g.check()).toThrow('CONVERSATION_RESOURCE_MEASUREMENT_STALE')}finally{await g.close()}
+    expect(g.report.measurementCause).toBe('DELAYED_SAMPLE_DELIVERY');
+    expect(g.report.timing?.lastSampleAgeMs).toBeGreaterThan(2000);
   });
   test('simulated lingering descendant is cleaned from captured ownership after graceful root exit',async()=>{
     const m=new FakeMonitor();m.forced=[102];const g=new BrowserResourceGuard(5000,m);

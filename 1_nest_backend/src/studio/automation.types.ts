@@ -40,6 +40,19 @@ export const defaultAutomationPolicy = (): AutomationPolicy => ({
   maxConcurrentHeavyWorkers: 1,
   autoPublish: false,
 });
+export interface AutomationInfrastructureRecovery {
+  schemaVersion: 'automation-infrastructure/1';
+  id: 'browser';
+  failureCode: string;
+  consecutiveFailures: number;
+  lastFailureAt: string;
+  nextProbeAt: string | null;
+  recoveryAttempts: number;
+  diagnosticReference: string;
+  batchId: string;
+  status: 'COOLDOWN' | 'PROBING' | 'RETRY_ADMITTED' | 'BLOCKED' | 'CLEARED';
+  probe?: import('../data-engine/browser-resource-policy').BrowserResourceReport;
+}
 export interface ProductionReservation {
   id: string;
   requestId: string;
@@ -66,8 +79,10 @@ export interface ProductionReservation {
     preset: OperatorRenderPreset;
     reviewBeforeRender: boolean;
     policyRevision: number;
+    recovery?: { batchId: string; collectionId: string; sourceUrl: string };
   };
   aiLedgerIds?: string[];
+  infrastructureFailure?: boolean;
   edit?: {
     videoId: string;
     version: number;

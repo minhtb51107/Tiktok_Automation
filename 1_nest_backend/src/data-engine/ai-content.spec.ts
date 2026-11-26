@@ -264,6 +264,69 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
     expect(provider.calls).toHaveLength(1);
   });
 
+  test('checkpoints a partial assessment and resumes only exact unfinished candidate IDs', async () => {
+    const record = await conversations.collection(collectionId);
+    const first = record.collection.replies[0];
+    const second = {
+      ...first,
+      id: 'SECOND_VERIFIED_REPLY',
+      originalText: first.originalText + ' Một góc nhìn khác.',
+    };
+    const input = {
+      collectionId,
+      style: 'SERIOUS' as const,
+      collection: { ...record.collection, replies: [first, second] },
+      heuristic: record.evaluation,
+    };
+    const eligible = new Set([first.id, second.id]);
+    const evaluate = (remainingRequests: number, resumable: boolean) =>
+      new AiContentEvaluator(new DataEngine(new DataStore(dir)), provider).evaluate(
+        input,
+        undefined,
+        undefined,
+        eligible,
+        { remainingRequests, resumable },
+      );
+    await expect(evaluate(1, false)).rejects.toMatchObject({
+      message: 'AI_BUDGET_EXHAUSTED',
+      progress: {
+        eligibleReplies: 2,
+        reusableAssessments: 0,
+        providerRequestsRequired: 2,
+        remainingDailyBudget: 1,
+        remainingCandidateIds: [first.id, second.id],
+      },
+    });
+    expect(provider.calls).toHaveLength(0);
+    await expect(evaluate(1, true)).rejects.toMatchObject({
+      message: 'AI_BUDGET_EXHAUSTED',
+      progress: {
+        providerRequestsRequired: 1,
+        remainingDailyBudget: 0,
+        remainingCandidateIds: [second.id],
+      },
+    });
+    expect(await new AiContentEvaluator(data, provider).list()).toEqual([]);
+    expect(provider.calls).toHaveLength(1);
+    provider.invalidSource = true;
+    await expect(evaluate(1, true)).rejects.toThrow('AI_SCHEMA_SOURCE_ID');
+    expect(provider.calls).toHaveLength(2);
+    provider.invalidSource = false;
+    const complete = await evaluate(1, false);
+    expect(complete.candidates.map((row) => row.sourceId)).toEqual([
+      first.id,
+      second.id,
+    ]);
+    expect((await evaluate(0, false)).id).toBe(complete.id);
+    second.originalText += ' Nguồn đầu vào đã đổi.';
+    await expect(evaluate(0, false)).rejects.toMatchObject({
+      progress: { reusableAssessments: 1, providerRequestsRequired: 1, remainingCandidateIds: [second.id] },
+    });
+    expect(
+      provider.calls.map((row) => (row.input as any).candidates[0].sourceId),
+    ).toEqual([first.id, second.id, second.id]);
+  });
+
   test('same-page context without conversation-surface evidence remains UNKNOWN and human-review-required', async () => {
     const record = await conversations.collection(collectionId),
       reply = record.collection.replies[0];
@@ -294,12 +357,17 @@ describe('AI-AGENT-01 content intelligence — isolated synthetic', () => {
       editorialStatus: 'SELECT_REQUIRES_HUMAN_REVIEW',
       requiresHumanReview: true,
     });
-    const automatic = await new AiContentEvaluator(data, provider).evaluate({
-      collectionId,
-      collection: record.collection,
-      style: 'SERIOUS',
-      heuristic: record.evaluation,
-    }, undefined, undefined, new Set<string>());
+    const automatic = await new AiContentEvaluator(data, provider).evaluate(
+      {
+        collectionId,
+        collection: record.collection,
+        style: 'SERIOUS',
+        heuristic: record.evaluation,
+      },
+      undefined,
+      undefined,
+      new Set<string>(),
+    );
     expect(automatic.selectedSourceIds).toEqual([]);
     expect(automatic.candidates).toEqual([]);
     expect(automatic.id).not.toBe(assessment.id);

@@ -151,6 +151,137 @@ it('reserves before dispatch, reconciles a crash, and drains without new work', 
   expect(start).toHaveBeenCalledTimes(2);
 });
 
+it.each([[true,true],[true,false],[false,false]])(
+  'an unresolved browser fault gates three ticks; cleanup %s, probe healthy %s',
+  async (cleanupVerified, healthy) => {
+    const db = store(),
+      date = new Date('2026-11-26T16:20:00Z');
+    const policy = {
+      ...defaultAutomationPolicy(),
+      mode: 'ENABLED' as const,
+      topics: ['công việc'],
+    };
+    await db.savePolicy(policy);
+    const fault = {
+      failureCode: 'CONVERSATION_RESOURCE_MEASUREMENT_STALE',
+      cleanupVerified,
+      diagnosticReference: 'a'.repeat(64),
+    };
+    const batch: any = {
+      id: 'failed',
+      dispatchRequestId: 'prior-request',
+      status: 'BLOCKED',
+      completedAt: date.toISOString(),
+      errors: [fault.failureCode],
+      results: [],
+      browserInfrastructure: fault,
+      discoveryRunId: fault.diagnosticReference,
+    };
+    const batches = [batch],
+      startAuto = jest.fn(async (input: any) => {
+        const dispatched = {
+          id: 'one-retry',
+          dispatchRequestId: input.requestId,
+          status: 'RUNNING',
+          results: [],
+          errors: [],
+        };
+        batches.push(dispatched);
+        return dispatched;
+      });
+    const running = false;
+    const studio = {
+      hasHeavyWorker: () => false,
+      withProductionWorker: async (task: () => Promise<unknown>) => task(),
+    };
+    const execution = {
+      hasActiveAuto: () => running,
+      productionLiveAuthorized: () => true,
+      listAuto: async () => batches,
+      startAuto,
+    };
+    const notify = jest.fn(async () => undefined);
+    const service = new AutomationService(
+      db,
+      { notify } as any,
+      execution as any,
+      studio as any,
+    );
+    const probe = jest.fn(async () => ({
+      healthy,
+      report: { samples: healthy ? 4 : 1 },
+    }));
+    Object.assign(service, {
+      owned: true,
+      runtimePreflight: async () => true,
+      browserHealthProbe: probe,
+    });
+    const day = await db.day('2026-11-26', date.toISOString());
+    day.reservations.push({
+      id: 'old',
+      requestId: batch.dispatchRequestId,
+      batchId: batch.id,
+      candidateKey: null,
+      sessionId: null,
+      renderJobId: null,
+      status: 'RUNNING',
+      kind: 'NEW_VIDEO',
+      createdAt: date.toISOString(),
+      finishedAt: null,
+      dispatch: {
+        topic: 'công việc',
+        attempts: 5,
+        capacity: 1,
+        aiLimit: 40,
+        reviewSlots: 10,
+        preset: '1080P60',
+        reviewBeforeRender: false,
+        policyRevision: 0,
+      },
+    });
+    day.reservations.push({
+      id: 'historical',
+      requestId: 'legacy',
+      batchId: 'legacy',
+      candidateKey: 'candidate',
+      sessionId: null,
+      renderJobId: null,
+      status: 'FAILED',
+      kind: 'NEW_VIDEO',
+      createdAt: date.toISOString(),
+      finishedAt: date.toISOString(),
+      aiLedgerIds: ['old-ai'],
+    });
+    await db.put('days', day.dayKey, day);
+    for (const ms of [0, 15000, 30000])
+      await service.tick(new Date(+date + ms));
+    expect(startAuto).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+    expect(
+      productionUsage(await db.day(day.dayKey, date.toISOString())),
+    ).toMatchObject({ attempts: 1, aiRequests: 1 });
+    await service.tick(new Date(+date + 61000));
+    expect(probe).toHaveBeenCalledTimes(cleanupVerified ? 1 : 0);
+    if (cleanupVerified && healthy) {
+      expect(startAuto).toHaveBeenCalledTimes(1);
+      Object.assign(batches[1], {
+        status: 'BLOCKED',
+        completedAt: new Date(+date + 62000).toISOString(),
+        browserInfrastructure: {
+          ...fault,
+          diagnosticReference: 'b'.repeat(64),
+        },
+        errors: [fault.failureCode],
+      });
+      await service.tick(new Date(+date + 63000));
+      expect(startAuto).toHaveBeenCalledTimes(1);
+      expect(probe).toHaveBeenCalledTimes(1);
+    } else expect(startAuto).not.toHaveBeenCalled();
+    expect((await service.policy()).mode).toBe('BLOCKED');
+    expect(notify).toHaveBeenCalled();
+  },
+);
+
 it('retains persisted limits and fails closed on corrupt policy', async () => {
   const db = store();
   await db.savePolicy({ ...defaultAutomationPolicy(), dailyVideoLimit: 1 });

@@ -64,12 +64,16 @@ class Guardian:
                     if h:self.k.CloseHandle(h)
             if not changed:break
     def sample(self):
-        self.discover();s=memory_sample();rss=private=0
+        started=time.monotonic_ns()
+        self.discover()
+        discovered=time.monotonic_ns()
+        s=memory_sample();rss=private=0
         for proc in self.handles.values():
             if not self.running(proc['handle']):continue
             m=ProcessMemory();m.cb=ctypes.sizeof(m)
             if self.api.GetProcessMemoryInfo(proc['handle'],ctypes.byref(m),m.cb):rss+=m.workingSet;private+=m.privateBytes
-        return {'availableMiB':s['availableMiB'],'systemCommitAvailableMiB':s['systemCommitAvailableMiB'],'systemCommitUsedMiB':s['systemCommitUsedMiB'],'systemCommitLimitMiB':s['systemCommitLimitMiB'],'browserRssMiB':round(rss/1024**2,2),'browserPrivateMiB':round(private/1024**2,2),'ownedPids':list(self.handles)}
+        return {'availableMiB':s['availableMiB'],'systemCommitAvailableMiB':s['systemCommitAvailableMiB'],'systemCommitUsedMiB':s['systemCommitUsedMiB'],'systemCommitLimitMiB':s['systemCommitLimitMiB'],'browserRssMiB':round(rss/1024**2,2),'browserPrivateMiB':round(private/1024**2,2),'ownedPids':list(self.handles),
+                'nativeMonotonicMs':time.monotonic_ns()/1e6,'nativeDurationMs':(time.monotonic_ns()-started)/1e6,'discoveryDurationMs':(discovered-started)/1e6}
     def cleanup(self):
         self.discover()
         for pid,proc in reversed(list(self.handles.items())):
@@ -84,7 +88,7 @@ class Guardian:
 def emit(x):print(json.dumps(x),flush=True)
 def main():
     owner,deadline,physical,commit=int(sys.argv[1]),float(sys.argv[2]),float(sys.argv[3]),float(sys.argv[4])
-    g=Guardian(owner,'--test-owned-node' in sys.argv);commands=queue.Queue();started=time.monotonic();stopped=False
+    g=Guardian(owner,'--test-owned-node' in sys.argv);commands=queue.Queue();started=time.monotonic();stopped=False;sequence=0
     def read():
         for line in sys.stdin:
             try:commands.put(json.loads(line))
@@ -93,7 +97,7 @@ def main():
     threading.Thread(target=read,daemon=True).start()
     try:
         while True:
-            s=g.sample();emit({'event':'sample','sample':s})
+            s=g.sample();sequence+=1;s['sequence']=sequence;emit({'event':'sample','sample':s})
             emergency='CONVERSATION_RESOURCE_GUARD_STOP_PHYSICAL' if s['availableMiB']<physical else 'CONVERSATION_RESOURCE_GUARD_STOP_COMMIT' if s['systemCommitAvailableMiB']<commit else None
             ended=time.monotonic()-started>deadline or not g.running(g.owner_handle)
             if not stopped and (emergency or ended):
@@ -106,10 +110,14 @@ def main():
                 g.discover();emit({'event':'tracked','pid':cmd.get('pid'),'accepted':cmd.get('pid') in g.roots})
             elif cmd.get('op')=='cleanup':emit({'event':'cleanup',**g.cleanup()})
             elif cmd.get('op')=='shutdown':emit({'event':'cleanup',**g.cleanup()});break
+            else:print('MONITOR_INVALID_COMMAND',file=sys.stderr,flush=True)
     finally:
         try:g.cleanup()
         finally:g.close()
 
 if __name__=='__main__':
     try:main()
-    except Exception:emit({'event':'stop','code':'CONVERSATION_RESOURCE_MEASUREMENT_UNAVAILABLE'});sys.exit(1)
+    except Exception as error:
+        code=str(error)
+        print(code if code in {'OWNER_NOT_PARENT','PROCESS_IDENTITY_UNAVAILABLE','SNAPSHOT_UNAVAILABLE'} else 'MONITOR_NATIVE_EXCEPTION',file=sys.stderr,flush=True)
+        emit({'event':'stop','code':'CONVERSATION_RESOURCE_MEASUREMENT_UNAVAILABLE'});sys.exit(1)

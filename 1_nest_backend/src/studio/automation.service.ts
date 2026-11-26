@@ -35,6 +35,9 @@ import { canonicalPost } from '../data-engine/conversation-identity';
 import { validateDraftArtifact } from './production-artifact';
 import { isOperatorRenderPreset } from './render.types';
 import { assertRenderable } from './production-contract';
+import { probeNativeBrowserMonitor } from '../data-engine/browser-resource-guard';
+import { isBrowserInfrastructureFailure } from '../data-engine/browser-resource-policy';
+import type { AutomationInfrastructureRecovery } from './automation.types';
 
 const localTime = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Ho_Chi_Minh',
@@ -137,6 +140,7 @@ export function productionUsage(day: ProductionDay) {
       batches.filter(
         (r) =>
           !active(r) &&
+          !r.infrastructureFailure &&
           !candidates.some(
             (c) => c.batchId === r.batchId && c.kind === 'NEW_VIDEO',
           ),
@@ -277,6 +281,10 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       policy,
       window,
       owned: this.owned,
+      infrastructure: await this.store.get<AutomationInfrastructureRecovery>(
+        'infrastructure',
+        'browser',
+      ),
       active: this.pipeline.hasActiveAuto(),
       blocker: this.blocker,
       usage: { newVideos, waiting, attempts, rerenders, aiRequests },
@@ -422,6 +430,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
               ? 'CANCELLED'
               : 'COMPLETED';
         slot.finishedAt = batch.completedAt;
+        if (batch.browserInfrastructure) slot.infrastructureFailure = true;
         slot.error = [
           ...batch.errors,
           ...batch.results.flatMap((r) => r.warnings),
@@ -530,8 +539,154 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         aiRequestLimit: d.aiLimit,
         reviewBeforeRender: d.reviewBeforeRender,
         reviewSlots: d.reviewSlots,
+        ...(d.recovery ? { recovery: d.recovery } : {}),
       },
     );
+  }
+
+  private browserHealthProbe() {
+    return probeNativeBrowserMonitor();
+  }
+
+  private async monitorRecovery(
+    days: ProductionDay[],
+    batches: AutonomousProductBatch[],
+    now: Date,
+    canProbe: boolean,
+  ) {
+    let state = await this.store.get<AutomationInfrastructureRecovery>(
+      'infrastructure',
+      'browser',
+    );
+    const admitted = new Set(
+      days.flatMap((day) =>
+        day.reservations
+          .filter((slot) => slot.dispatch)
+          .map((slot) => slot.requestId),
+      ),
+    );
+    const latest = batches
+      .filter(
+        (batch) =>
+          admitted.has(batch.dispatchRequestId) &&
+          terminal(batch) &&
+          (batch.browserInfrastructure || batch.discoveryRunId) &&
+          !batch.dispatch?.recovery,
+      )
+      .sort((a, b) => Date.parse(b.completedAt) - Date.parse(a.completedAt))[0];
+    const fault = latest?.browserInfrastructure;
+    const save = () => this.store.put('infrastructure', 'browser', state);
+    if (
+      fault &&
+      latest.id !== state?.batchId &&
+      (!state ||
+        Date.parse(latest.completedAt) >= Date.parse(state.lastFailureAt))
+    ) {
+      const previous = state?.status === 'CLEARED' ? null : state;
+      const blocked =
+        !fault.cleanupVerified || Boolean(previous?.recoveryAttempts);
+      state = {
+        schemaVersion: 'automation-infrastructure/1',
+        id: 'browser',
+        failureCode: fault.failureCode,
+        consecutiveFailures: (previous?.consecutiveFailures ?? 0) + 1,
+        lastFailureAt: latest.completedAt,
+        nextProbeAt: blocked
+          ? null
+          : new Date(
+              Math.max(Date.parse(latest.completedAt) + 60000, now.getTime()),
+            ).toISOString(),
+        recoveryAttempts: previous?.recoveryAttempts ?? 0,
+        diagnosticReference: fault.diagnosticReference,
+        batchId: latest.id,
+        status: blocked ? 'BLOCKED' : 'COOLDOWN',
+      };
+      await save();
+    } else if (
+      latest &&
+      !fault &&
+      state?.status === 'RETRY_ADMITTED' &&
+      Date.parse(latest.completedAt) > Date.parse(state.lastFailureAt)
+    ) {
+      state.status = 'CLEARED';
+      await save();
+    }
+    if (!state || ['CLEARED', 'RETRY_ADMITTED'].includes(state.status))
+      return state;
+    if (state.status === 'PROBING') {
+      state.status = 'BLOCKED';
+      state.nextProbeAt = null;
+      await save();
+    }
+    if (
+      state.status === 'COOLDOWN' &&
+      canProbe &&
+      Date.parse(state.nextProbeAt) <= now.getTime() &&
+      !this.pipeline.hasActiveAuto() &&
+      !this.studio.hasHeavyWorker()
+    ) {
+      state.status = 'PROBING';
+      state.recoveryAttempts++;
+      state.nextProbeAt = null;
+      await save(); // A crash during a probe cannot grant a second attempt.
+      const probe = await this.studio.withProductionWorker(() =>
+        this.browserHealthProbe(),
+      );
+      state.probe = probe.report;
+      state.status = probe.healthy ? 'RETRY_ADMITTED' : 'BLOCKED';
+      await save();
+    }
+    if (state.status === 'BLOCKED') {
+      this.blocker = state.failureCode;
+      const policy = await this.policy();
+      if (policy.mode === 'ENABLED')
+        await this.store.savePolicy({
+          ...policy,
+          mode: 'BLOCKED',
+          revision: policy.revision + 1,
+        });
+      await this.review.notify(
+        automationKey('browser-infrastructure', state.diagnosticReference),
+        'Browser infrastructure blocked · ' +
+          state.failureCode +
+          ' · ' +
+          state.diagnosticReference,
+      );
+    } else if (state.status === 'COOLDOWN') this.blocker = state.failureCode;
+    return state;
+  }
+
+  private async nextSavedAssessment(
+    day: ProductionDay,
+    batches: AutonomousProductBatch[],
+    now: Date,
+  ) {
+    const considered = new Set<string>();
+    for (const batch of batches
+      .slice()
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))) {
+      if (!terminal(batch)) continue;
+      for (const row of batch.results) {
+        const key = canonicalPost(row.sourceUrl)?.id;
+        if (!key || considered.has(key)) continue;
+        considered.add(key);
+        if (
+          !row.collectionId ||
+          day.reservations.some(
+            (slot) =>
+              slot.dispatch?.recovery?.collectionId === row.collectionId,
+          )
+        )
+          continue;
+        const recovery = await this.pipeline.savedAssessmentCandidate(
+          batch,
+          row,
+          now.getTime(),
+        );
+        if (recovery) return { recovery, topic: batch.request.topic };
+      }
+    }
+    return null;
   }
 
   async tick(now = new Date()) {
@@ -545,12 +700,21 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         policy.mode === 'ENABLED' &&
         this.pipeline.productionLiveAuthorized() &&
         window.open;
+      const infrastructure = await this.monitorRecovery(
+        days,
+        batches,
+        now,
+        canRecover,
+      );
+      const infrastructureReady =
+        !infrastructure ||
+        ['CLEARED', 'RETRY_ADMITTED'].includes(infrastructure.status);
       for (const day of days)
         await this.reconcile(
           day,
           batches,
           now,
-          canRecover && day.dayKey === window.dayKey,
+          canRecover && infrastructureReady && day.dayKey === window.dayKey,
         );
       if (
         policy.mode === 'DRAINING' &&
@@ -566,6 +730,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       }
       if (
         !canRecover ||
+        !infrastructureReady ||
         this.pipeline.hasActiveAuto() ||
         this.studio.hasHeavyWorker()
       )
@@ -582,7 +747,11 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         return;
       }
       if (day.reservations.some((x) => x.dispatch && active(x))) return;
-      const failures = day.reservations.filter((r) => r.dispatch).slice(-3);
+      const failures = day.reservations
+        .filter(
+          (r) => r.dispatch && !isBrowserInfrastructureFailure(r.error ?? ''),
+        )
+        .slice(-3);
       if (
         failures.some((row) => /ACCESS|LOGIN|CAPTCHA/.test(row.error ?? '')) ||
         (failures.length === 3 &&
@@ -634,7 +803,9 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         this.blocker = 'RESOURCE_BLOCKED';
         return;
       }
+      const saved = await this.nextSavedAssessment(day, batches, now);
       const topic =
+        saved?.topic ??
         policy.topics[
           day.reservations.filter((x) => x.dispatch).length %
             policy.topics.length
@@ -653,8 +824,9 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
           renderJobId: null,
           dispatch: {
             topic,
-            capacity,
-            attempts,
+            capacity: saved ? 1 : capacity,
+            attempts: saved ? 1 : attempts,
+            ...(saved ? { recovery: saved.recovery } : {}),
             aiLimit,
             reviewSlots: policy.maxPendingReviews - reviews.length,
             preset: policy.renderPreset,

@@ -13,7 +13,7 @@ export class DataStore {
   ) {}
   private file(key: string) {
     if (
-      !/^(posts|bronze|evaluations|runs|production-jobs|crawler-runs|gold-shadows|gold-feedback|conversation-runs|thread-collections|thread-replies|conversation-feedback|editorial-plans|content-quality-runs|content-search-runs|ai-assessments|ai-agent-runs|ai-script-proposals|ai-feedback|ai-script-reviews)\/[a-f0-9]{64}\.json$/.test(
+      !/^(posts|bronze|evaluations|runs|production-jobs|crawler-runs|gold-shadows|gold-feedback|conversation-runs|thread-collections|thread-replies|conversation-feedback|editorial-plans|content-quality-runs|content-search-runs|ai-assessments|ai-candidate-assessments|ai-assessment-checkpoints|ai-agent-runs|ai-script-proposals|ai-feedback|ai-script-reviews)\/[a-f0-9]{64}\.json$/.test(
         key,
       )
     )

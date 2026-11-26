@@ -12,6 +12,7 @@ import {
 
 const schemas = {
   days: 'production-day/1',
+  infrastructure: 'automation-infrastructure/1',
   reviews: 'automation-review/1',
   videos: 'automation-video/1',
   outbox: 'automation-outbox/1',
@@ -128,6 +129,27 @@ export class AutomationStore {
     )
       throw Error('AUTOMATION_CORRUPT_STATE');
     if (value) {
+      if (bucket === 'infrastructure') {
+        const state = value as any;
+        if (
+          ![
+            'COOLDOWN',
+            'PROBING',
+            'RETRY_ADMITTED',
+            'BLOCKED',
+            'CLEARED',
+          ].includes(state.status) ||
+          !Number.isSafeInteger(state.consecutiveFailures) ||
+          state.consecutiveFailures < 1 ||
+          ![0, 1].includes(state.recoveryAttempts) ||
+          !Number.isFinite(Date.parse(state.lastFailureAt)) ||
+          (state.status === 'COOLDOWN' &&
+            !Number.isFinite(Date.parse(state.nextProbeAt))) ||
+          !/^[a-f0-9]{64}$/.test(state.diagnosticReference)
+        )
+          throw Error('AUTOMATION_CORRUPT_STATE');
+      }
+
       const row = value as any;
       if (
         bucket === 'days' &&
