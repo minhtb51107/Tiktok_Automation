@@ -215,7 +215,9 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       const policy = await this.policy(),
         requestId = automationRequestId(body?.requestId);
       const patch = action === 'PATCH' ? body?.policy : undefined,
-        digest = automationKey(action, body?.revision, patch);
+        digest = body?.retryTtsAdmission===true&&action==='START'
+          ? automationKey(action,body?.revision,patch,'retryTtsAdmission')
+          : automationKey(action, body?.revision, patch);
       if (policy.requestId === requestId) {
         if (policy.mutationKey !== digest)
           throw new ConflictException('AUTOMATION_REQUEST_ID_CONFLICT');
@@ -268,6 +270,11 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         requestId,
         mutationKey: digest,
       });
+      if(action==='START' && body.retryTtsAdmission===true){
+        const batches=await this.pipeline.listAuto();
+        for(const batch of batches.filter(batch=>batch.ttsWait?.blockReason==='ADMISSION_DENIED'))
+          await this.pipeline.rearmTtsAdmission(batch.id);
+      }
       await this.store.savePolicy(next);
       return next;
     });
@@ -468,7 +475,8 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         }
         continue;
       }
-      if (slot.status === 'RUNNING' || slot.status === 'RESERVED') {
+      if (slot.status === 'RUNNING' || slot.status === 'RESERVED' ||
+          (batch.ttsWait?.status === 'RESOLVED' && slot.finishedAt !== batch.completedAt)) {
         slot.batchId = batch.id;
         slot.status =
           batch.status === 'BLOCKED' || batch.status === 'FAILED'
@@ -761,12 +769,29 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       const infrastructureReady =
         !infrastructure ||
         ['CLEARED', 'RETRY_ADMITTED'].includes(infrastructure.status);
+      const ttsRecoveries=batches.filter(batch=>days.some(day=>day.reservations.some(slot=>slot.batchId===batch.id&&slot.dispatch)));
+      let ttsWait=ttsRecoveries.find(batch=>batch.ttsWait&&batch.ttsWait.status!=='RESOLVED');
+      if(!ttsWait&&canRecover&&infrastructureReady&&!this.pipeline.hasActiveAuto()&&!this.studio.hasHeavyWorker()){
+        for(const batch of ttsRecoveries){
+          if(!batch.dispatch?.recovery?.cacheOnly||batch.status!=='FAILED'||batch.ttsWait)continue;
+          const adopted=await this.pipeline.adoptTtsResourceWait(batch.id);
+          if(adopted){batch.ttsWait=adopted;ttsWait=batch;break;}
+        }
+      }
+      if(ttsWait&&canRecover&&infrastructureReady){
+        const wait=await this.pipeline.probeTtsResourceWait(ttsWait.id,now.getTime());
+        this.blocker=wait?.status==='BLOCKED'?'TTS_RESOURCE_BLOCKED':'TTS_RESOURCE_WAIT';
+        if(wait?.status==='BLOCKED'){
+          await this.store.savePolicy({...policy,mode:'BLOCKED',revision:policy.revision+1});
+          await this.review.notify(automationKey('tts-resource',ttsWait.id),'TTS resource blocked · '+ttsWait.id);
+        }
+      }
       for (const day of days)
         await this.reconcile(
           day,
           batches,
           now,
-          canRecover && infrastructureReady && day.dayKey === window.dayKey,
+          canRecover && infrastructureReady && !ttsWait && day.dayKey === window.dayKey,
         );
       if (
         policy.mode === 'DRAINING' &&
@@ -783,6 +808,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       if (
         !canRecover ||
         !infrastructureReady ||
+        !!ttsWait ||
         this.pipeline.hasActiveAuto() ||
         this.studio.hasHeavyWorker()
       )

@@ -279,6 +279,10 @@ export class NativeBrowserMonitor implements ResourceMonitor {
 type BrowserLike = { close(): Promise<void>; process(): ChildProcess | null };
 let active = false,
   cleanupBlocked = false;
+export function assertBrowserResourceHandoff() {
+  if (active || cleanupBlocked) throw Error('RESOURCE_BROWSER_CLEANUP_UNVERIFIED');
+}
+
 /** One lifecycle: monitor begins BEFORE launch; close/verification completes BEFORE another launch. */
 export class BrowserResourceGuard {
   readonly abort = new AbortController();

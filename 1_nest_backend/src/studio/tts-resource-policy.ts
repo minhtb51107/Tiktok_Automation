@@ -41,4 +41,25 @@ export interface SynthesisMetrics {
  runtimeBefore?:unknown;runtimeAfter?:unknown;inferenceBefore?:unknown;inferenceAfter?:unknown;
   chunkSamples?:Array<{index:number;characters:number;before:unknown;after:unknown}>;
   modelLoadStrategy?:'MMAP_ASSIGN';
+ synthesizedChunks?:number; reusedChunks?:number; modelLoads?:number;
+}
+
+export interface TtsHeadroomSample {
+  atMs: number;
+  availableMiB: number;
+  systemCommitAvailableMiB: number;
+}
+export const TTS_ADMISSION = { coldMiB: 1024, warmMiB: 512, coldCommitMiB: 1792, warmCommitMiB: 1024 };
+export function ttsAdmission(samples: Array<TtsHeadroomSample | null>, phase: 'COLD'|'WARM'|'RENDER') {
+  const physical = phase==='COLD'?TTS_ADMISSION.coldMiB:phase==='WARM'?TTS_ADMISSION.warmMiB:TTS_RESOURCE_POLICY.stopMiB;
+  const commit = phase==='COLD'?TTS_ADMISSION.coldCommitMiB:phase==='WARM'?TTS_ADMISSION.warmCommitMiB:TTS_RESOURCE_POLICY.commitStopMiB;
+  const valid = samples.length===5 && samples.every((row,i)=>row &&
+    [row.atMs,row.availableMiB,row.systemCommitAvailableMiB].every(n=>Number.isFinite(n)&&n>=0) &&
+    (!i||row.atMs>samples[i-1].atMs)) && samples[4].atMs-samples[0].atMs>=1900 &&
+    samples[4].atMs-samples[0].atMs<=5000;
+  const minimumAvailableMiB=valid?Math.min(...samples.map(row=>row.availableMiB)):null;
+  const minimumCommitReserveMiB=valid?Math.min(...samples.map(row=>row.systemCommitAvailableMiB)):null;
+  return { phase, allowed:valid&&minimumAvailableMiB>=physical&&minimumCommitReserveMiB>=commit,
+    minimumAvailableMiB, minimumCommitReserveMiB, requiredAvailableMiB:physical,requiredCommitReserveMiB:commit,
+    samples };
 }

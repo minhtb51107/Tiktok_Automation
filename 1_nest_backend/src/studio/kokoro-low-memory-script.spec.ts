@@ -16,7 +16,8 @@ describe('low-memory Kokoro execution adapter', () => {
     expect(worker).toContain("kwargs.setdefault('mmap',True)");
     expect(worker).toContain('assign=True');
     expect(worker).toContain('synthesize_streaming(tts,req');
-    expect(worker).toContain("subprocess.run(['ffmpeg'");
+    expect(worker).toContain('checkpoint.complete(index-1');
+    expect(worker).toContain('checkpoint.assemble(output_path)');
     expect(worker).toContain('gc.collect()');
     expect(worker).toContain("modelLoadStrategy':'MMAP_ASSIGN'");
   });

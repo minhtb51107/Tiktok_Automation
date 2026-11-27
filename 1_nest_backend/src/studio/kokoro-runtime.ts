@@ -1,11 +1,11 @@
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import type { VoiceRuntime } from './voice.types';
 import { atempoFilter } from './voice-settings';
 import {freemem} from 'os';
-import {TTS_RESOURCE_POLICY,ttsResourceBlock,ttsResourceWarnings,SynthesisMetrics,LocalTtsExecution,validateLocalExecution,TtsExecutionError,DRAFT_TTS_LIMITS} from './tts-resource-policy';
+import {TTS_RESOURCE_POLICY,ttsAdmission,ttsResourceBlock,ttsResourceWarnings,SynthesisMetrics,LocalTtsExecution,validateLocalExecution,TtsExecutionError,DRAFT_TTS_LIMITS} from './tts-resource-policy';
 import {assertNoLocalProbe} from './local-probe-lease';
 export const textHash = (text: string) =>
   createHash('sha256').update(text).digest('hex');
@@ -22,7 +22,12 @@ export function ttsCacheKeys(text:string,voice:string,speed:number,runtime:Voice
 export class KokoroRuntime {
   private resourceSamples:Record<string,number>[]=[];
   private resourceInputHash:string|null=null;
-  diagnostics(){return {inputHash:this.resourceInputHash,workerPid:this.worker?.pid??null,ownedWorkerPid:this.lastOwned?.pid??null,samples:structuredClone(this.resourceSamples)};}
+  private chunkProgress: Record<string, unknown>[]=[];
+  private modelLoads=0;
+  private workerStarts=0;
+  private lastAdmission?: ReturnType<typeof ttsAdmission>;
+  diagnostics(){return {chunkProgress:structuredClone(this.chunkProgress),modelLoads:this.modelLoads,workerStarts:this.workerStarts,
+    admission:this.lastAdmission,inputHash:this.resourceInputHash,workerPid:this.worker?.pid??null,ownedWorkerPid:this.lastOwned?.pid??null,samples:structuredClone(this.resourceSamples)};}
   onStage?: (step:string)=>void;
   private worker?: ChildProcessWithoutNullStreams;
   private lastOwned?:ChildProcessWithoutNullStreams;
@@ -167,11 +172,25 @@ export class KokoroRuntime {
     const owned=[...new Set([this.worker??this.lastOwned,...this.commands].filter((p):p is ChildProcessWithoutNullStreams=>!!p))];
     const waits=owned.filter(p=>p.exitCode===null&&p.signalCode===null).map(p=>new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(new TtsExecutionError('TIMEOUT','Owned worker exit was not confirmed')),5000);p.once('close',()=>{clearTimeout(timer);resolve()});}));this.close();await Promise.all(waits);
   }
+  async resourceAdmission(phase: 'COLD'|'WARM'|'RENDER') {
+    this.lastAdmission=undefined;
+    try {
+      const samples=JSON.parse(await this.run(this.python(),[path.resolve('scripts/kokoro_memory.py'),'--series'],7000));
+      this.lastAdmission=ttsAdmission(Array.isArray(samples)?samples:[],phase);
+    }catch{this.lastAdmission=ttsAdmission([],phase);}
+    return this.lastAdmission;
+  }
+  private async requireAdmission(phase: 'COLD'|'WARM') {
+    const admission=await this.resourceAdmission(phase);
+    if(!admission.allowed)throw new TtsExecutionError('RESOURCE_GUARD_STOP',
+      'RESOURCE_GUARD_STOP: sustained '+phase+' headroom admission denied',admission);
+  }
   private async synthesize(
     text: string,
     voice: string,
     output: string,
     version: string,
+    baseKey: string,
     execution?:LocalTtsExecution,
   ) {
     if (this.pending) throw Error('Sequential TTS worker busy');
@@ -181,11 +200,14 @@ export class KokoroRuntime {
       assertNoLocalProbe(execution?.leaseToken);
       if(execution){validateLocalExecution(text,execution);if(execution.mode==='LOCAL_BOUNDED_PROBE'&&this.worker)throw Error('BOUNDED_PROBE_REQUIRES_COLD_IDLE_RUNTIME');if(execution.mode==='LOCAL_DRAFT_BATCH'&&execution.inputHash!==textHash(text))throw Error('APPROVED_TTS_INPUT_CHANGED');}
       const key = JSON.stringify(this.cfg()) + version;
-      this.resourceSamples=[];this.resourceInputHash=textHash(text);
+      this.resourceSamples=[];this.chunkProgress=[];this.modelLoads=0;this.workerStarts=0;this.lastAdmission=undefined;this.resourceInputHash=textHash(text);
       const block=ttsResourceBlock(freemem(),!!this.worker&&this.workerKey===key);
       if(block)throw new TtsExecutionError('RESOURCE_GUARD_STOP',block);
+      const warm=!!this.worker&&this.workerKey===key;
+      if(!warm)await this.closeAndWait();
+      if(process.platform==='win32')await this.requireAdmission(warm?'WARM':'COLD');
       if (!this.worker || this.workerKey !== key) {
-        this.close();
+        this.workerStarts++;
         this.worker = spawn(
           this.python(),
           [path.resolve('scripts/kokoro-studio.py')],
@@ -234,7 +256,8 @@ export class KokoroRuntime {
               try {
                 const r = JSON.parse(line.slice(8));
                 if(r.resource){this.resourceSamples.push(r.resource);if(this.resourceSamples.length>2048)this.resourceSamples.shift();if(r.resource.systemCommitAvailableMiB!==undefined&&r.resource.systemCommitAvailableMiB<TTS_RESOURCE_POLICY.commitStopMiB){finish(new TtsExecutionError('RESOURCE_GUARD_STOP','RESOURCE_GUARD_STOP: system commit reserve below 512 MiB'));continue;}}
-                if(r.stage){this.onStage?.(r.stage);continue;}
+                if(r.progress){this.chunkProgress.push(r.progress);if(this.chunkProgress.length>512)this.chunkProgress.shift();}
+                if(r.stage){if(r.stage==='Model loaded')this.modelLoads++;this.onStage?.(r.stage);continue;}
                 if(r.ok===undefined)continue;
                 const category=['RESOURCE_GUARD_STOP','ALLOCATION_FAILURE','UNKNOWN'].includes(r.category)?r.category:'UNKNOWN';
                 finish(r.ok ? undefined : new TtsExecutionError(category,r.error,r.details),r.metrics);
@@ -246,8 +269,11 @@ export class KokoroRuntime {
         worker.stdout.on('data', read);
         worker.once('close', closed);
         worker.once('error', failed);
-        worker.stdin.write(JSON.stringify({ text, voice, output }) + '\n');
+        worker.stdin.write(JSON.stringify({ text, voice, output, baseKey }) + '\n');
       });
+    } catch(error) {
+      try{await this.closeAndWait();}catch{throw Error('RESOURCE_CLEANUP_UNVERIFIED');}
+      throw error;
     } finally {
       this.pending = false;
       this.idle = setTimeout(() => this.close(), 60000);
@@ -299,41 +325,23 @@ export class KokoroRuntime {
       } catch {
         if(cacheOnly)throw Error('BLOCKED_RESOURCE: matching cached audio unavailable; inference was not started');
         const raw = path.join(temp, baseKey + '-' + Date.now() + '.wav');
-        synthesisMetrics=await this.synthesize(text, voice, raw, runtime.modelVersion,execution);
+        synthesisMetrics=await this.synthesize(text, voice, raw, runtime.modelVersion,baseKey,execution);
         synthesisPerformed = true;
         await fs.rename(raw, base);
       }
       this.onStage?.('Audio processing');
-      await this.run(
-        'ffmpeg',
-        ['-n', '-i', base, '-filter:a', filter, '-c:a', 'pcm_s16le', file],
-        60000,
-      );
+      const staged=path.join(temp,randomUUID()+'.wav');
+      try {
+        await this.run('ffmpeg',['-n','-i',base,'-filter:a',filter,'-c:a','pcm_s16le',staged],60000);
+        await this.validateAudio(staged);
+        const handle=await fs.open(staged,'r+');
+        try{await handle.sync();}finally{await handle.close();}
+        await fs.rename(staged,file);
+      } finally {
+        await fs.unlink(staged).catch(()=>undefined);
+      }
     }
-    this.onStage?.('FFprobe validation');
-    const probe = JSON.parse(
-      await this.run('ffprobe', [
-        '-v',
-        'error',
-        '-show_entries',
-        'format=duration',
-        '-of',
-        'json',
-        file,
-      ]),
-    );
-    const durationMs = Math.round(Number(probe.format?.duration) * 1000);
-    if (!Number.isFinite(durationMs) || durationMs <= 0)
-      throw Error('Invalid measured audio duration');
-    const volume = await this.run(
-      'ffmpeg',
-      ['-hide_banner', '-i', file, '-af', 'volumedetect', '-f', 'null', '-'],
-      60000,
-      true,
-    );
-    const peak = Number(volume.match(/max_volume:\s*(-?[\d.]+|-?inf) dB/)?.[1]);
-    if (!Number.isFinite(peak) || peak < -80)
-      throw Error('Audio is silent or level could not be verified');
+    const durationMs=await this.validateAudio(file);
     return {
       filePath: path
         .relative(dataRoot, file)
@@ -346,5 +354,35 @@ export class KokoroRuntime {
       synthesisPerformed,
       synthesisMetrics,
     };
+  }
+  private async validateAudio(file: string) {
+    this.onStage?.('FFprobe validation');
+    const probe = JSON.parse(
+      await this.run('ffprobe', [
+        '-v',
+        'error',
+        '-show_entries',
+        'format=duration:stream=codec_name,sample_rate,channels',
+        '-of',
+        'json',
+        file,
+      ]),
+    );
+    const stream=probe.streams?.[0];
+    if(probe.streams?.length!==1||stream?.codec_name!=='pcm_s16le'||Number(stream.sample_rate)!==24000||stream.channels!==1)
+      throw Error('Invalid measured PCM audio format');
+    const durationMs = Math.round(Number(probe.format?.duration) * 1000);
+    if (!Number.isFinite(durationMs) || durationMs <= 0)
+      throw Error('Invalid measured audio duration');
+    const volume = await this.run(
+      'ffmpeg',
+      ['-hide_banner', '-xerror', '-nostats', '-i', file, '-af', 'volumedetect', '-f', 'null', '-'],
+      60000,
+      true,
+    );
+    const peak = Number(volume.match(/max_volume:\s*(-?[\d.]+|-?inf) dB/)?.[1]);
+    if (!Number.isFinite(peak) || peak < -80)
+      throw Error('Audio is silent or level could not be verified');
+    return durationMs;
   }
 }

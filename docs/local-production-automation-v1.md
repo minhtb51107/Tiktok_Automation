@@ -113,6 +113,36 @@ version. Technical failures and unselected replies produce no editorial
 feedback events. Exact-compatible saved V1.1 work can recover within its
 existing quota without another candidate debit or provider request.
 
+## V1.2.1 Kokoro checkpoint and admission
+
+The Windows runtime samples physical memory and system commit five times over
+two seconds before starting Kokoro. Cold admission on this host requires
+1,024 MiB physical headroom and 1,792 MiB commit reserve throughout. The
+physical threshold includes the previous 713 MiB observed peak worker RSS and
+the 256 MiB emergency floor. The commit requirement includes the previous
+1,036 MiB observed private usage and the 512 MiB reserve. A retained warm
+worker uses a separate 512 MiB physical and 1,024 MiB commit threshold.
+Emergency stops remain at 256 MiB physical and 512 MiB commit. These admission
+values are local safety margins, not a guarantee against later memory pressure.
+
+Chunks and their manifests live under the session audio root in
+`chunks/<synthesisKey>`. Reuse requires the exact ordered input,
+model/config/voice fingerprints, processing and runtime versions, and verified
+PCM samples and SHA-256. A WAV promoted before its manifest commit is
+regenerated. The complete sequence is streamed in order as the same PCM
+frames that the former FFmpeg concat produced. The existing FFmpeg speed
+processing remains in use, and Studio registers audio only after format,
+duration and non-silence validation.
+
+A guard stop parks the exact source, draft and narration input in the original
+automation batch. The scheduler checks cleanup, waits 60 seconds and allows
+up to three admission probes. A successful probe admits one bounded retry of
+the same batch. After three admission denials with no inference retry consumed,
+an authorized `POST /start` may include `"retryTtsAdmission":true` once the
+host has more headroom. Retry exhaustion and unverified cleanup stay blocked.
+The batch report exposes `ttsWait` and admission samples. This workflow leaves
+the original candidate reservation and AI ledger in place.
+
 ## Discord
 
 Set STUDIO_AUTOMATION_DISCORD_ENABLED=1 only after configuring

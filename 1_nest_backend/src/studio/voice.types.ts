@@ -41,7 +41,7 @@ export interface VoiceJob {
   failureCategory?:import('./tts-resource-policy').TtsFailureCategory;
   inputCharacters?:number;
   ttsInputHash?:string;
-  resourceDiagnostics?:{inputHash:string|null;workerPid:number|null;samples:Record<string,number>[]};
+  resourceDiagnostics?:ReturnType<import('./kokoro-runtime').KokoroRuntime['diagnostics']>;
   itemId: string;
   status: 'ERROR' | 'GENERATED' | 'APPROVED' | 'STALE';
   startedAt: string;

@@ -1,3 +1,4 @@
+import { assertBrowserResourceHandoff } from '../data-engine/browser-resource-guard';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { sessionReadiness } from './session-readiness';
 import { cleanSourceProjection } from './source-quality';
@@ -505,7 +506,7 @@ export class StudioService {
             ...(input.mode === 'FINAL' ? validation.finalBlockers : []),
           ].join('; '),
         );
-      await this.voice.closeAndWait();
+      await this.productionRenderHandoff();
       const candidates = [
         process.env.STUDIO_BROWSER,
         'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -1296,6 +1297,17 @@ export class StudioService {
   }
   private readonly productionScope = new AsyncLocalStorage<symbol>();
   private productionOwner?: symbol;
+  async productionTtsAdmission() {
+    assertBrowserResourceHandoff();
+    await this.voice.closeAndWait().catch(()=>{throw Error('RESOURCE_CLEANUP_UNVERIFIED');});
+    return this.voice.resourceAdmission('COLD');
+  }
+  async productionRenderHandoff() {
+    assertBrowserResourceHandoff();
+    await this.voice.closeAndWait().catch(()=>{throw Error('RESOURCE_CLEANUP_UNVERIFIED');});
+    if (process.platform === 'win32' && !(await this.voice.resourceAdmission('RENDER')).allowed)
+      throw Error('RESOURCE_GUARD_STOP: render handoff headroom denied');
+  }
   async productionRuntimeReady() {
     assertNoLocalProbe();
     return (await this.voice.preflight()).status==='READY';
@@ -1329,7 +1341,7 @@ export class StudioService {
   async withControlledCollection<T>(fn: () => Promise<T>) {
     return this.exclusive(async () => {
       assertNoLocalProbe();
-      this.voice.close();
+      await this.voice.closeAndWait();
       return fn();
     });
   }
@@ -2336,6 +2348,7 @@ export class StudioService {
           );
         }
       } else if (body.action === 'GENERATE') {
+        assertBrowserResourceHandoff();
         const hasSettings = body.voice !== undefined || body.speed !== undefined;
         const runtime = hasSettings ? await this.voice.preflight() : undefined;
         if (runtime) s.voiceRuntime = runtime;

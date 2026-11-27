@@ -28,5 +28,13 @@ def memory_sample():
     return {'atMs':round(time.time()*1000),'pid':os.getpid(),'rssMiB':round(process.workingSet/mib,2),'privateMiB':round(process.privateBytes/mib,2),'peakRssMiB':round(process.peakWorkingSet/mib,2),'peakCommitMiB':round(process.peakPagefile/mib,2),'availableMiB':round(system.physicalAvailable/mib,2),'memoryLoadPercent':system.load,'pageFaultCount':process.pageFaults,'systemCommitLimitMiB':round(system.commitLimit/mib,2),'systemCommitAvailableMiB':round(system.commitAvailable/mib,2),'systemCommitUsedMiB':round((system.commitLimit-system.commitAvailable)/mib,2)}
 
 if __name__=='__main__':
-    import json
-    print(json.dumps(memory_sample()))
+    import json, sys
+    if sys.argv[1:] == ['--series']:
+        samples = []
+        for index in range(5):
+            if index:
+                time.sleep(0.5)
+            samples.append(memory_sample())
+        print(json.dumps(samples))
+    else:
+        print(json.dumps(memory_sample()))

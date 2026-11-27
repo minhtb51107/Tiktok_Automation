@@ -408,3 +408,47 @@ it('stops automatic voice actions immediately on the first resource guard failur
     expect(voiceAction).toHaveBeenCalledTimes(1);
   }finally{source.mockRestore();}
 });
+
+it('resumes the same saved TTS batch only after a sustained probe and does not reissue it', async()=>{
+  const job:any={id:'existing-batch',status:'BLOCKED',completedAt:'2026-11-27T00:00:00.000Z',
+    ttsWait:{status:'WAITING',sessionId:'existing-draft',sourceUrl:'source',inputHash:'exact',
+      nextProbeAt:60_000,retries:0,probes:0,previousFailure:'RESOURCE_GUARD_STOP'},
+    results:[{sessionId:'existing-draft',sourceUrl:'source',assessmentId:'existing-assessment',aiLedgerIds:['old']}]};
+  let running=false, allowed=false;
+  const measure=jest.fn(async()=>({allowed}));
+  const studio={hasHeavyWorker:()=>false,productionTtsAdmission:measure,withProductionWorker:async (work)=>work()};
+  const pipeline=new ProductPipelineService(studio as any,null,null,null);
+  const send=jest.fn((_id: string)=>{running=true;});
+  Object.assign(pipeline,{getAuto:async()=>job,saveAuto:async()=>undefined,exactTtsSession:async()=>({inputHash:'exact'}),
+    hasActiveAuto:()=>running,scheduleAuto:send});
+  await pipeline.probeTtsResourceWait(job.id,59_000);
+  expect(measure).not.toHaveBeenCalled();
+  await pipeline.probeTtsResourceWait(job.id,60_000);
+  expect(send).not.toHaveBeenCalled();
+  allowed=true;
+  expect((await pipeline.probeTtsResourceWait(job.id,75_000))?.retries).toBe(1);
+  await pipeline.probeTtsResourceWait(job.id,90_000);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledWith('existing-batch');
+  expect(job.results[0].aiLedgerIds).toEqual(['old']);
+  expect(job.results[0].assessmentId).toBe('existing-assessment');
+  running=false;
+  expect((await pipeline.probeTtsResourceWait(job.id,100_000))?.blockReason).toBe('RETRY_EXHAUSTED');
+  expect(send).toHaveBeenCalledTimes(1);
+});
+
+it('exhausts three denied TTS probes without launching any worker',async()=>{
+  const wait:any={status:'WAITING',sessionId:'draft',sourceUrl:'source',inputHash:'exact',
+    nextProbeAt:0,retries:0,probes:0,previousFailure:'RESOURCE_GUARD_STOP'};
+  const job:any={id:'job',ttsWait:wait,results:[{sessionId:'draft',sourceUrl:'source'}]};
+  const measure=jest.fn(async()=>({allowed:false}));
+  const pipeline=new ProductPipelineService({hasHeavyWorker:()=>false,productionTtsAdmission:measure,
+    withProductionWorker:async (work)=>work()} as any,null,null,null);
+  const send=jest.fn();
+  Object.assign(pipeline,{getAuto:async()=>job,saveAuto:async()=>undefined,exactTtsSession:async()=>({inputHash:'exact'}),
+    scheduleAuto:send});
+  for(const now of [0,15000,30000,45000])await pipeline.probeTtsResourceWait(job.id,now);
+  expect(measure).toHaveBeenCalledTimes(3);
+  expect(send).not.toHaveBeenCalled();
+  expect(wait).toMatchObject({status:'BLOCKED',blockReason:'ADMISSION_DENIED',retries:0});
+});

@@ -1,6 +1,7 @@
 """Local-only Kokoro bridge. Preflight never loads a model; worker forbids network."""
-import sys, os, json, ast, pathlib, importlib.util, importlib.metadata, threading, time, contextlib, re, tempfile, subprocess, gc
+import sys, os, json, ast, pathlib, importlib.util, importlib.metadata, threading, time, contextlib, re, gc
 from kokoro_memory import memory_sample, allocation_failure
+from kokoro_chunks import ChunkCheckpoint, digest, file_digest
 os.environ['HF_HUB_OFFLINE']='1'
 os.environ['TRANSFORMERS_OFFLINE']='1'
 import socket
@@ -280,8 +281,8 @@ def _chunk_word_alignment(chunk, phonemes, pred_dur, audio, g2p, vocab, np, sr=2
         words.append({'word':w,'phonemes':wp,'frames':frames,'rmsDb':rms_db})
     return words
 
-def synthesize_streaming(tts, text, output):
-    """Keep only one inference audio buffer in memory, trim neural edge dead-air, and concatenate on disk."""
+def synthesize_streaming(tts, text, output, identity):
+    """Commit each complete part before proceeding. Assembly only reads validated PCM."""
     import soundfile as sf, numpy as np, torch
     from vig2p import VietnameseG2P
     chunks=low_memory_chunks(text)
@@ -291,13 +292,19 @@ def synthesize_streaming(tts, text, output):
     if g2p is None:
         g2p=VietnameseG2P()
         tts._studio_g2p=g2p
-    output_path=pathlib.Path(output)
-    output_path.parent.mkdir(parents=True,exist_ok=True)
+    output_path=pathlib.Path(output).resolve()
+    checkpoint=ChunkCheckpoint(output_path.parent.parent/'chunks', identity, chunks)
     samples=[]
-    with tempfile.TemporaryDirectory(prefix='kokoro-chunks-',dir=str(output_path.parent)) as temp_name:
-        temp=pathlib.Path(temp_name)
-        parts=[]
+    synthesized=reused=0
+    with checkpoint.open():
+        checkpoint.load()
         for index,chunk in enumerate(chunks,1):
+            entry=checkpoint.manifest['chunks'][index-1]
+            if entry['status']=='COMPLETED':
+                samples.append(dict(entry.get('diagnostics',{}), reused=True))
+                reused+=1
+                emit({'progress':{'index':index,'total':len(chunks),'synthesized':synthesized,'reused':reused}})
+                continue
             stage(f'Synthesizing chunk {index}/{len(chunks)}')
             chunk_before=memory_sample()
             phonemes=g2p(chunk)
@@ -309,6 +316,7 @@ def synthesize_streaming(tts, text, output):
                 out=tts.model(phonemes,ref_s,speed=1.0,return_output=True)
                 audio=out.audio.squeeze().cpu().numpy().astype(np.float32)
                 pred_dur=out.pred_dur
+                del out
             if len(audio)==0:
                 raise RuntimeError('EMPTY_AUDIO_CHUNK')
             word_diag=_chunk_word_alignment(chunk,phonemes,pred_dur,audio,g2p,tts.model.vocab,np)
@@ -326,35 +334,51 @@ def synthesize_streaming(tts, text, output):
             else:
                 tail_pad=np.zeros(int(24000*0.090),dtype=np.float32)
             part_audio=np.concatenate([lead_pad,trimmed,tail_pad],axis=0)
-            part=temp/f'{index:03d}.wav'
-            sf.write(part,part_audio,24000,subtype='PCM_16')
-            with part.open('rb+') as saved:
-                os.fsync(saved.fileno())
-            del audio,trimmed,part_audio,pred_dur,phonemes
+            diagnostic={'index':index,'characters':len(chunk),'text':chunk,
+                        'leadTrimmedMs':lead_ms,'tailTrimmedMs':tail_ms,'words':word_diag,
+                        'before':chunk_before,'after':memory_sample()}
+            checkpoint.complete(index-1,lambda f:sf.write(f,part_audio,24000,subtype='PCM_16',format='WAV'),diagnostic)
+            del audio,trimmed,part_audio,pred_dur,phonemes,ref_s,lead_pad,tail_pad
             gc.collect()
-            chunk_after=memory_sample()
-            samples.append({
-                'index':index,
-                'characters':len(chunk),
-                'text':chunk,
-                'leadTrimmedMs':lead_ms,
-                'tailTrimmedMs':tail_ms,
-                'words':word_diag,
-                'before':chunk_before,
-                'after':chunk_after,
-            })
-            parts.append(part)
-        listing=temp/'concat.txt'
-        listing.write_text(''.join("file '"+str(part.resolve()).replace('\\','/').replace("'","'\\''")+"'\n" for part in parts),encoding='utf-8')
-        subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','concat','-safe','0','-i',str(listing),'-c:a','pcm_s16le',str(output_path)],check=True)
-        with output_path.open('rb+') as saved:
-            os.fsync(saved.fileno())
-    return chunks,samples
+            after_chunk=memory_sample()
+            samples.append(diagnostic)
+            synthesized+=1
+            emit({'resource':after_chunk,'progress':{'index':index,'total':len(chunks),'synthesized':synthesized,
+                 'reused':reused,'before':chunk_before,'after':after_chunk}})
+        checkpoint.assemble(output_path)
+    return chunks,samples,synthesized,reused
+
+fingerprints={}
+def fingerprint(file):
+    file=pathlib.Path(file).resolve(strict=True)
+    stat=file.stat()
+    stamp=(stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns)
+    if file not in fingerprints or fingerprints[file][0]!=stamp:
+        fingerprints[file]=(stamp,file_digest(file))
+    return fingerprints[file][1]
+
+def artifact_identity(cfg,req):
+    voice=pathlib.Path(cfg['voiceDir'])/(req['voice']+'.pt')
+    return {
+        'inputHash':digest(req['text']), 'cacheIdentity':req['baseKey'],
+        'modelFingerprint':fingerprint(cfg['model']), 'configFingerprint':fingerprint(cfg['config']),
+        'voiceFingerprint':fingerprint(voice), 'voice':req['voice'],
+        'chunkingVersion':'clauses-145/1',
+        'processingVersion':digest(fingerprint(__file__)+fingerprint(pathlib.Path(__file__).with_name('kokoro_chunks.py'))),
+        'device':cfg.get('device','cpu'),'sampleRate':24000,
+        'runtimeVersions':{'python':sys.version.split()[0], **{name:importlib.metadata.version(name)
+                           for name in ('kokoro-vietnamese','torch','soundfile','vig2p','numpy')}},
+        'synthesisSpeed':1.0,'threadSettings':{name:os.environ.get(name) for name in
+                                              ('OMP_NUM_THREADS','MKL_NUM_THREADS','OPENBLAS_NUM_THREADS')},
+    }
 
 for line in sys.stdin:
     try:
-        req=json.loads(line);cfg=config();key=(cfg['model'],cfg['config'],cfg.get('device','cpu'));active=True;measurements=[];started=time.monotonic();before=None;after=None;runtime_before=None;runtime_after=None
+        req=json.loads(line);cfg=config();active=True;measurements=[];started=time.monotonic();before=None;after=None;runtime_before=None;runtime_after=None
         with contextlib.redirect_stdout(sys.stderr):
+            identity=artifact_identity(cfg,req)
+            key=(identity['modelFingerprint'],identity['configFingerprint'],identity['device'])
+            voice_key=(req['voice'],identity['voiceFingerprint'])
             if current!=key:
                 stage('Importing runtime');runtime_before=memory_sample()
                 import torch, soundfile
@@ -364,26 +388,26 @@ for line in sys.stdin:
                 with low_memory_torch_loading(torch):
                     tts=KokoroVietnamese(model_path=cfg['model'],config_path=cfg['config'],voicepack_path=str(pathlib.Path(cfg['voiceDir'])/(req['voice']+'.pt')),voice=req['voice'],device=cfg.get('device','cpu'))
                 current=key
-                current_voice=req['voice']
+                current_voice=voice_key
                 after=memory_sample()
                 stage('Model loaded')
-            elif current_voice != req['voice']:
+            elif current_voice != voice_key:
                 # The installed Kokoro implementation uses voicepack[len(phonemes)-1].
                 # Swap only the small tensor, retaining the single shared model.
                 import torch
                 pack=pathlib.Path(cfg['voiceDir'])/(req['voice']+'.pt')
                 tts.voicepack=torch.load(pack,map_location='cpu',weights_only=True)
                 tts.voicepack_path=pack
-                current_voice=req['voice']
+                current_voice=voice_key
             stage('Synthesizing')
             inference_before=memory_sample()
             if re.search(r'\d',req['text']): raise RuntimeError('UNNORMALIZED_NUMERIC_INPUT')
-            chunks,chunk_samples=synthesize_streaming(tts,req['text'],req['output'])
+            chunks,chunk_samples,synthesized,reused=synthesize_streaming(tts,req['text'],req['output'],identity)
             inference_after=memory_sample()
         final=memory_sample()
         if final: measurements.append(final)
         active=False
-        metrics={'inputCharacters':len(req['text']),'sentenceChunks':len(chunks),'maxSentenceCharacters':max(map(len,chunks),default=0),'elapsedMs':round((time.monotonic()-started)*1000),'peakRssMiB':max((m['peakRssMiB'] for m in measurements),default=None),'peakPrivateMiB':max((m['privateMiB'] for m in measurements),default=None),'minimumAvailableMiB':min((m['availableMiB'] for m in measurements),default=None),'modelBefore':before,'modelAfter':after,'modelLoadStrategy':'MMAP_ASSIGN','chunkSamples':chunk_samples}
+        metrics={'inputCharacters':len(req['text']),'sentenceChunks':len(chunks),'maxSentenceCharacters':max(map(len,chunks),default=0),'elapsedMs':round((time.monotonic()-started)*1000),'peakRssMiB':max((m['peakRssMiB'] for m in measurements),default=None),'peakPrivateMiB':max((m['privateMiB'] for m in measurements),default=None),'minimumAvailableMiB':min((m['availableMiB'] for m in measurements),default=None),'modelBefore':before,'modelAfter':after,'modelLoadStrategy':'MMAP_ASSIGN','chunkSamples':chunk_samples,'synthesizedChunks':synthesized,'reusedChunks':reused,'modelLoads':int(before is not None)}
         metrics.update({'runtimeBefore':runtime_before,'runtimeAfter':runtime_after,'inferenceBefore':inference_before,'inferenceAfter':inference_after})
         emit({'ok':True,'metrics':metrics})
     except Exception as e:
