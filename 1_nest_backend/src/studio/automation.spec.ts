@@ -655,6 +655,11 @@ it.each([true, false])(
       expect(resolved.status).toBe('RESOLVED');
       expect(await service.resolve(pending.id, input)).toEqual(resolved);
       expect((await review.video('video')).reviewStatus).toBe('APPROVED');
+      expect(await db.list('feedback')).toEqual(expect.arrayContaining([
+        expect.objectContaining({action:'REMOVE_REPLY',sourceId:'REMOVE',videoId:'video',videoVersion:1}),
+        expect.objectContaining({action:'APPROVE_VIDEO',rootSourceId:'ROOT',sourceId:null,videoId:'video',videoVersion:2}),
+      ]));
+      expect(await db.list('feedback')).toHaveLength(2);
     }
   },
 );

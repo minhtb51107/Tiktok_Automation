@@ -91,6 +91,28 @@ use one candidate per provider call with strict source coverage. Configure a
 remaining budget through the official policy API. A provider hard cap still
 applies independently of the automation daily cap.
 
+## V1.2 editorial cascade
+
+Hard validation and the existing source-quality pass run before provider
+admission. AUTO checks exact compatible caches, uses corroborated lexical
+evidence where the root policy permits, and gives uncertain topics a bounded
+semantic assessment tied to exact source quotes. Positive reply heuristics
+remain in shadow mode. The planner escalates replies that occur in competitive
+duration-feasible subsets. The evaluator keeps single-reply schema coverage
+for its declared scope and leaves other sources explicitly deferred.
+
+The optimizer checks at most eight verified replies and keeps selected
+parent context. An estimated 60–90-second plan still requires measured audio
+and timeline validation. AUTO may make one correction using already validated
+replies, with at most one new narration item, then measures the timeline before
+render.
+
+`/report` includes candidate routes, deferred IDs, ledger-backed usage, and
+immutable editorial feedback. Feedback applies to the exact source and video
+version. Technical failures and unselected replies produce no editorial
+feedback events. Exact-compatible saved V1.1 work can recover within its
+existing quota without another candidate debit or provider request.
+
 ## Discord
 
 Set STUDIO_AUTOMATION_DISCORD_ENABLED=1 only after configuring

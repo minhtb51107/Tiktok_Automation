@@ -170,3 +170,41 @@ export function rankConversations(collections:ThreadCollection[],style:ContentSt
   const ranked=rows.sort((a,b)=>b.score-a.score||a.sourceUrl.localeCompare(b.sourceUrl));
   return {version:CONTENT_SELECTION.version,ranked,topCandidates:ranked.filter(x=>x.status==='READY_FOR_EDITORIAL_REVIEW'&&!x.reasons.some(r=>r.startsWith('DUPLICATE_ROOT_OF'))).slice(0,5),precisionAt5:'NOT_MEASURED_NO_HUMAN_LABELS',productionApproved:false};
 }
+
+// The cascade reuses the existing source-quality pass. It records structural
+// disqualifiers separately from the existing editorial usefulness gate.
+export function cascadeConversation(c:ThreadCollection, asOf:string, topicTerms:string[]) {
+  const prior=selectConversation(c,'SERIOUS',asOf,topicTerms);
+  const verified=new Map(c.replies.map(row=>[row.id,row]));
+  const ordered=prior.comments.filter(row=>verified.has(row.id)&&row.useful&&row.relationship==='PARENT_VERIFIED')
+    .sort((a,b)=>b.score-a.score||a.id.localeCompare(b.id));
+  const rows=prior.comments.map(row=>{
+    const reply=verified.get(row.id);
+    const blockers=[
+      ...(!reply || row.relationship!=='PARENT_VERIFIED' ? ['PARENT_EVIDENCE_REQUIRED']:[]),
+      ...(reply?.provenance.synthetic ? ['SYNTHETIC_SOURCE']:[]),
+      ...(!row.displayText.trim() ? ['EMPTY_SOURCE']:[]),
+      ...row.reasons.filter(reason=>['DUPLICATE','COMMERCIAL_CALL_TO_ACTION','SOURCE_AUTHOR_IDENTITY_MISMATCH'].includes(reason)),
+    ];
+    if(reply && cleanSourceProjection({...row.raw,text:reply.originalText,bodyText:reply.originalText}).text!==row.displayText)
+      blockers.push('SOURCE_PROJECTION_MISMATCH');
+    return {row, blockers, parentId:reply?.parentId};
+  });
+  const eligible=new Map(rows.filter(entry=>!entry.blockers.length && entry.row.useful).map(entry=>[entry.row.id,entry]));
+  const pool: Array<{id:string; parentId?:string; text:string; score:number}>=[];
+  for(const row of ordered){
+    const chain:typeof pool=[];
+    let entry=eligible.get(row.id);
+    while(entry&&!pool.some(item=>item.id===entry.row.id)){
+      if(chain.some(item=>item.id===entry.row.id))break;
+      chain.unshift({id:entry.row.id,parentId:entry.parentId,text:entry.row.displayText,score:entry.row.score});
+      if(entry.parentId===c.root.id||pool.some(item=>item.id===entry.parentId)){
+        if(pool.length+chain.length<=CONTENT_SELECTION.maxSelectedComments)pool.push(...chain);
+        break;
+      }
+      entry=eligible.get(entry.parentId!);
+    }
+  }
+  return {prior,rows,pool,legacyIds:ordered.slice(0,CONTENT_SELECTION.maxSelectedComments).map(row=>row.id),
+    root:{id:c.root.id,text:prior.quotes[0].narrationText,score:0}};
+}

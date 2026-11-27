@@ -14,6 +14,7 @@ const schemas = {
   days: 'production-day/1',
   infrastructure: 'automation-infrastructure/1',
   reviews: 'automation-review/1',
+  feedback: 'editorial-feedback/1',
   videos: 'automation-video/1',
   outbox: 'automation-outbox/1',
   commands: 'automation-discord-command/1',
@@ -125,7 +126,7 @@ export class AutomationStore {
       value &&
       (bucket === 'days'
         ? (value as ProductionDay).dayKey
-        : (value as { id?: string }).id) !== key
+        : (bucket === 'feedback' ? (value as { eventId?: string }).eventId : (value as { id?: string }).id)) !== key
     )
       throw Error('AUTOMATION_CORRUPT_STATE');
     if (value) {

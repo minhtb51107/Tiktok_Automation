@@ -79,10 +79,16 @@ export interface ProductionReservation {
     preset: OperatorRenderPreset;
     reviewBeforeRender: boolean;
     policyRevision: number;
-    recovery?: { batchId: string; collectionId: string; sourceUrl: string };
+    recovery?: {
+      batchId: string;
+      collectionId: string;
+      sourceUrl: string;
+      cacheOnly?: boolean;
+    };
   };
   aiLedgerIds?: string[];
   infrastructureFailure?: boolean;
+  cachedRecovery?: boolean;
   edit?: {
     videoId: string;
     version: number;
@@ -117,6 +123,7 @@ export interface ReviewRequest {
   reason?: string;
   ambiguousTerms?: string[];
   candidateUrl?: string;
+  evaluationVersion?: string;
   resolution?: {
     requestId: string;
     digest: string;
@@ -125,6 +132,7 @@ export interface ReviewRequest {
   };
 }
 export interface ProducedVideoVersion {
+  evaluationVersion?: string;
   version: number;
   sessionRevision: number;
   renderJobId: string;
@@ -157,4 +165,24 @@ export interface AutomationOutbox {
   attempts: number;
   nextAt: string;
   sentAt: string | null;
+}
+
+export interface EditorialFeedbackEvent {
+  schemaVersion: 'editorial-feedback/1';
+  eventId: string;
+  timestamp: string;
+  rootSourceId: string;
+  sourceId: string | null;
+  videoId: string | null;
+  videoVersion: number | null;
+  action:
+    | 'SELECT_ROOT'
+    | 'REJECT_ROOT'
+    | 'SELECT_REPLY'
+    | 'REMOVE_REPLY'
+    | 'APPROVE_VIDEO'
+    | 'REJECT_VIDEO';
+  reasonCode: string | null;
+  evaluationVersion: string;
+  featureSnapshotRef: string | null;
 }

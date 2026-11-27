@@ -390,3 +390,21 @@ describe('product pipeline snapshot', () => {
     }
   });
 });
+
+it('stops automatic voice actions immediately on the first resource guard failure',async()=>{
+  const contract=await import('./production-contract');
+  const source=jest.spyOn(contract,'sourceBlockers').mockReturnValue([]);
+  try{
+    const items=[{id:'one',selected:true,order:0,spokenText:'Câu chuyện.'},
+      {id:'two',selected:true,order:1,spokenText:'Câu trả lời.'}];
+    const state={id:'draft',revision:1,items};
+    const voiceAction=jest.fn(async()=>({...state,voiceJobs:[{itemId:'one',status:'ERROR',error:'RESOURCE_GUARD_STOP'}]}));
+    const studio={load:async()=>state,jobs:{findRequest:async()=>null},restoreOperatorAvatars:async()=>state,
+      applyAutomaticSeriousAssets:async()=>state,normalizeAutomaticDraft:async()=>state,voiceAction};
+    const pipeline=new ProductPipelineService(studio as any,null,null,null);
+    Object.assign(pipeline,{checkAuto:async()=>undefined,saveAuto:async()=>undefined});
+    await expect((pipeline as any).continueAutomaticDraft({id:'batch',request:{voice:'my_yen',speed:1.3}},
+      {sessionId:'draft',sourceUrl:'https://www.threads.com/@tester/post/ROOT'})).rejects.toThrow('RESOURCE_GUARD_STOP');
+    expect(voiceAction).toHaveBeenCalledTimes(1);
+  }finally{source.mockRestore();}
+});

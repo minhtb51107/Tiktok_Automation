@@ -1,3 +1,5 @@
+import { canonicalPost } from '../data-engine/conversation-identity';
+import type { EditorialFeedbackEvent } from './automation.types';
 import {
   BadRequestException,
   ConflictException,
@@ -49,6 +51,31 @@ export class AutomationReviewService {
     );
     if (!row) throw new NotFoundException('AUTOMATION_REVIEW_NOT_FOUND');
     return row;
+  }
+  async recordFeedback(
+    identity: string,
+    event: Omit<
+      EditorialFeedbackEvent,
+      'schemaVersion' | 'eventId' | 'timestamp'
+    >,
+  ) {
+    const eventId = automationKey(
+      'editorial-feedback',
+      identity,
+      event.action,
+      event.rootSourceId,
+      event.sourceId,
+      event.videoId,
+      event.videoVersion,
+    );
+    if (await this.store.get<EditorialFeedbackEvent>('feedback', eventId))
+      return;
+    await this.store.put('feedback', eventId, {
+      schemaVersion: 'editorial-feedback/1',
+      eventId,
+      timestamp: new Date().toISOString(),
+      ...event,
+    });
   }
   async notify(key: string, text: string) {
     const id = automationKey('outbox', key);
@@ -114,6 +141,7 @@ export class AutomationReviewService {
       sessionId: result.sessionId,
       sourceRevision: session?.revision ?? null,
       candidateUrl: result.sourceUrl,
+      evaluationVersion: result.editorial?.version,
       options: (
         result.reviewChoice?.options ??
         selected.map((item) => ({
@@ -296,6 +324,30 @@ export class AutomationReviewService {
     }
     if (decision === 'APPROVE' && row.reason !== 'REVIEW_BEFORE_RENDER')
       throw new BadRequestException('REVIEW_CANNOT_BYPASS_BLOCKER');
+    const rootSourceId = canonicalPost(row.candidateUrl)?.id;
+    const action =
+      row.type === 'SELECT_ROOT'
+        ? decision === 'SELECT'
+          ? 'SELECT_ROOT'
+          : decision === 'REJECT'
+            ? 'REJECT_ROOT'
+            : null
+        : row.type === 'SELECT_REPLIES' && decision === 'SELECT'
+          ? 'SELECT_REPLY'
+          : null;
+    if (action && rootSourceId) {
+      for (const sourceId of selectedSourceIds ?? [rootSourceId])
+        await this.recordFeedback(row.id + ':' + requestId, {
+          action,
+          rootSourceId,
+          sourceId,
+          videoId: null,
+          videoVersion: null,
+          reasonCode: row.reason ?? null,
+          evaluationVersion: row.evaluationVersion ?? 'legacy',
+          featureSnapshotRef: row.id,
+        });
+    }
     row.status = 'RESOLVED';
     row.revision++;
     row.resolution = { requestId, digest, decision, selectedSourceIds };
@@ -313,6 +365,18 @@ export class AutomationReviewService {
       throw new ConflictException('AUTOMATION_REQUEST_ID_CONFLICT');
     if (row.currentVersion !== body?.version)
       throw new ConflictException('STALE_REVISION');
+    await this.recordFeedback(requestId, {
+      action: status === 'APPROVED' ? 'APPROVE_VIDEO' : 'REJECT_VIDEO',
+      rootSourceId: row.rootSourceId,
+      sourceId: null,
+      videoId: row.id,
+      videoVersion: row.currentVersion,
+      reasonCode: null,
+      evaluationVersion:
+        row.versions.find((version) => version.version === row.currentVersion)
+          ?.evaluationVersion ?? 'legacy',
+      featureSnapshotRef: row.id + ':' + row.currentVersion,
+    });
     if (row.decision?.requestId !== requestId) {
       row.reviewStatus = status;
       row.decision = { status, requestId, version: body.version };

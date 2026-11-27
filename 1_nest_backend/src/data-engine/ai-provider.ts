@@ -20,9 +20,16 @@ export interface AiJsonRequest {
   temperature?: number;
   signal?: AbortSignal;
 }
+export interface AiRequestSummary {
+  requests: number;
+  failures: number;
+  totalTokens: number | null;
+  estimatedCostUsd: number | null;
+}
 export interface ContentAiProvider {
   readonly name: 'HUGGING_FACE';
   config(): AiProviderConfig;
+  requestSummary?(ids: string[]): AiRequestSummary;
   completeJson(request: AiJsonRequest): Promise<AiCompletion>;
   recordValidationOutcome?(
     ledgerId: string,
@@ -347,6 +354,30 @@ export class HuggingFaceContentProvider implements ContentAiProvider {
       reservedOutputTokens: this.tokens,
       reportedCostUsd: Number(this.costUsd.toFixed(8)),
       costTrackingAvailable: !this.costUnknown,
+    };
+  }
+  requestSummary(ids: string[]): AiRequestSummary {
+    const selected = new Set(ids),
+      requests = new Set<string>();
+    const usage = new Map<string, AiUsage>(),
+      failures = new Set<string>();
+    for (const event of this.ledger.events()) {
+      if (!selected.has(event.ledgerId)) continue;
+      if (event.status === 'PENDING') requests.add(event.ledgerId);
+      if (event.status === 'PROVIDER_FAILED') failures.add(event.ledgerId);
+      if (event.usage) usage.set(event.ledgerId, event.usage);
+    }
+    const sum = (key: 'totalTokens' | 'estimatedCostUsd') => {
+      const values = [...requests].map((id) => usage.get(id)?.[key]);
+      return values.some((value) => value == null)
+        ? null
+        : values.reduce((a, b) => a + b, 0);
+    };
+    return {
+      requests: requests.size,
+      failures: failures.size,
+      totalTokens: sum('totalTokens'),
+      estimatedCostUsd: sum('estimatedCostUsd'),
     };
   }
   ledgerMetrics() {

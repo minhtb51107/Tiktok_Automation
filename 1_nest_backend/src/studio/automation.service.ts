@@ -136,11 +136,12 @@ export function productionUsage(day: ProductionDay) {
       (r) => r.kind === 'NEW_VIDEO' && r.status === 'WAITING_HUMAN',
     ).length,
     attempts:
-      candidates.length +
+      candidates.filter((row) => !row.cachedRecovery).length +
       batches.filter(
         (r) =>
           !active(r) &&
           !r.infrastructureFailure &&
+          !r.dispatch?.recovery?.cacheOnly &&
           !candidates.some(
             (c) => c.batchId === r.batchId && c.kind === 'NEW_VIDEO',
           ),
@@ -302,7 +303,52 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     const batches = (await this.pipeline.listAuto()).filter((batch) =>
       batchIds.has(batch.id),
     );
-    return { ...(await this.status()), days, batches };
+    return {
+      ...(await this.status()),
+      days,
+      batches,
+      editorialFeedback: await this.store.list('feedback'),
+      editorialTelemetry: batches
+        .filter((batch) => batch.collected)
+        .map((batch) => {
+          const routes = batch.results.flatMap(
+            (row) => row.editorial?.routes ?? [],
+          );
+          const completedVideos = batch.results.filter(
+            (row) => row.status === 'COMPLETED' && row.artifact,
+          ).length;
+          const cost = batch.inference?.estimatedCostUsd;
+          return {
+            batchId: batch.id,
+            ...batch.collected,
+            hardRejections: routes.filter(
+              (row) => row.evidence.hardBlockers.length,
+            ).length,
+            heuristicDecisions: routes.filter((row) =>
+              row.reasons.includes('EXACT_TOPIC_AND_CORROBORATING_CONTEXT'),
+            ).length,
+            llmEscalations: routes.filter(
+              (row) =>
+                row.providerRequired || row.reasons.includes('LLM_FALLBACK'),
+            ).length,
+            cacheHits: routes.filter((row) =>
+              row.reasons.includes('EXACT_VALIDATED_CACHE'),
+            ).length,
+            inference: batch.inference ?? null,
+            evaluationLatencyMs: batch.results.reduce(
+              (n, row) => n + (row.editorial?.latencyMs ?? 0),
+              0,
+            ),
+            humanReviewRequests: batch.results.filter(
+              (row) => row.status === 'WAITING_HUMAN',
+            ).length,
+            completedVideos,
+            ...(completedVideos && cost != null
+              ? { estimatedCostPerCompletedVideo: cost / completedVideos }
+              : {}),
+          };
+        }),
+    };
   }
   async videos() {
     return this.store.list<ProducedVideo>('videos');
@@ -356,6 +402,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         {
           version: 1,
           sessionRevision: manifest.revision,
+          evaluationVersion: row.editorial?.version,
           renderJobId: row.renderJobId,
           selectedSourceIds: row.selectedSourceIds,
           preset: checked.preset,
@@ -505,6 +552,9 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
           createdAt: old?.createdAt ?? slot.createdAt,
           finishedAt: batch.completedAt,
           aiLedgerIds: row.aiLedgerIds,
+          ...(slot.dispatch?.recovery?.cacheOnly
+            ? { cachedRecovery: true }
+            : {}),
         };
         if (JSON.stringify(old) !== JSON.stringify(next)) {
           if (old) day.reservations[day.reservations.indexOf(old)] = next;
@@ -660,6 +710,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     day: ProductionDay,
     batches: AutonomousProductBatch[],
     now: Date,
+    providerAvailable: boolean,
   ) {
     const considered = new Set<string>();
     for (const batch of batches
@@ -683,7 +734,8 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
           row,
           now.getTime(),
         );
-        if (recovery) return { recovery, topic: batch.request.topic };
+        if (recovery && (providerAvailable || recovery.cacheOnly))
+          return { recovery, topic: batch.request.topic };
       }
     }
     return null;
@@ -787,11 +839,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       );
       const attempts = Math.min(10, policy.dailyAttemptLimit - usage.attempts);
       const aiLimit = policy.dailyAiRequestLimit - usage.aiRequests;
-      if (
-        attempts <= 0 ||
-        aiLimit <= 0 ||
-        usage.newVideos >= policy.dailyVideoLimit
-      ) {
+      if (usage.newVideos >= policy.dailyVideoLimit) {
         this.blocker = 'DAILY_LIMIT_REACHED';
         return;
       }
@@ -799,11 +847,20 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         this.blocker = 'INVENTORY_FULL';
         return;
       }
+      const saved = await this.nextSavedAssessment(
+        day,
+        batches,
+        now,
+        aiLimit > 0 && attempts > 0,
+      );
+      if ((aiLimit <= 0 || attempts <= 0) && !saved) {
+        this.blocker = 'DAILY_LIMIT_REACHED';
+        return;
+      }
       if (!policy.topics.length || !(await this.runtimePreflight())) {
         this.blocker = 'RESOURCE_BLOCKED';
         return;
       }
-      const saved = await this.nextSavedAssessment(day, batches, now);
       const topic =
         saved?.topic ??
         policy.topics[
@@ -827,7 +884,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
             capacity: saved ? 1 : capacity,
             attempts: saved ? 1 : attempts,
             ...(saved ? { recovery: saved.recovery } : {}),
-            aiLimit,
+            aiLimit: saved?.recovery.cacheOnly ? 0 : aiLimit,
             reviewSlots: policy.maxPendingReviews - reviews.length,
             preset: policy.renderPreset,
             reviewBeforeRender:
@@ -941,6 +998,16 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
           preset: version.preset,
         },
       };
+      await this.review.recordFeedback(requestId, {
+        action: 'REMOVE_REPLY',
+        rootSourceId: video.rootSourceId,
+        sourceId: body.sourceId,
+        videoId: video.id,
+        videoVersion: version.version,
+        reasonCode: null,
+        evaluationVersion: version.evaluationVersion ?? 'legacy',
+        featureSnapshotRef: video.id + ':' + version.version,
+      });
       day.reservations.push(row);
       await this.saveDay(day, now);
       return row;
@@ -1079,6 +1146,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
             delete latest.decision;
             latest.versions.push({
               version: latest.currentVersion,
+              evaluationVersion: previous.evaluationVersion,
               sessionRevision: session.revision,
               renderJobId: submitted.jobId,
               selectedSourceIds: selected,
