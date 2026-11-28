@@ -204,6 +204,27 @@ The local probe limits are unchanged. Voice diagnostics include the deadline
 policy and observed model-load, synthesis and assembly timing.
 `latest-report.json` records the underlying error when no MP4 is produced.
 
+### Continue after the saved warm-admission denial (V1.2.3)
+
+Run after closing development applications:
+
+```powershell
+powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.ps1 -Action Start -ContinueAdmission
+```
+
+This continuation targets the saved batch and its last failed scene. It uses
+the existing reservation, assessment and two verified WAVs. The scheduler
+accepts only that batch in this runtime, with live collection and AI disabled,
+and disables AUTO when the recovery settles successfully. Mandatory blockers
+are recorded before the launcher drains and shuts down.
+
+Automatic production treats the 1024 MiB cold and 512 MiB warm physical targets
+as `LOW_MEMORY_WARNING`. Sustained valid measurements, the 256 MiB physical
+floor, and the existing 1792/1024 MiB cold/warm commit admission requirements
+still apply. The active emergency guards and 240/300-second deadlines still
+apply. A denial before inference does not consume an inference retry. The
+report records admission, reused audio, synthesis metrics and artifact checks.
+
 ## Discord
 
 Set STUDIO_AUTOMATION_DISCORD_ENABLED=1 only after configuring

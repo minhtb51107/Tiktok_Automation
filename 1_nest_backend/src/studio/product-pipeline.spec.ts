@@ -392,6 +392,7 @@ describe('product pipeline snapshot', () => {
 });
 
 it.each([
+  ['ADMISSION_DENIED','ADMISSION_DENIED: COMMIT_RESERVE'],
   ['RESOURCE_GUARD_STOP','RESOURCE_GUARD_STOP'],
   ['TIMEOUT','Kokoro inference deadline exceeded'],
   ['ALLOCATION_FAILURE','Allocator failed'],
@@ -435,7 +436,7 @@ it('resumes the same saved TTS batch only after a sustained probe and does not r
   await pipeline.probeTtsResourceWait(job.id,60_000);
   expect(send).not.toHaveBeenCalled();
   allowed=true;
-  expect((await pipeline.probeTtsResourceWait(job.id,75_000))?.retries).toBe(1);
+  expect((await pipeline.probeTtsResourceWait(job.id,75_000))?.retries).toBe(0);
   await pipeline.probeTtsResourceWait(job.id,90_000);
   expect(send).toHaveBeenCalledTimes(1);
   expect(send).toHaveBeenCalledWith('existing-batch');
@@ -495,7 +496,82 @@ it('authorizes only the latest exact timeout and preserves the consumed resource
   expect(send).not.toHaveBeenCalled();
   await pipeline.probeTtsResourceWait(job.id,Date.now()+1000);
   expect(send).toHaveBeenCalledTimes(1);
-  expect(job.ttsTimeoutRecovery.retries).toBe(1);
+  expect(job.ttsTimeoutRecovery.retries).toBe(0);
   expect(job.ttsWait.retries).toBe(1);
   await expect(pipeline.authorizeTtsTimeoutRecovery(request,'first')).rejects.toThrow('TTS_TIMEOUT_RETRY_ALREADY_AUTHORIZED');
+});
+
+it('authorizes one continuation for the exact legacy warm denial and validates both reusable WAVs',async()=>{
+  const at='2026-11-28T05:06:23.221Z', text='Câu chuyện.';
+  const items=['first','second','remaining'].map((id,order)=>({id,order,selected:true,spokenText:text,voiceSettings:{voice:'my_yen',speed:1.3}}));
+  const oldWait={status:'RESOLVED',retries:1,inputHash:'exact'};
+  const timeout={...oldWait,status:'BLOCKED',blockReason:'RETRY_EXHAUSTED',sessionId:'draft',sourceUrl:'source'};
+  const job:any={id:'batch',status:'BLOCKED',request:{voice:'my_yen',speed:1.3},dispatch:{recovery:{cacheOnly:true}},
+    ttsWait:oldWait,ttsTimeoutRecovery:timeout,results:[{sessionId:'draft',sourceUrl:'source',checkpoint:'DRAFT',
+      collectionId:'collection',assessmentId:'assessment',status:'RESOURCE_STOPPED',aiLedgerIds:['old'],
+      voiceFailure:{itemId:'remaining'}}]};
+  const failure={itemId:'remaining',status:'ERROR',error:'RESOURCE_GUARD_STOP: sustained WARM headroom admission denied',
+    failureCategory:'RESOURCE_GUARD_STOP',completedAt:at,elapsedMs:2456,ttsInputHash:prepareTtsInput(text).ttsInputHash,
+    resourceDiagnostics:{ownedWorkerPid:42,workerStarts:0,chunkProgress:[],phaseMs:{synthesis:null},
+      admission:{phase:'WARM',allowed:false,samples:Array.from({length:5},(_,i)=>({
+        atMs:i*500,availableMiB:483.88,systemCommitAvailableMiB:6713.83,
+      }))}}};
+  const session={id:'draft',items,voiceJobs:[failure]};
+  const verifyWorker=jest.fn(async()=>undefined),verifyAudio=jest.fn(async(_session:string,_asset:{id:string})=>undefined);
+  const studio={hasHeavyWorker:()=>false,withProductionWorker:async(work)=>work(),
+    verifyPreviousTtsWorker:verifyWorker,verifyProductionAudio:verifyAudio,
+    productionTtsAdmission:async()=>({allowed:true,warnings:['LOW_MEMORY_WARNING']})};
+  const contract=await import('./production-contract');
+  const narration=jest.spyOn(contract,'currentNarration').mockImplementation((_session,item)=>
+    item.id==='remaining'?undefined:{id:item.id+'-wav',durationMs:24000} as any);
+  try{
+    const pipeline=new ProductPipelineService(studio as any,
+      {engine:{collection:async()=>({collection:{root:{id:'root',url:'source'}}})}} as any,
+      {evaluator:{get:async()=>({collectionId:'collection',rootSourceId:'root'})}} as any,null);
+    const send=jest.fn();
+    Object.assign(pipeline,{getAuto:async()=>job,listAuto:async()=>[job],saveAuto:async()=>undefined,
+      exactTtsSession:async()=>({session,inputHash:'exact'}),scheduleAuto:send});
+    const request={batchId:'batch',sessionId:'draft',itemId:'remaining',failedAt:at};
+    await expect(pipeline.authorizeTtsAdmissionContinuation({...request,failedAt:'stale'},'first')).rejects.toThrow('STALE_TTS_ADMISSION_FAILURE');
+    await pipeline.authorizeTtsAdmissionContinuation(request,'first');
+    await pipeline.authorizeTtsAdmissionContinuation(request,'first');
+    await expect(pipeline.authorizeTtsAdmissionContinuation(request,'second')).rejects.toThrow('TTS_ADMISSION_CONTINUATION_ALREADY_AUTHORIZED');
+    expect(verifyWorker).toHaveBeenCalledTimes(1);
+    expect(verifyAudio.mock.calls.map(call=>call[1].id)).toEqual(['first-wav','second-wav']);
+    expect(job.ttsAdmissionContinuation).toMatchObject({reusedAssetIds:['first-wav','second-wav'],
+      priorFailure:{classification:'ADMISSION_DENIED',inferenceStarted:false}});
+    await pipeline.probeTtsResourceWait('batch',Date.now()+1000);
+    expect(send).toHaveBeenCalledTimes(1);
+    await expect(pipeline.authorizeTtsAdmissionContinuation(request,'first')).rejects.toThrow('TTS_ADMISSION_CONTINUATION_ALREADY_AUTHORIZED');
+    expect(job).toMatchObject({ttsWait:oldWait,ttsTimeoutRecovery:timeout,ttsAdmissionContinuation:{retries:0}});
+    expect(job.results[0].aiLedgerIds).toEqual(['old']);
+  }finally{narration.mockRestore();}
+});
+
+it('reuses the two saved narrations and sends only the missing scene to Kokoro',async()=>{
+  const contract=await import('./production-contract');
+  const source=jest.spyOn(contract,'sourceBlockers').mockReturnValue([]);
+  const temp=await mkdtemp(path.join(os.tmpdir(),'saved-wavs-'));
+  try{
+    const items=['first','second','remaining'].map((id,order)=>({id,order,selected:true,spokenText:'Câu chuyện.'}));
+    const state:any={id:'draft',revision:1,items};
+    const narration=jest.spyOn(contract,'currentNarration').mockImplementation((_session,item)=>
+      item.id==='remaining'?undefined:{id:item.id+'-wav',durationMs:24000} as any);
+    const audio=path.join(temp,'saved.wav');
+    await writeFile(audio,Buffer.alloc(64));
+    const voiceAction=jest.fn(async(_session:string,_item:string)=>({...state,voiceJobs:[{itemId:'remaining',status:'ERROR',error:'ADMISSION_DENIED: COMMIT_RESERVE',
+      failureCategory:'ADMISSION_DENIED',resourceDiagnostics:{inferenceStarted:false},elapsedMs:2000}]}));
+    const studio={load:async()=>state,jobs:{findRequest:async()=>null},restoreOperatorAvatars:async()=>state,
+      applyAutomaticSeriousAssets:async()=>state,normalizeAutomaticDraft:async()=>state,voiceAction,audioFile:async()=>audio};
+    try{
+      const pipeline=new ProductPipelineService(studio as any,null,null,null);
+      Object.assign(pipeline,{checkAuto:async()=>undefined,saveAuto:async()=>undefined});
+      const row:any={sessionId:'draft',sourceUrl:'https://www.threads.com/@tester/post/ROOT',audioExecution:[]};
+      await expect((pipeline as any).continueAutomaticDraft({id:'batch',request:{voice:'my_yen',speed:1.3},
+        ttsAdmissionContinuation:{itemId:'remaining',reusedAssetIds:['first-wav','second-wav']}},row)).rejects.toThrow('ADMISSION_DENIED');
+      expect(voiceAction).toHaveBeenCalledTimes(1);
+      expect(voiceAction.mock.calls[0][1]).toBe('remaining');
+      expect(row.audioExecution.map(entry=>[entry.itemId,entry.outcome])).toEqual([['first','REUSED'],['second','REUSED']]);
+    }finally{narration.mockRestore();}
+  }finally{source.mockRestore();await rm(temp,{recursive:true,force:true});}
 });

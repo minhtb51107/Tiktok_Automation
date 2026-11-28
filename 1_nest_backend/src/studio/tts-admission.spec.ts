@@ -14,6 +14,21 @@ describe('sustained TTS admission',()=>{
     expect(ttsAdmission(sample(1100,1200),'COLD').allowed).toBe(false);
     expect(ttsAdmission(sample().slice(0,1),'COLD').allowed).toBe(false);
   });
+  it.each([['COLD',700,1900],['WARM',483.88,6713.83]] as const)(
+    'admits %s production at %s MiB with an advisory and preserves the default policy',
+    (phase,ram,commit)=>{
+      expect(ttsAdmission(sample(ram,commit),phase,true)).toMatchObject({
+        allowed:true, warnings:['LOW_MEMORY_WARNING'], requiredAvailableMiB:256,
+      });
+      expect(ttsAdmission(sample(ram,commit),phase).allowed).toBe(false);
+    },
+  );
+  it('retains mandatory physical, commit and measurement protection in production',()=>{
+    expect(ttsAdmission(sample(255,1900),'COLD',true).denialReason).toBe('PHYSICAL_FLOOR');
+    expect(ttsAdmission(sample(700,1791),'COLD',true).denialReason).toBe('COMMIT_RESERVE');
+    expect(ttsAdmission(sample(483.88,1023),'WARM',true).denialReason).toBe('COMMIT_RESERVE');
+    expect(ttsAdmission([], 'WARM',true).denialReason).toBe('INVALID_MEASUREMENT');
+  });
   it('fails closed for stale, null and out-of-order readings and preserves render floors',()=>{
     expect(ttsAdmission(Array(5).fill(sample()[0]),'COLD').allowed).toBe(false);
     expect(ttsAdmission([null,...sample().slice(1)],'COLD').allowed).toBe(false);

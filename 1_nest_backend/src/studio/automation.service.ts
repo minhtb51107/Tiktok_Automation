@@ -26,6 +26,7 @@ import {
 } from './automation.types';
 import {
   ProductPipelineService,
+  activeTtsRecovery,
   seriousDraftDurationStatus,
   type AutonomousProductBatch,
   type AutonomousVideoResult,
@@ -215,12 +216,16 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       const policy = await this.policy(),
         requestId = automationRequestId(body?.requestId);
       const timeout = action==='START'?body?.retryTtsTimeout:undefined;
-      if(timeout!==undefined&&(!timeout||typeof timeout!=='object'||body.retryTtsAdmission===true||
-         Object.keys(timeout).length!==4||!['batchId','sessionId','itemId'].every(key=>typeof timeout[key]==='string'&&/^[a-f0-9-]{36}$/.test(timeout[key]))||
-         typeof timeout.failedAt!=='string'||!Number.isFinite(Date.parse(timeout.failedAt))))
-        throw new BadRequestException('INVALID_TTS_TIMEOUT_RECOVERY');
+      const continuation=action==='START'?body?.continueTtsAdmission:undefined;
+      const savedOnly=process.env.STUDIO_AUTOMATION_SAVED_BATCH_ID;
+      const recovery=continuation??timeout;
+      if((timeout!==undefined||continuation!==undefined)&&(!recovery||typeof recovery!=='object'||body.retryTtsAdmission===true||
+         (timeout!==undefined&&continuation!==undefined)||Object.keys(recovery).length!==4||
+         !['batchId','sessionId','itemId'].every(key=>typeof recovery[key]==='string'&&/^[a-f0-9-]{36}$/.test(recovery[key]))||
+         typeof recovery.failedAt!=='string'||!Number.isFinite(Date.parse(recovery.failedAt))))
+        throw new BadRequestException(continuation!==undefined?'INVALID_TTS_ADMISSION_CONTINUATION':'INVALID_TTS_TIMEOUT_RECOVERY');
       const patch = action === 'PATCH' ? body?.policy : undefined,
-        digest = timeout ? automationKey(action,body.revision,'retryTtsTimeout',timeout) : body?.retryTtsAdmission===true&&action==='START'
+        digest = recovery ? automationKey(action,body.revision,continuation?'continueTtsAdmission':'retryTtsTimeout',recovery) : body?.retryTtsAdmission===true&&action==='START'
           ? automationKey(action,body?.revision,patch,'retryTtsAdmission')
           : automationKey(action, body?.revision, patch);
       if (policy.requestId === requestId) {
@@ -254,7 +259,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         throw new ConflictException('AUTOMATION_MUST_BE_DISABLED');
       if (
         action === 'START' &&
-        (!this.pipeline.productionLiveAuthorized() || !policy.topics.length)
+        (savedOnly ? continuation?.batchId!==savedOnly : !!continuation||!this.pipeline.productionLiveAuthorized() || !policy.topics.length)
       )
         throw new ForbiddenException('AUTHORIZATION_REQUIRED');
       if (action === 'START' && policy.mode === 'DRAINING')
@@ -275,12 +280,13 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         requestId,
         mutationKey: digest,
       });
-      if(timeout){
-        if(!['DISABLED','BLOCKED'].includes(policy.mode))throw new ConflictException('TTS_TIMEOUT_RECOVERY_REQUIRES_IDLE_POLICY');
+      if(recovery){
+        if(!['DISABLED','BLOCKED'].includes(policy.mode))throw new ConflictException('TTS_RECOVERY_REQUIRES_IDLE_POLICY');
         const dayReservations=(await this.store.list<ProductionDay>('days')).flatMap(day=>day.reservations);
-        if(!dayReservations.some(row=>row.batchId===timeout.batchId&&row.dispatch?.recovery?.cacheOnly))
-          throw new ConflictException('TTS_TIMEOUT_RESERVATION_UNVERIFIED');
-        await this.pipeline.authorizeTtsTimeoutRecovery(timeout,requestId);
+        if(!dayReservations.some(row=>row.batchId===recovery.batchId&&row.dispatch?.recovery?.cacheOnly))
+          throw new ConflictException('TTS_RECOVERY_RESERVATION_UNVERIFIED');
+        if(continuation)await this.pipeline.authorizeTtsAdmissionContinuation(continuation,requestId);
+        else await this.pipeline.authorizeTtsTimeoutRecovery(timeout,requestId);
       }
       if(action==='START' && body.retryTtsAdmission===true){
         const batches=await this.pipeline.listAuto();
@@ -488,7 +494,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         continue;
       }
       if (slot.status === 'RUNNING' || slot.status === 'RESERVED' ||
-          ((batch.ttsTimeoutRecovery??batch.ttsWait)?.status === 'RESOLVED' && slot.finishedAt !== batch.completedAt)) {
+          (activeTtsRecovery(batch)?.status === 'RESOLVED' && slot.finishedAt !== batch.completedAt)) {
         slot.batchId = batch.id;
         slot.status =
           batch.status === 'BLOCKED' || batch.status === 'FAILED'
@@ -768,11 +774,13 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       const window = productionWindow(now, policy.schedule);
       const days = await this.store.list<ProductionDay>('days');
       const batches = await this.pipeline.listAuto();
-      const canRecover =
-        policy.mode === 'ENABLED' &&
-        this.pipeline.productionLiveAuthorized() &&
-        window.open;
-      const infrastructure = await this.monitorRecovery(
+      const savedOnly=process.env.STUDIO_AUTOMATION_SAVED_BATCH_ID;
+      const savedBatch=savedOnly?batches.find(batch=>batch.id===savedOnly):undefined;
+      const continuation=savedBatch?.ttsAdmissionContinuation;
+      const canRecover = policy.mode==='ENABLED' && (savedOnly ?
+        !!continuation && continuation.requestId===policy.requestId :
+        this.pipeline.productionLiveAuthorized() && window.open);
+      const infrastructure = savedOnly?null:await this.monitorRecovery(
         days,
         batches,
         now,
@@ -781,9 +789,9 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       const infrastructureReady =
         !infrastructure ||
         ['CLEARED', 'RETRY_ADMITTED'].includes(infrastructure.status);
-      const ttsRecoveries=batches.filter(batch=>days.some(day=>day.reservations.some(slot=>slot.batchId===batch.id&&slot.dispatch)));
-      let ttsWait=ttsRecoveries.find(batch=>{const wait=batch.ttsTimeoutRecovery??batch.ttsWait;return wait&&wait.status!=='RESOLVED';});
-      if(!ttsWait&&canRecover&&infrastructureReady&&!this.pipeline.hasActiveAuto()&&!this.studio.hasHeavyWorker()){
+      const ttsRecoveries=batches.filter(batch=>(!savedOnly||batch.id===savedOnly&&!!continuation)&&days.some(day=>day.reservations.some(slot=>slot.batchId===batch.id&&slot.dispatch)));
+      let ttsWait=ttsRecoveries.find(batch=>{const wait=activeTtsRecovery(batch);return wait&&wait.status!=='RESOLVED';});
+      if(!savedOnly&&!ttsWait&&canRecover&&infrastructureReady&&!this.pipeline.hasActiveAuto()&&!this.studio.hasHeavyWorker()){
         for(const batch of ttsRecoveries){
           if(!batch.dispatch?.recovery?.cacheOnly||batch.status!=='FAILED'||batch.ttsWait)continue;
           const adopted=await this.pipeline.adoptTtsResourceWait(batch.id);
@@ -803,7 +811,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
           day,
           batches,
           now,
-          canRecover && infrastructureReady && !ttsWait && day.dayKey === window.dayKey,
+          !savedOnly && canRecover && infrastructureReady && !ttsWait && day.dayKey === window.dayKey,
         );
       if (
         policy.mode === 'DRAINING' &&
@@ -815,6 +823,11 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
           mode: 'DISABLED',
           revision: policy.revision + 1,
         });
+        return;
+      }
+      if(savedOnly){
+        if(policy.mode==='ENABLED'&&!ttsWait&&!this.pipeline.hasActiveAuto()&&!this.studio.hasHeavyWorker())
+          await this.store.savePolicy({...policy,mode:'DISABLED',revision:policy.revision+1});
         return;
       }
       if (

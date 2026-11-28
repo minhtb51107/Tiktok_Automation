@@ -1,4 +1,4 @@
-import type { TtsFailureEvidence } from './tts-resource-policy';
+import { ttsAdmission, type TtsFailureEvidence } from './tts-resource-policy';
 import { BadRequestException, ConflictException, Injectable, Optional } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
@@ -118,6 +118,8 @@ export interface AutonomousVideoResult {
   measuredSeconds: number | null;
   timelineSeconds: number | null;
   voiceFailure?: TtsFailureEvidence;
+  audioExecution?: Array<{itemId:string;assetId:string;durationMs:number;outcome:'REUSED'|'GENERATED'|'CACHE_HIT';
+    elapsedMs?:number;metrics?:import('./tts-resource-policy').SynthesisMetrics}>;
   warnings: string[];
 }
 
@@ -175,6 +177,10 @@ export interface AutonomousProductBatch {
   inference?: import('../data-engine/ai-provider').AiRequestSummary;
   ttsWait?: TtsResourceWait;
   ttsTimeoutRecovery?: TtsResourceWait & { requestId:string; failedAt:string; itemId:string; checkpointReference:string };
+  ttsAdmissionContinuation?: TtsResourceWait & {
+    requestId:string; failedAt:string; itemId:string; reusedAssetIds:string[];
+    priorFailure:TtsFailureEvidence & {classification:'ADMISSION_DENIED'};
+  };
   browserInfrastructure?: { failureCode: string; cleanupVerified: boolean; diagnosticReference: string };
   dispatchRequestId?: string;
   dispatch?: AutomaticDispatch;
@@ -511,6 +517,10 @@ export function productStageSnapshot(
       ...(session.errors || []),
     ],
   };
+}
+
+export function activeTtsRecovery(batch: AutonomousProductBatch) {
+  return batch.ttsAdmissionContinuation??batch.ttsTimeoutRecovery??batch.ttsWait;
 }
 
 @Injectable()
@@ -1046,6 +1056,7 @@ export class ProductPipelineService {
 
   private async continueAutomaticDraft(batch: AutonomousProductBatch, result: AutonomousVideoResult, deadlineAt=Date.now()+(batch.request.maxRunMs??3600000)) {
     if (!result.sessionId) throw Error('AUTONOMOUS_DRAFT_SESSION_MISSING');
+    const continuation=batch.ttsAdmissionContinuation;
     const id = result.sessionId, preset = batch.dispatch?.preset ?? '1080P60';
     const requestId = 'auto-render-' + batch.id + '-' + canonicalPost(result.sourceUrl)?.id;
     let current = await this.studio.load(id);
@@ -1070,14 +1081,28 @@ export class ProductPipelineService {
           result.status='WAITING_HUMAN';result.warnings=['PRONUNCIATION_REVIEW_REQUIRED',...new Set(ambiguous)];return false;
         }
         batch.stage='GENERATING_VOICE';await this.saveAuto(batch);
-        for(const item of current.items.filter(row=>row.selected).sort((a,b)=>a.order-b.order)){
+        const selected=current.items.filter(row=>row.selected).sort((a,b)=>a.order-b.order);
+        if(continuation && !result.audioExecution?.length){
+          const saved=selected.filter(item=>item.id!==continuation.itemId).map(item=>currentNarration(current,item)?.id);
+          if(JSON.stringify(saved)!==JSON.stringify(continuation.reusedAssetIds))
+            throw Error('AUDIO_VALIDATION_FAILED: saved narration identity changed');
+        }
+        result.audioExecution??=[];
+        for(const item of selected){
           await this.checkAuto(batch);
           const cached=currentNarration(current,item);
-          if(cached&&(await fs.stat(await this.studio.audioFile(id,cached.id)).catch(()=>null))?.size>44)continue;
+          if(cached&&(await fs.stat(await this.studio.audioFile(id,cached.id)).catch(()=>null))?.size>44){
+            if(!result.audioExecution.some(audio=>audio.assetId===cached.id))
+              result.audioExecution.push({itemId:item.id,assetId:cached.id,durationMs:cached.durationMs,outcome:'REUSED'});
+            continue;
+          }
+          if(continuation&&item.id!==continuation.itemId)
+            throw Error('AUDIO_VALIDATION_FAILED: verified saved asset unavailable');
           current=await this.studio.voiceAction(id,item.id,{revision:current.revision,action:'GENERATE',
             voice:batch.request.voice,speed:batch.request.speed,draft:true},undefined,deadlineAt);
           const generated=current.items.find(row=>row.id===item.id);
-          if(!generated||!currentNarration(current,generated)){
+          const asset=generated&&currentNarration(current,generated);
+          if(!asset){
             const voiceJob=current.voiceJobs?.filter(job=>job.itemId===item.id).slice(-1)[0];
             if(voiceJob?.status==='ERROR'&&voiceJob.error){
               result.voiceFailure=this.voiceFailure(voiceJob);
@@ -1085,6 +1110,10 @@ export class ProductPipelineService {
             }
             throw Error('CURRENT_MEASURED_AUDIO_REQUIRED:'+item.id);
           }
+          const generatedJob=current.voiceJobs?.slice(-1)[0];
+          result.audioExecution.push({itemId:item.id,assetId:asset.id,durationMs:asset.durationMs,
+            outcome:asset.synthesisPerformed&&asset.synthesisMetrics?.synthesizedChunks!==0?'GENERATED':'CACHE_HIT',elapsedMs:generatedJob?.elapsedMs,metrics:asset.synthesisMetrics});
+          await this.saveAuto(batch);
         }
         const assets=await this.requireNarration(current);
         result.measuredSeconds=assets.reduce((sum,asset)=>sum+asset.durationMs/1000,0);
@@ -1105,7 +1134,7 @@ export class ProductPipelineService {
         const prior=new Set(result.selectedSourceIds);
         const plan=durationPlans(pool[0],pool.slice(1),batch.request.speed).find(choice=>{
           const ids=new Set([pool[0].id,...choice.ids]);
-          return [...ids].filter(key=>!prior.has(key)).length<=1 && (ids.size!==prior.size||[...ids].some(key=>!prior.has(key)));
+          return [...ids].filter(key=>!prior.has(key)).length<=(continuation?0:1) && (ids.size!==prior.size||[...ids].some(key=>!prior.has(key)));
         });
         if(plan){
           await this.checkAuto(batch);
@@ -1359,7 +1388,64 @@ export class ProductPipelineService {
     return { failureCategory:job.failureCategory??'UNKNOWN',error:job.error,itemId:job.itemId,elapsedMs:job.elapsedMs,
       completedChunks:Number.isInteger(last?.index)?Number(last.index):null,
       totalChunks:Number.isInteger(last?.total)?Number(last.total):null,
-      checkpointReference:job.checkpointReference??null,deadline:job.resourceDiagnostics?.deadline,phaseMs:job.resourceDiagnostics?.phaseMs };
+      checkpointReference:job.checkpointReference??null,deadline:job.resourceDiagnostics?.deadline,phaseMs:job.resourceDiagnostics?.phaseMs,
+      admission:job.resourceDiagnostics?.admission, inferenceStarted:job.resourceDiagnostics?.inferenceStarted,
+      peakRssMiB:job.resourceDiagnostics?.samples?.length?Math.max(...job.resourceDiagnostics.samples.map(sample=>sample.peakRssMiB)):null,
+      minimumAvailableMiB:job.resourceDiagnostics?.samples?.length?Math.min(...job.resourceDiagnostics.samples.map(sample=>sample.availableMiB)):null };
+  }
+  async authorizeTtsAdmissionContinuation(request:TtsTimeoutRequest,requestId:string) {
+    return this.serializeAuto(async()=>{
+      const batch=await this.getAuto(request.batchId), existing=batch.ttsAdmissionContinuation;
+      if(existing){
+        if(existing.requestId===requestId&&existing.sessionId===request.sessionId&&existing.itemId===request.itemId&&
+          existing.failedAt===request.failedAt&&existing.status==='WAITING')return;
+        throw new ConflictException('TTS_ADMISSION_CONTINUATION_ALREADY_AUTHORIZED');
+      }
+      const prior=batch.ttsTimeoutRecovery;
+      if(this.hasActiveAuto()||this.studio.hasHeavyWorker()||batch.cancelRequested||batch.status!=='BLOCKED'||
+        prior?.status!=='BLOCKED'||prior.blockReason!=='RETRY_EXHAUSTED'||prior.retries!==1||
+        batch.ttsWait?.status!=='RESOLVED'||batch.ttsWait.retries!==1||!batch.dispatch?.recovery?.cacheOnly)
+        throw new ConflictException('TTS_ADMISSION_CONTINUATION_INELIGIBLE');
+      if((await this.listAuto()).some(other=>other.id!==batch.id&&(['QUEUED','RUNNING'].includes(other.status)||
+        (activeTtsRecovery(other)&&activeTtsRecovery(other).status!=='RESOLVED'))))
+        throw new ConflictException('TTS_ADMISSION_CONTINUATION_CONFLICT');
+      const row=batch.results.find(result=>result.sessionId===request.sessionId&&result.status==='RESOURCE_STOPPED'&&
+        result.checkpoint==='DRAFT'&&result.assessmentId&&result.collectionId&&!result.renderJobId);
+      if(!row||prior.sessionId!==row.sessionId||prior.sourceUrl!==row.sourceUrl||row.voiceFailure?.itemId!==request.itemId)
+        throw new ConflictException('TTS_ADMISSION_SESSION_MISMATCH');
+      const {session,inputHash}=await this.exactTtsSession(batch,row);
+      const failure=session.voiceJobs?.slice(-1)[0],diagnostic=failure?.resourceDiagnostics;
+      const item=session.items.find(item=>item.selected&&item.id===request.itemId);
+      const admission=diagnostic?.admission;
+      const policy=ttsAdmission(admission?.samples??[],'WARM',true);
+      // V1.2.2 persisted this preflight refusal as RESOURCE_GUARD_STOP. Accept only
+      // that exact legacy failure shape, with the mandatory requirements satisfied.
+      if(!item||item.voiceSettings?.voice!==batch.request.voice||item.voiceSettings?.speed!==batch.request.speed||
+        !failure||failure.itemId!==item.id||failure.status!=='ERROR'||failure.completedAt!==request.failedAt||
+        failure.failureCategory!=='RESOURCE_GUARD_STOP'||failure.error!=='RESOURCE_GUARD_STOP: sustained WARM headroom admission denied'||
+        diagnostic?.workerStarts!==0||diagnostic.chunkProgress?.length!==0||diagnostic.phaseMs?.synthesis!==null||
+        admission?.phase!=='WARM'||admission.allowed!==false||!policy.allowed||!policy.warnings.includes('LOW_MEMORY_WARNING')||
+        failure.ttsInputHash!==prepareTtsInput(item.spokenText,item.pronunciationOverrides).ttsInputHash||
+        prior.inputHash!==inputHash||batch.ttsWait.inputHash!==inputHash)
+        throw new ConflictException('STALE_TTS_ADMISSION_FAILURE');
+      const [collection,assessment]=await Promise.all([
+        this.conversations.engine.collection(row.collectionId),this.ai.evaluator.get(row.assessmentId)]);
+      if(collection.collection.root.url!==row.sourceUrl||assessment.collectionId!==row.collectionId||
+        assessment.rootSourceId!==collection.collection.root.id)throw Error('TTS_RECOVERY_ASSESSMENT_CHANGED');
+      const selected=session.items.filter(item=>item.selected).sort((a,b)=>a.order-b.order);
+      const saved=selected.filter(other=>other.id!==item.id).map(other=>currentNarration(session,other));
+      if(saved.length!==2||saved.some(asset=>!asset)||currentNarration(session,item))
+        throw new ConflictException('TTS_ADMISSION_SAVED_NARRATION_MISMATCH');
+      await this.studio.withProductionWorker(async()=>{
+        await this.studio.verifyPreviousTtsWorker(diagnostic.ownedWorkerPid);
+        for(const asset of saved)await this.studio.verifyProductionAudio(session.id,asset);
+      });
+      batch.ttsAdmissionContinuation={status:'WAITING',requestId,failedAt:request.failedAt,itemId:item.id,
+        sessionId:row.sessionId,sourceUrl:row.sourceUrl,inputHash,nextProbeAt:Date.now(),probes:0,retries:0,
+        previousFailure:failure.error,priorFailure:{...this.voiceFailure(failure),classification:'ADMISSION_DENIED',inferenceStarted:false},
+        reusedAssetIds:saved.map(asset=>asset.id)};
+      await this.saveAuto(batch);
+    });
   }
   async authorizeTtsTimeoutRecovery(request:TtsTimeoutRequest, requestId:string) {
     return this.serializeAuto(async()=>{
@@ -1373,7 +1459,7 @@ export class ProductPipelineService {
           batch.status!=='FAILED'||batch.ttsWait?.status!=='RESOLVED'||batch.ttsWait.retries!==1||!batch.dispatch?.recovery?.cacheOnly)
         throw new ConflictException('TTS_TIMEOUT_RECOVERY_INELIGIBLE');
       if((await this.listAuto()).some(other=>{
-        const wait=other.ttsTimeoutRecovery??other.ttsWait;
+        const wait=activeTtsRecovery(other);
         return other.id!==batch.id&&(['QUEUED','RUNNING'].includes(other.status)||wait&&wait.status!=='RESOLVED');
       }))throw new ConflictException('TTS_TIMEOUT_RECOVERY_CONFLICT');
       const row=batch.results.find(result=>result.sessionId===request.sessionId&&result.status==='TTS_FAILED'&&
@@ -1409,7 +1495,7 @@ export class ProductPipelineService {
       if(!row)return undefined;
       const {session,inputHash}=await this.exactTtsSession(batch,row);
       const failure=session.voiceJobs?.filter(job=>job.status==='ERROR').slice(-1)[0];
-      if(!failure?.error?.startsWith('RESOURCE_GUARD_STOP:'))return undefined;
+      if(!/^(RESOURCE_GUARD_STOP|ADMISSION_DENIED):/.test(failure?.error??''))return undefined;
       const collection=await this.conversations.engine.collection(row.collectionId);
       const assessment=await this.ai.evaluator.get(row.assessmentId);
       if(collection.collection.root.url!==row.sourceUrl||assessment.collectionId!==row.collectionId||
@@ -1422,7 +1508,7 @@ export class ProductPipelineService {
   }
   async probeTtsResourceWait(id: string, now: number) {
     return this.serializeAuto(async()=>{
-      const batch=await this.getAuto(id), wait=batch.ttsTimeoutRecovery??batch.ttsWait;
+      const batch=await this.getAuto(id), wait=activeTtsRecovery(batch);
       if(!wait || this.hasActiveAuto() || this.studio.hasHeavyWorker())return wait;
       if(wait.status==='RETRYING'){
         wait.status='BLOCKED';wait.blockReason='RETRY_EXHAUSTED'; // A restart cannot consume the same recovery retry twice.
@@ -1440,7 +1526,7 @@ export class ProductPipelineService {
           throw Error('TTS_RECOVERY_INPUT_CHANGED');
         wait.admission=await this.studio.withProductionWorker(()=>this.studio.productionTtsAdmission());
         if(wait.admission.allowed){
-          wait.retries++;wait.status='RETRYING';
+          wait.status='RETRYING';
           batch.status='QUEUED';batch.completedAt=null;row.status='RESOURCE_STOPPED';
           await this.saveAuto(batch);
           this.scheduleAuto(id);
@@ -1483,22 +1569,33 @@ export class ProductPipelineService {
         job.startedAt ??= new Date().toISOString();
         await this.saveAuto(job);
         const deadlineAt=Date.now()+job.request.maxRunMs;
-        const recoveryWait=job.ttsTimeoutRecovery??job.ttsWait;
+        const recoveryWait=activeTtsRecovery(job);
         if(recoveryWait?.status==='RETRYING'){
           const wait=recoveryWait;
           const row=job.results.find(result=>result.sessionId===wait.sessionId&&result.sourceUrl===wait.sourceUrl);
-          if(!row||(await this.exactTtsSession(job,row)).inputHash!==wait.inputHash){
-            wait.status='BLOCKED';job.status='BLOCKED';return;
+          if(!row||(await this.exactTtsSession(job,row).catch(()=>null))?.inputHash!==wait.inputHash){
+            wait.status='BLOCKED';wait.blockReason='CLEANUP_OR_IDENTITY';job.status='BLOCKED';
+            job.errors.push('TTS_RECOVERY_INPUT_CHANGED');
+            return;
           }
+          delete row.voiceFailure;
+          row.audioExecution=[];
           try {
             await this.continueAutomaticDraft(job,row,deadlineAt);
+            if(row.audioExecution.some(audio=>audio.outcome==='GENERATED'))wait.retries++;
             wait.status='RESOLVED';
             job.status=row.status==='COMPLETED'?'COMPLETED':row.status==='WAITING_HUMAN'?'PARTIAL':'FAILED';
             job.stage='COMPLETED';
           } catch(error) {
             const message=(error as Error).message;
-            if(/RESOURCE/.test(message)&&!job.ttsTimeoutRecovery)await this.parkTtsResourceFailure(job,row,message);
-            else if(/RESOURCE/.test(message)){wait.status='BLOCKED';wait.blockReason='RETRY_EXHAUSTED';job.status='BLOCKED';row.status='RESOURCE_STOPPED';row.warnings=[message];}
+            if(row.voiceFailure?.inferenceStarted||row.audioExecution.some(audio=>audio.outcome==='GENERATED'))wait.retries++;
+            const denied=row.voiceFailure?.failureCategory==='ADMISSION_DENIED';
+            const resource=denied||/RESOURCE_|CLEANUP_UNVERIFIED/.test(message);
+            if(resource){
+              wait.status='BLOCKED';wait.blockReason=denied?'ADMISSION_DENIED':
+                /CLEANUP_UNVERIFIED/.test(message)?'CLEANUP_OR_IDENTITY':'RETRY_EXHAUSTED';
+              job.status='BLOCKED';row.status='RESOURCE_STOPPED';row.warnings=[message];
+            }
             else {wait.status='RESOLVED';job.status='FAILED';row.status=row.renderJobId?'RENDER_FAILED':'TTS_FAILED';row.warnings=[message];}
           }
           return;
@@ -1563,7 +1660,7 @@ export class ProductPipelineService {
           } catch (error) {
             const message=(error as Error).message;
             if (message === 'AUTONOMOUS_CANCELLED') throw error;
-            if(result.sessionId&&!result.renderJobId&&/RESOURCE_GUARD_STOP|RESOURCE_(?:BROWSER_)?CLEANUP_UNVERIFIED/.test(message)){
+            if(result.sessionId&&!result.renderJobId&&/ADMISSION_DENIED|RESOURCE_GUARD_STOP|RESOURCE_(?:BROWSER_)?CLEANUP_UNVERIFIED/.test(message)){
               await this.parkTtsResourceFailure(job,result,message);
               return;
             }

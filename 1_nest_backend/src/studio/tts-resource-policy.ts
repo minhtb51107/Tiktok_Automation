@@ -1,6 +1,6 @@
 /** Advisory headroom is deliberately separate from emergency stop conditions. */
 export const TTS_RESOURCE_POLICY = {version:'tts-resource/2',coldWarningMiB:1536,warmWarningMiB:384,stopMiB:256,commitStopMiB:512,probeMaxCharacters:160,probeTimeoutMs:90000};
-export type TtsFailureCategory='RESOURCE_GUARD_STOP'|'ALLOCATION_FAILURE'|'TIMEOUT'|'WINDOWS_OOM_EVIDENCE'|'CLEANUP_UNVERIFIED'|'AUDIO_VALIDATION_FAILED'|'UNKNOWN';
+export type TtsFailureCategory='ADMISSION_DENIED'|'RESOURCE_GUARD_STOP'|'ALLOCATION_FAILURE'|'TIMEOUT'|'WINDOWS_OOM_EVIDENCE'|'CLEANUP_UNVERIFIED'|'AUDIO_VALIDATION_FAILED'|'UNKNOWN';
 export class TtsExecutionError extends Error {
  constructor(readonly category:TtsFailureCategory,message:string,readonly evidence?:Record<string,unknown>){super(message);}
 }
@@ -15,6 +15,7 @@ export function ttsResourceWarnings(availableBytes:number,warm=false){
 export function ttsFailureCategory(error:unknown):TtsFailureCategory {
  if(error instanceof TtsExecutionError)return error.category;
  const message=error instanceof Error?error.message:'';
+ if(message.startsWith('ADMISSION_DENIED:'))return 'ADMISSION_DENIED';
  if(message.includes('CLEANUP_UNVERIFIED'))return 'CLEANUP_UNVERIFIED';
  if(/^(?:RESOURCE_GUARD_STOP|BLOCKED_RESOURCE):/.test(message))return 'RESOURCE_GUARD_STOP';
  return 'UNKNOWN'; // A process exit or the word OOM is not Windows evidence.
@@ -42,6 +43,10 @@ export interface TtsFailureEvidence {
   checkpointReference: string | null;
   deadline?: SynthesisMetrics['deadline'];
   phaseMs?: SynthesisMetrics['phaseMs'];
+  admission?: ReturnType<typeof ttsAdmission>;
+  inferenceStarted?: boolean;
+  peakRssMiB?: number | null;
+  minimumAvailableMiB?: number | null;
 }
 export interface ApprovedDraftExecution {
  mode:'LOCAL_DRAFT_BATCH';approvalId:string;leaseToken:string;approved:true;
@@ -62,6 +67,7 @@ export interface SynthesisMetrics {
  runtimeBefore?:unknown;runtimeAfter?:unknown;inferenceBefore?:unknown;inferenceAfter?:unknown;
   chunkSamples?:Array<{index:number;characters:number;before:unknown;after:unknown}>;
   modelLoadStrategy?:'MMAP_ASSIGN';
+ admission?:ReturnType<typeof ttsAdmission>;
  deadline?:ReturnType<typeof ttsDeadlines>;
  phaseMs?:{modelLoad:number|null;synthesis:number|null;assembly:number|null};
  synthesizedChunks?:number; reusedChunks?:number; modelLoads?:number;
@@ -73,8 +79,10 @@ export interface TtsHeadroomSample {
   systemCommitAvailableMiB: number;
 }
 export const TTS_ADMISSION = { coldMiB: 1024, warmMiB: 512, coldCommitMiB: 1792, warmCommitMiB: 1024 };
-export function ttsAdmission(samples: Array<TtsHeadroomSample | null>, phase: 'COLD'|'WARM'|'RENDER') {
+export function ttsAdmission(samples: Array<TtsHeadroomSample | null>, phase: 'COLD'|'WARM'|'RENDER', automaticProduction=false) {
   const physical = phase==='COLD'?TTS_ADMISSION.coldMiB:phase==='WARM'?TTS_ADMISSION.warmMiB:TTS_RESOURCE_POLICY.stopMiB;
+  const advisory = automaticProduction && phase!=='RENDER' ? physical : null;
+  const requiredPhysical = advisory===null ? physical : TTS_RESOURCE_POLICY.stopMiB;
   const commit = phase==='COLD'?TTS_ADMISSION.coldCommitMiB:phase==='WARM'?TTS_ADMISSION.warmCommitMiB:TTS_RESOURCE_POLICY.commitStopMiB;
   const valid = samples.length===5 && samples.every((row,i)=>row &&
     [row.atMs,row.availableMiB,row.systemCommitAvailableMiB].every(n=>Number.isFinite(n)&&n>=0) &&
@@ -82,7 +90,10 @@ export function ttsAdmission(samples: Array<TtsHeadroomSample | null>, phase: 'C
     samples[4].atMs-samples[0].atMs<=5000;
   const minimumAvailableMiB=valid?Math.min(...samples.map(row=>row.availableMiB)):null;
   const minimumCommitReserveMiB=valid?Math.min(...samples.map(row=>row.systemCommitAvailableMiB)):null;
-  return { phase, allowed:valid&&minimumAvailableMiB>=physical&&minimumCommitReserveMiB>=commit,
-    minimumAvailableMiB, minimumCommitReserveMiB, requiredAvailableMiB:physical,requiredCommitReserveMiB:commit,
+  const denialReason = !valid ? 'INVALID_MEASUREMENT' : minimumAvailableMiB<requiredPhysical ? 'PHYSICAL_FLOOR' :
+    minimumCommitReserveMiB<commit ? 'COMMIT_RESERVE' : null;
+  const warnings = valid && advisory!==null && minimumAvailableMiB<advisory ? ['LOW_MEMORY_WARNING'] : [];
+  return { phase, allowed:denialReason===null, denialReason, warnings, advisoryAvailableMiB:advisory,
+    minimumAvailableMiB, minimumCommitReserveMiB, requiredAvailableMiB:requiredPhysical,requiredCommitReserveMiB:commit,
     samples };
 }

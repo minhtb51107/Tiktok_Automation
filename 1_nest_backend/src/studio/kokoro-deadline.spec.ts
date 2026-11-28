@@ -2,7 +2,7 @@ import { expect, it, jest } from '@jest/globals';
 import { PassThrough, Writable } from 'stream';
 import { EventEmitter } from 'events';
 import { KokoroRuntime, pcmCheckpointSamples } from './kokoro-runtime';
-import { ttsDeadlines, ttsRemainingSynthesis } from './tts-resource-policy';
+import { ttsAdmission, ttsDeadlines, ttsRemainingSynthesis } from './tts-resource-policy';
 
 it('limits automatic draft audio to 240 seconds of synthesis and 300 total',()=>{
   expect(ttsDeadlines(1000,undefined,999999)).toEqual({policy:'AUTOMATIC_PRODUCTION',totalDeadlineAt:301000,synthesisLimitMs:240000});
@@ -44,4 +44,33 @@ it('rejects truncated or incorrectly formatted PCM checkpoints',()=>{
   expect(pcmCheckpointSamples(b.subarray(0,47))).toBeNull();
   b.writeUInt32LE(48000,24);
   expect(pcmCheckpointSamples(b)).toBeNull();
+});
+
+it.each([false,true])('reuses a warm worker through an advisory and still stops for low commit (%s)',async(emergency)=>{
+  const runtime:any=new KokoroRuntime();
+  const stdout=new PassThrough();
+  const sent=jest.fn();
+  const stdin=new Writable({write(_chunk,_encoding,done){sent();done();}});
+  const worker=Object.assign(new EventEmitter(),{stdout,stdin,pid:123,exitCode:null,signalCode:null,kill:jest.fn()});
+  const cleanup=jest.fn(async()=>undefined);
+  const measure=jest.fn(async(phase:'WARM',automatic:boolean)=>ttsAdmission(
+    Array.from({length:5},(_,i)=>({atMs:i*500,availableMiB:483.88,systemCommitAvailableMiB:6713.83})),phase,automatic));
+  Object.assign(runtime,{resourceAdmission:measure,closeAndWait:cleanup,worker,workerKey:JSON.stringify(runtime.cfg())+'version',
+    deadline:ttsDeadlines(Date.now(),undefined,Date.now()+2000)});
+  await expect(runtime.productionAdmission()).resolves.toMatchObject({allowed:true,warnings:['LOW_MEMORY_WARNING']});
+  expect(cleanup).not.toHaveBeenCalled();
+  const running=runtime.synthesize('text','voice','output','version','base');
+  const expected=emergency?expect(running).rejects.toMatchObject({category:'RESOURCE_GUARD_STOP'}):
+    expect(running).resolves.toMatchObject({synthesizedChunks:1});
+  await new Promise(resolve=>setImmediate(resolve));
+  expect(measure).toHaveBeenCalledWith('WARM',true);
+  expect(measure).toHaveBeenCalledTimes(process.platform==='win32'?2:1);
+  expect(sent).toHaveBeenCalledTimes(1);
+  stdout.write('@STUDIO@'+JSON.stringify({stage:'Synthesizing'})+'\n');
+  stdout.write('@STUDIO@'+JSON.stringify(emergency?{resource:{systemCommitAvailableMiB:511}}:{ok:true,metrics:{synthesizedChunks:1}})+'\n');
+  await expected;
+  expect(runtime.diagnostics().workerStarts).toBe(0);
+  expect(runtime.diagnostics().inferenceStarted).toBe(true);
+  expect(cleanup).toHaveBeenCalledTimes(emergency?1:0);
+  clearTimeout(runtime.idle);
 });

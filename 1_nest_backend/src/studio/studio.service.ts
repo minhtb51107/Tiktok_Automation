@@ -1298,12 +1298,15 @@ export class StudioService {
   }
   private readonly productionScope = new AsyncLocalStorage<symbol>();
   private productionOwner?: symbol;
-  async verifyTtsTimeoutRecovery(session: StudioSession, itemId:string, voice:string,speed:number, previousPid:number) {
+  async verifyPreviousTtsWorker(previousPid:number) {
     assertBrowserResourceHandoff();
     await this.voice.closeAndWait();
     if(!Number.isSafeInteger(previousPid)||previousPid<=0)throw Error('TTS_PREVIOUS_WORKER_UNVERIFIED');
     try { process.kill(previousPid,0); throw Error('TTS_PREVIOUS_WORKER_UNVERIFIED'); }
     catch(error){if((error as NodeJS.ErrnoException).code!=='ESRCH')throw error;}
+  }
+  async verifyTtsTimeoutRecovery(session: StudioSession, itemId:string, voice:string,speed:number, previousPid:number) {
+    await this.verifyPreviousTtsWorker(previousPid);
     const item=session.items.find(row=>row.id===itemId&&row.selected);
     if(!item||item.voiceSettings?.voice!==voice||item.voiceSettings?.speed!==speed)throw Error('TTS_RECOVERY_SETTINGS_CHANGED');
     const normalized=prepareTtsInput(item.spokenText,item.pronunciationOverrides);
@@ -1312,8 +1315,11 @@ export class StudioService {
   }
   async productionTtsAdmission() {
     assertBrowserResourceHandoff();
-    await this.voice.closeAndWait().catch(()=>{throw Error('RESOURCE_CLEANUP_UNVERIFIED');});
-    return this.voice.resourceAdmission('COLD');
+    return this.voice.productionAdmission();
+  }
+  async verifyProductionAudio(sessionId:string, asset: import('./voice.types').VoiceAsset) {
+    const duration = await this.voice.validateAudio(await this.audioFile(sessionId, asset.id));
+    if (duration !== asset.durationMs) throw Error('AUDIO_VALIDATION_FAILED: saved narration duration changed');
   }
   async productionRenderHandoff() {
     assertBrowserResourceHandoff();

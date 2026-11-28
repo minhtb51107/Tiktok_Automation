@@ -9,9 +9,12 @@ param(
     [ValidateRange(1024,65535)][int]$Port = 57374,
     [string]$RuntimeConfig,
     [switch]$RetryTimeout,
+    [switch]$ContinueAdmission,
     [string]$ItemId = '5ffe9fd3-06e0-44a7-bea2-4a9ceebc164f'
 )
 $ErrorActionPreference = 'Stop'
+if ($ContinueAdmission -and $RetryTimeout) { throw 'Select one recovery operation.' }
+if ($ContinueAdmission -and !$PSBoundParameters.ContainsKey('ItemId')) { $ItemId = '18ff2031-b1c4-4b4d-a72e-3605179b4c99' }
 $backend = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $root = (Resolve-Path -LiteralPath $DataRoot).Path
 if ([guid]::Parse($BatchId).ToString() -cne $BatchId -or
@@ -100,7 +103,7 @@ if ($Action -in @('Status','Stop')) {
     [pscustomobject]@{
         runtimeOnline=($null -ne $live); api=$live; savedPolicy=(Read-Json $policyPath).mode
         batchStatus=$outcome.batch.status; stage=$outcome.batch.stage; candidateStatus=$outcome.row.status
-        ttsWait=$outcome.batch.ttsWait; timeoutRecovery=$outcome.batch.ttsTimeoutRecovery; voiceFailure=(Read-VoiceFailure); renderJobId=$outcome.row.renderJobId; mp4Root=$renderRoot
+        ttsWait=$outcome.batch.ttsWait; timeoutRecovery=$outcome.batch.ttsTimeoutRecovery; admissionContinuation=$outcome.batch.ttsAdmissionContinuation; voiceFailure=(Read-VoiceFailure); renderJobId=$outcome.row.renderJobId; mp4Root=$renderRoot
         logDirectory=$state.logDirectory; report=$reportPath
     } | ConvertTo-Json -Depth 20
     return
@@ -123,7 +126,16 @@ try {
     $policy = Read-Json $policyPath
     if ($policy.mode -notin @('DISABLED','BLOCKED')) { throw 'The saved policy must be DISABLED or BLOCKED before launch.' }
     if ($policy.dailyVideoLimit -ne 1 -or $policy.renderPreset -ne '1080P60') { throw 'Expected the existing one-video 1080P60 policy.' }
-    if ($Action -eq 'Start' -and $RetryTimeout) {
+    if ($Action -eq 'Start' -and $ContinueAdmission) {
+        $failure=Read-VoiceFailure
+        $prior=$outcome.batch.ttsTimeoutRecovery
+        if ($outcome.batch.ttsAdmissionContinuation -or $outcome.batch.status -ne 'BLOCKED' -or
+            $prior.status -ne 'BLOCKED' -or $prior.blockReason -ne 'RETRY_EXHAUSTED' -or
+            $failure.itemId -ne $ItemId -or $failure.error -ne 'RESOURCE_GUARD_STOP: sustained WARM headroom admission denied' -or
+            $outcome.row.renderJobId) {
+            throw 'The exact saved admission denial is stale, ineligible or already authorized.'
+        }
+    } elseif ($Action -eq 'Start' -and $RetryTimeout) {
         $failure=Read-VoiceFailure
         if ($outcome.batch.ttsTimeoutRecovery -or $outcome.batch.ttsWait.status -ne 'RESOLVED' -or
             $outcome.batch.ttsWait.retries -ne 1 -or $outcome.row.status -ne 'TTS_FAILED' -or
@@ -132,7 +144,7 @@ try {
         }
     } elseif ($Action -eq 'Start' -and ($outcome.batch.ttsWait.status -ne 'BLOCKED' -or
         $outcome.batch.ttsWait.blockReason -ne 'ADMISSION_DENIED' -or $outcome.batch.ttsWait.retries -ne 0 -or
-        $outcome.row.renderJobId)) { throw 'The exact saved admission checkpoint is not eligible. Use -RetryTimeout for a saved timeout.' }
+        $outcome.row.renderJobId)) { throw 'The exact saved admission checkpoint is not eligible. Use -RetryTimeout for a saved timeout or -ContinueAdmission for the warm admission denial.' }
     $build = Join-Path $backend 'dist/main.js'
     if (!(Test-Path -LiteralPath $build -PathType Leaf)) { throw 'The current backend build is missing.' }
     if (!$RuntimeConfig) { $RuntimeConfig = Join-Path $backend '.studio-data/runtime.local.json' }
@@ -149,7 +161,10 @@ try {
         PORT="$Port"; STUDIO_DATA_ROOT=$root; STUDIO_OPERATOR_ONLY='0'; STUDIO_AUTOMATION_ENABLED='1'
         STUDIO_AUTOMATION_TOKEN=$token; STUDIO_AUTOMATION_DISCORD_ENABLED='0'; HUGGINGFACE_API_KEY=''
         HUGGINGFACE_LEDGER_PATH=(Join-Path $root 'ai-inference-ledger.jsonl')
-        STUDIO_PRODUCT_AUTOMATION_LIVE_ENABLED='1'; STUDIO_DATA_QUALITY_LIVE_ENABLED='1'; STUDIO_DATA04_LIVE_ENABLED='1'
+        STUDIO_AUTOMATION_SAVED_BATCH_ID=$(if($ContinueAdmission){$BatchId}else{''})
+        STUDIO_PRODUCT_AUTOMATION_LIVE_ENABLED=$(if($ContinueAdmission){'0'}else{'1'})
+        STUDIO_DATA_QUALITY_LIVE_ENABLED=$(if($ContinueAdmission){'0'}else{'1'})
+        STUDIO_DATA04_LIVE_ENABLED=$(if($ContinueAdmission){'0'}else{'1'})
     }
     $run = Join-Path $ops ('run-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8))
     $null = New-Item -ItemType Directory -Path $run
@@ -194,6 +209,10 @@ try {
     $ram=($samples | Measure-Object -Property availableMiB -Minimum).Minimum
     $commit=($samples | Measure-Object -Property systemCommitAvailableMiB -Minimum).Minimum
     Write-Host "Backend ready. Probe minimums are $ram MiB RAM and $commit MiB commit reserve."
+    if ($ContinueAdmission -and $ram -lt 1024) {
+        $final.memoryAdvisories=@('LOW_MEMORY_WARNING')
+        Write-Warning 'LOW_MEMORY_WARNING: cold physical headroom below 1024 MiB. Scheduler checks mandatory floors.'
+    }
     Write-Host "Logs: $run"
     if ($Action -eq 'Check') { $final.result='CHECKED_NO_PRODUCTION'; return }
     if ($worker.HasExited) { throw 'Backend exited before starting production.' }
@@ -201,18 +220,19 @@ try {
         $pending = if ($_.ttsTimeoutRecovery) { $_.ttsTimeoutRecovery } else { $_.ttsWait }
         $pending -and $pending.status -ne 'RESOLVED'
     })
-    if (($RetryTimeout -and $unresolved.Count -ne 0) -or
-        (!$RetryTimeout -and ($unresolved.Count -ne 1 -or $unresolved[0].id -ne $BatchId)) -or
+    if (($ContinueAdmission -and ($unresolved.Count -ne 1 -or $unresolved[0].id -ne $BatchId)) -or
+        ($RetryTimeout -and $unresolved.Count -ne 0) -or
+        (!$ContinueAdmission -and !$RetryTimeout -and ($unresolved.Count -ne 1 -or $unresolved[0].id -ne $BatchId)) -or
         @($initialReport.batches | Where-Object { $_.status -in @('QUEUED','RUNNING') }).Count) {
         throw 'The requested batch must be the only pending production recovery.'
     }
     # An existing open review fills this temporary cap. The scheduler probes
     # the saved TTS wait before its ordinary discovery capacity check.
-    if (-not @(Call-Api reviews | Where-Object { $_.status -eq 'OPEN' }).Count) {
+    if (!$ContinueAdmission -and -not @(Call-Api reviews | Where-Object { $_.status -eq 'OPEN' }).Count) {
         throw 'The saved pilot must have an open review to keep ordinary discovery closed.'
     }
     $current=Call-Api status
-    if ($current.policy.maxPendingReviews -ne 1) {
+    if (!$ContinueAdmission -and $current.policy.maxPendingReviews -ne 1) {
         $originalReviewLimit=$current.policy.maxPendingReviews
         $null=Call-Api policy PATCH @{requestId=[guid]::NewGuid().ToString();revision=$current.policy.revision;policy=@{maxPendingReviews=1}}
     }
@@ -220,7 +240,9 @@ try {
     $current=Call-Api status
     $final.startRequestId=[guid]::NewGuid().ToString()
     $start=@{requestId=$final.startRequestId;revision=$current.policy.revision}
-    if($RetryTimeout){
+    if($ContinueAdmission){
+        $start.continueTtsAdmission=@{batchId=$BatchId;sessionId=$SessionId;itemId=$ItemId;failedAt=$failure.failedAt}
+    }elseif($RetryTimeout){
         $start.retryTtsTimeout=@{batchId=$BatchId;sessionId=$SessionId;itemId=$ItemId;failedAt=$failure.failedAt}
     }else{$start.retryTtsAdmission=$true}
     $null=Call-Api start POST $start
@@ -229,10 +251,10 @@ try {
     for ($poll=0; ; $poll++) {
         if ($worker.HasExited) { throw 'Backend exited before settling. Saved checkpoints remain on disk.' }
         $outcome=Read-Outcome
-        $wait=if($RetryTimeout){$outcome.batch.ttsTimeoutRecovery}else{$outcome.batch.ttsWait}
+        $wait=if($ContinueAdmission){$outcome.batch.ttsAdmissionContinuation}elseif($RetryTimeout){$outcome.batch.ttsTimeoutRecovery}else{$outcome.batch.ttsWait}
         # Drain immediately after the exact saved retry is admitted. The active
         # retry continues while the scheduler stops accepting other work.
-        if (!$draining -and ($wait.status -in @('RETRYING','RESOLVED') -or (Get-Date) -gt $deadline)) {
+        if (!$draining -and ((!$ContinueAdmission -and $wait.status -in @('RETRYING','RESOLVED')) -or (Get-Date) -gt $deadline)) {
             $null=Request-Drain
             $draining=$true
         }
@@ -244,12 +266,29 @@ try {
     }
     $final.video=Get-ValidatedVideo (Read-Outcome)
     $outcome=Read-Outcome
-    $wait=if($RetryTimeout){$outcome.batch.ttsTimeoutRecovery}else{$outcome.batch.ttsWait}
-    $final.productionFailure=if($final.video){$null}elseif($outcome.row.voiceFailure){$outcome.row.voiceFailure}else{Read-VoiceFailure}
-    if(!$final.video){$final.productionWarnings=$outcome.row.warnings;$final.resourceBlocker=$wait.blockReason}
+    $wait=if($ContinueAdmission){$outcome.batch.ttsAdmissionContinuation}elseif($RetryTimeout){$outcome.batch.ttsTimeoutRecovery}else{$outcome.batch.ttsWait}
+    $final.audioExecution=$outcome.row.audioExecution
+    $final.measuredAudioSeconds=$outcome.row.measuredSeconds
+    $final.timelineSeconds=$outcome.row.timelineSeconds
+    $final.admission=$wait.admission
+    $final.productionFailure=if($final.video){$null}elseif($outcome.row.voiceFailure -and (!$ContinueAdmission -or $outcome.row.voiceFailure.error -ne $wait.previousFailure)){$outcome.row.voiceFailure}elseif($wait.status -eq 'BLOCKED'){
+        @{failureCategory=$(if($wait.blockReason){$wait.blockReason}else{'UNKNOWN'});evidence=$wait.admission}
+    }elseif(!$ContinueAdmission){Read-VoiceFailure}else{$null}
+    if(!$final.video){
+        $final.productionWarnings=$outcome.row.warnings
+        $final.productionFailureCode=$outcome.row.failureCode
+        $final.resourceBlocker=$wait.blockReason
+    }
     $final.result=if ($final.video) {'PASS'} elseif ($wait.status -eq 'BLOCKED') {'BLOCKED'} elseif ($outcome.row.status -in @('TTS_FAILED','RENDER_FAILED')) {'FAILED'} else {'STOPPED_WITHOUT_MP4'}
 } catch {
     $final.error=$_.Exception.Message
+    if ($_.ErrorDetails.Message) {
+        try {
+            $detail=$_.ErrorDetails.Message | ConvertFrom-Json
+            $message=if($detail.error.message){$detail.error.message}else{$detail.message}
+            if($message){$final.error=($message -join '; ')}
+        } catch {}
+    }
     throw
 } finally {
     try {

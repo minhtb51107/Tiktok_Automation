@@ -57,7 +57,7 @@ export class KokoroRuntime {
     };
   }
   private lastAdmission?: ReturnType<typeof ttsAdmission>;
-  diagnostics(){return {deadline:this.deadline,phaseMs:this.phaseMs(),chunkProgress:structuredClone(this.chunkProgress),modelLoads:this.modelLoads,workerStarts:this.workerStarts,
+  diagnostics(){return {deadline:this.deadline,phaseMs:this.phaseMs(),inferenceStarted:this.phases.synthesizing!==undefined,chunkProgress:structuredClone(this.chunkProgress),modelLoads:this.modelLoads,workerStarts:this.workerStarts,
     admission:this.lastAdmission,inputHash:this.resourceInputHash,workerPid:this.worker?.pid??null,ownedWorkerPid:this.lastOwned?.pid??null,samples:structuredClone(this.resourceSamples)};}
   onStage?: (step:string)=>void;
   private worker?: ChildProcessWithoutNullStreams;
@@ -272,18 +272,24 @@ export class KokoroRuntime {
     const rows=await this.checkpointManifests(sessionId,textHash(text),baseKey);
     return rows.length===1?rows[0].reference:null;
   }
-  async resourceAdmission(phase: 'COLD'|'WARM'|'RENDER') {
+  async resourceAdmission(phase: 'COLD'|'WARM'|'RENDER', automaticProduction=false) {
     this.lastAdmission=undefined;
     try {
       const samples=JSON.parse(await this.run(this.python(),[path.resolve('scripts/kokoro_memory.py'),'--series'],7000));
-      this.lastAdmission=ttsAdmission(Array.isArray(samples)?samples:[],phase);
-    }catch{this.lastAdmission=ttsAdmission([],phase);}
+      this.lastAdmission=ttsAdmission(Array.isArray(samples)?samples:[],phase,automaticProduction);
+    }catch{this.lastAdmission=ttsAdmission([],phase,automaticProduction);}
     return this.lastAdmission;
   }
-  private async requireAdmission(phase: 'COLD'|'WARM') {
-    const admission=await this.resourceAdmission(phase);
-    if(!admission.allowed)throw new TtsExecutionError('RESOURCE_GUARD_STOP',
-      'RESOURCE_GUARD_STOP: sustained '+phase+' headroom admission denied',admission);
+  async productionAdmission() {
+    if (this.worker && this.worker.exitCode===null && this.worker.signalCode===null)
+      return this.resourceAdmission('WARM',true);
+    await this.closeAndWait().catch(()=>{throw Error('RESOURCE_CLEANUP_UNVERIFIED');});
+    return this.resourceAdmission('COLD',true);
+  }
+  private async requireAdmission(phase: 'COLD'|'WARM', automaticProduction: boolean) {
+    const admission=await this.resourceAdmission(phase,automaticProduction);
+    if(!admission.allowed)throw new TtsExecutionError('ADMISSION_DENIED',
+      'ADMISSION_DENIED: sustained '+phase+' headroom: '+admission.denialReason,admission);
   }
   private async synthesize(
     text: string,
@@ -301,11 +307,14 @@ export class KokoroRuntime {
       if(execution){validateLocalExecution(text,execution);if(execution.mode==='LOCAL_BOUNDED_PROBE'&&this.worker)throw Error('BOUNDED_PROBE_REQUIRES_COLD_IDLE_RUNTIME');if(execution.mode==='LOCAL_DRAFT_BATCH'&&execution.inputHash!==textHash(text))throw Error('APPROVED_TTS_INPUT_CHANGED');}
       const key = JSON.stringify(this.cfg()) + version;
       this.resourceSamples=[];this.chunkProgress=[];this.phases={};this.modelLoads=0;this.workerStarts=0;this.lastAdmission=undefined;this.resourceInputHash=textHash(text);
-      const block=ttsResourceBlock(freemem(),!!this.worker&&this.workerKey===key);
-      if(block)throw new TtsExecutionError('RESOURCE_GUARD_STOP',block);
+      const automaticProduction=this.deadline?.policy==='AUTOMATIC_PRODUCTION';
       const warm=!!this.worker&&this.workerKey===key;
+      const block=ttsResourceBlock(freemem(),warm);
+      if(block&&(!automaticProduction||process.platform!=='win32'))throw new TtsExecutionError(
+        automaticProduction?'ADMISSION_DENIED':'RESOURCE_GUARD_STOP',
+        automaticProduction?'ADMISSION_DENIED: physical memory below emergency floor':block);
       if(!warm)await this.closeAndWait();
-      if(process.platform==='win32')await this.requireAdmission(warm?'WARM':'COLD');
+      if(process.platform==='win32')await this.requireAdmission(warm?'WARM':'COLD',automaticProduction);
       if (!this.worker || this.workerKey !== key) {
         this.workerStarts++;
         this.worker = spawn(
@@ -339,7 +348,7 @@ export class KokoroRuntime {
           worker.stdout.off('data', read);
           worker.off('close', closed);
           worker.off('error', failed);
-          if(err){this.close();reject(err);}else resolve(metrics&&{...metrics,deadline:this.deadline,phaseMs:this.phaseMs()});
+          if(err){this.close();reject(err);}else resolve(metrics&&{...metrics,admission:this.lastAdmission,deadline:this.deadline,phaseMs:this.phaseMs()});
         };
         resourceTimer=setInterval(()=>{if(freemem()/1024**2<TTS_RESOURCE_POLICY.stopMiB)finish(new TtsExecutionError('RESOURCE_GUARD_STOP','RESOURCE_GUARD_STOP: available RAM below 256 MiB; owned worker stopped'));},250);
         const closed = (code:number|null,signal:string|null) => {const allocation=code!==null&&[0xc0000017,0xc000012d].includes(code>>>0);finish(new TtsExecutionError(allocation?'ALLOCATION_FAILURE':'UNKNOWN',`Kokoro worker exited (code=${code}, signal=${signal}); no Windows OOM evidence`,{exitCode:code,signal}));};
@@ -401,7 +410,7 @@ export class KokoroRuntime {
     const filter = atempoFilter(speed);
     this.deadline=ttsDeadlines(Date.now(),execution,productionDeadlineAt);
     this.boundedDeadline=this.deadline.totalDeadlineAt;
-    this.resourceInputHash=textHash(text);this.phases={};this.chunkProgress=[];this.resourceSamples=[];this.modelLoads=0;this.workerStarts=0;
+    this.resourceInputHash=textHash(text);this.lastAdmission=undefined;this.phases={};this.chunkProgress=[];this.resourceSamples=[];this.modelLoads=0;this.workerStarts=0;
     try {
     if(this.boundedDeadline!==undefined&&Date.now()>=this.boundedDeadline)
       throw new TtsExecutionError('TIMEOUT','Scene audio deadline exceeded');
@@ -469,7 +478,7 @@ export class KokoroRuntime {
     };
     } finally { this.boundedDeadline=undefined; }
   }
-  private async validateAudio(file: string) {
+  async validateAudio(file: string) {
     this.onStage?.('FFprobe validation');
     try {
     const probe = JSON.parse(

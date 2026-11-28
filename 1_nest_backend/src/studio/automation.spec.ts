@@ -18,6 +18,7 @@ import { ProductPipelineService } from './product-pipeline';
 
 let root: string;
 const keys = [
+  'STUDIO_AUTOMATION_SAVED_BATCH_ID',
   'STUDIO_AUTOMATION_ENABLED',
   'STUDIO_AUTOMATION_TOKEN',
   'STUDIO_OPERATOR_ONLY',
@@ -30,6 +31,7 @@ beforeEach(async () => {
   root = await fs.mkdtemp(path.join(tmpdir(), 'local-production-'));
   previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   for (const key of keys) process.env[key] = '1';
+  delete process.env.STUDIO_AUTOMATION_SAVED_BATCH_ID;
   process.env.STUDIO_AUTOMATION_TOKEN = 'x'.repeat(32);
   process.env.STUDIO_OPERATOR_ONLY = '0';
 });
@@ -663,3 +665,43 @@ it.each([true, false])(
     }
   },
 );
+
+it('runs only an authorized saved continuation with LIVE disabled and drains after it settles',async()=>{
+  const db=store();
+  const batchId='97ce64ca-8ee6-4cde-92e1-741130c97587';
+  process.env.STUDIO_AUTOMATION_SAVED_BATCH_ID=batchId;
+  const batch:any={id:batchId,status:'BLOCKED',results:[],errors:[],dispatch:{recovery:{cacheOnly:true}},
+    ttsTimeoutRecovery:{status:'BLOCKED',retries:1}};
+  const decision={batchId,sessionId:'578a7376-0afc-41be-b032-3b593643d77b',itemId:'18ff2031-b1c4-4b4d-a72e-3605179b4c99',failedAt:'2026-11-28T05:06:23.221Z'};
+  const now=new Date('2026-11-28T05:20:00Z');
+  const day={...await db.day('2026-11-28',now.toISOString()),reservations:[{
+    id:'old',requestId:'old-production',status:'FAILED',kind:'NEW_VIDEO',batchId,
+    candidateKey:'candidate',sessionId:decision.sessionId,renderJobId:null,createdAt:now.toISOString(),finishedAt:now.toISOString(),
+    dispatch:{recovery:{cacheOnly:true}},
+  }]};
+  await db.put('days',day.dayKey,day);
+  const authorize=jest.fn(async(_decision:typeof decision,requestId:string)=>{
+    batch.ttsAdmissionContinuation={status:'WAITING',requestId};
+  });
+  const collect=jest.fn();
+  const probe=jest.fn(async()=>batch.ttsAdmissionContinuation);
+  const studio={hasHeavyWorker:()=>false};
+  const service=new AutomationService(db,new AutomationReviewService(db,studio as any),{
+    hasActiveAuto:()=>false,listAuto:async()=>[batch],productionLiveAuthorized:()=>false,
+    authorizeTtsAdmissionContinuation:authorize,probeTtsResourceWait:probe,startAuto:collect,
+  } as any,studio as any);
+  Object.assign(service,{owned:true});
+  await expect(service.configure({requestId:'plain-start',revision:0},'START')).rejects.toThrow('AUTHORIZATION_REQUIRED');
+  const body={requestId:'saved-start',revision:0,continueTtsAdmission:decision};
+  await service.configure(body,'START');
+  await service.configure(body,'START');
+  expect(authorize).toHaveBeenCalledTimes(1);
+  await service.tick(now);
+  expect(probe).toHaveBeenCalledTimes(1);
+  expect((await service.status()).policy.mode).toBe('ENABLED');
+  batch.ttsAdmissionContinuation.status='RESOLVED';
+  await service.tick(now);
+  expect((await service.status()).policy.mode).toBe('DISABLED');
+  expect(collect).not.toHaveBeenCalled();
+  expect((await db.day(day.dayKey,now.toISOString())).reservations).toHaveLength(1);
+});
