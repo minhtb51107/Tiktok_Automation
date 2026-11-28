@@ -143,6 +143,45 @@ host has more headroom. Retry exhaustion and unverified cleanup stay blocked.
 The batch report exposes `ttsWait` and admission samples. This workflow leaves
 the original candidate reservation and AI ledger in place.
 
+## Standalone V1.2.1 saved-pilot acceptance
+
+Close Codex, Antigravity, the IDE and other applications you do not need.
+Open a regular Windows PowerShell window from the Start menu and run the
+following from the official repository root. The launcher uses the existing
+build and the ignored `1_nest_backend/.studio-data/runtime.local.json`.
+
+```powershell
+powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.ps1 -Action Start
+```
+
+Keep that standalone window open until its report appears. For status or to
+drain and stop, run either command below from a second PowerShell window under
+the same Windows user. The launcher exits after the backend drains.
+
+```powershell
+powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.ps1 -Action Status
+powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.ps1 -Action Stop
+```
+
+The default checkpoint is `%TEMP%\production-auto-v121-saved-FAEjyj`. The
+launcher checks the exact batch, session and source, measures headroom after
+startup, and reads the current revision from the API before requesting the
+saved retry. To hold ordinary discovery, it temporarily caps pending reviews
+at one while an existing review remains open. The prior cap is restored after
+drain. Leave the existing reviews unchanged during acceptance. The supervisor
+requests drain as soon as the saved retry is admitted. The attempt and AI
+quotas stay in place. Use `-Action Check` to verify startup and headroom with
+production disabled.
+
+Each launch writes `backend.stdout.log`, `backend.stderr.log` and
+`report.json` under `standalone-acceptance\run-*` in the data root. The most
+recent production run is also recorded at
+`standalone-acceptance\latest-report.json`. A validated video is written to
+`renders\<session-id>\<render-job-id>\video.mp4`. The report records the
+artifact only after checking the machine validation, inventory, render strategy
+and SHA-256. A blocked run keeps its checkpoint for another explicit admission
+request when headroom improves.
+
 ## Discord
 
 Set STUDIO_AUTOMATION_DISCORD_ENABLED=1 only after configuring
