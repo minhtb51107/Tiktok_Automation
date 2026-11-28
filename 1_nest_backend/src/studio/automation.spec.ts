@@ -18,6 +18,7 @@ import { ProductPipelineService } from './product-pipeline';
 
 let root: string;
 const keys = [
+  'STUDIO_AUTOMATION_BATCH_PILOT',
   'STUDIO_AUTOMATION_SAVED_BATCH_ID',
   'STUDIO_AUTOMATION_ENABLED',
   'STUDIO_AUTOMATION_TOKEN',
@@ -32,6 +33,7 @@ beforeEach(async () => {
   previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   for (const key of keys) process.env[key] = '1';
   delete process.env.STUDIO_AUTOMATION_SAVED_BATCH_ID;
+  delete process.env.STUDIO_AUTOMATION_BATCH_PILOT;
   process.env.STUDIO_AUTOMATION_TOKEN = 'x'.repeat(32);
   process.env.STUDIO_OPERATOR_ONLY = '0';
 });
@@ -704,4 +706,33 @@ it('runs only an authorized saved continuation with LIVE disabled and drains aft
   expect((await service.status()).policy.mode).toBe('DISABLED');
   expect(collect).not.toHaveBeenCalled();
   expect((await db.day(day.dayKey,now.toISOString())).reservations).toHaveLength(1);
+});
+
+it('charges attempted collections that did not reach evaluation against the next batch budget', () => {
+  const day={reservations:[
+    {batchId:'fresh-a',dispatch:{},status:'COMPLETED',acquisitionAttempts:10},
+    {batchId:'fresh-a',kind:'NEW_VIDEO',status:'COMPLETED',aiLedgerIds:['request-a']},
+    {batchId:'fresh-a',kind:'NEW_VIDEO',status:'WAITING_HUMAN'},
+    {batchId:'fresh-b',dispatch:{},status:'FAILED',acquisitionAttempts:5},
+  ]} as ProductionDay;
+  expect(productionUsage(day)).toMatchObject({attempts:15,newVideos:1,waiting:1,aiRequests:1});
+});
+
+it('pins the pilot budget and drains at its persisted window end instead of dispatching on a new day',async()=>{
+  const db=store();
+  process.env.STUDIO_AUTOMATION_BATCH_PILOT='1';
+  const dispatch=jest.fn();
+  const studio={hasHeavyWorker:()=>false};
+  const service=new AutomationService(db,new AutomationReviewService(db,studio as any),{
+    listAuto:async()=>[],hasActiveAuto:()=>false,productionLiveAuthorized:()=>true,startAuto:dispatch,
+  } as any,studio as any);
+  Object.assign(service,{owned:true,runtimePreflight:async()=>true});
+  await service.configure({requestId:'pilot-config',revision:0,policy:{topics:['kinh nghiệm đi làm'],
+    schedule:{enabled:false,start:'23:00',end:'07:00'},dailyVideoLimit:3,dailyAttemptLimit:15,dailyAiRequestLimit:120}},'PATCH');
+  const policy=await service.configure({requestId:'pilot-start',revision:1},'START');
+  expect(policy.pilotWindow.dayKey).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  const end=new Date(policy.pilotWindow.endsAt);
+  await service.tick(end);
+  expect(dispatch).not.toHaveBeenCalled();
+  expect(await service.status()).toMatchObject({policy:{mode:'DISABLED',pilotWindow:policy.pilotWindow},blocker:'PILOT_WINDOW_ENDED'});
 });

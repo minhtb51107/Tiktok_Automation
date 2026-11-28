@@ -173,7 +173,8 @@ export interface AutonomousProductBatch {
   stage: AutonomousProductStage;
   stageEvents?: Array<{at:string;stage:AutonomousProductStage;status:AutonomousProductBatch['status']}>;
   discoveryRunId: string | null;
-  collected?: { discoveredRoots: number; collectedReplies: number };
+  collected?: { discoveredRoots: number; collectedReplies: number; collectedRoots?:number;
+    discoveredSourceIds?:string[]; collectedSourceIds?:string[]; attemptedRootIds?:string[]; execution?:'LIVE'|'SYNTHETIC' };
   inference?: import('../data-engine/ai-provider').AiRequestSummary;
   ttsWait?: TtsResourceWait;
   ttsTimeoutRecovery?: TtsResourceWait & { requestId:string; failedAt:string; itemId:string; checkpointReference:string };
@@ -1610,11 +1611,17 @@ export class ProductPipelineService {
           job.collected={discoveredRoots:0,collectedReplies:collections[0].replies.length};
         } else {
           if (!this.quality) throw Error('AUTONOMOUS_DISCOVERY_UNAVAILABLE');
+          const previousRoots=job.discoveryRunId?[]:(await this.listAuto()).filter(row=>row.id!==id)
+            .flatMap(row=>row.collected?.attemptedRootIds??row.results.map(result=>canonicalPost(result.sourceUrl)?.id));
+          const acceptedRoots=process.env.STUDIO_AUTOMATION_BATCH_PILOT==='1'?
+            (process.env.STUDIO_AUTOMATION_PILOT_EXCLUDED_ROOTS??'').split(',').filter(id=>/^[a-zA-Z0-9_-]{1,64}$/.test(id)):[];
+          const excludeRootIds=[...new Set([...previousRoots.filter(Boolean),...acceptedRoots])].slice(-1000);
           let run = job.discoveryRunId ? await this.quality.engine.get(job.discoveryRunId)
             : await this.quality.data.studio.withControlledCollection(() => this.quality.engine.start({
               requestId:'auto-'+id, style:'SERIOUS', topic:job.request.topic, keywords:job.request.keywords,
               maxPosts:job.request.maxCandidates, maxEnrich:job.request.maxEnrich, priority:'HOT',
               minInteractions:0, maxRunMs:job.request.maxRunMs, collectionBudget:DEEP_CONVERSATION_BUDGET,
+              ...(excludeRootIds.length?{excludeRootIds}:{}),
             }));
           job.discoveryRunId=run.id;
           if (run.status==='RUNNING') {
@@ -1623,7 +1630,13 @@ export class ProductPipelineService {
             await this.saveAuto(job);
             run=await this.quality.data.studio.withControlledCollection(()=>this.quality.engine.resume(run.id));
           }
-          job.collected={discoveredRoots:run.candidates.length,collectedReplies:run.collections.reduce((n,c)=>n+c.replies.length,0)};
+          job.collected={
+            discoveredRoots:run.candidates.length,collectedRoots:run.collections.length,execution:run.execution,
+            discoveredSourceIds:run.candidates.map(candidate=>canonicalPost(candidate.url)?.id).filter(Boolean),
+            collectedSourceIds:run.collections.map(collection=>canonicalPost(collection.root.url)?.id).filter(Boolean),
+            attemptedRootIds:run.attemptedRootIds??(run.urls??[]).slice(0,run.targetCursor).map(url=>canonicalPost(url)?.id).filter(Boolean),
+            collectedReplies:run.collections.reduce((n,c)=>n+c.replies.length,0),
+          };
           job.errors = [...new Set([...job.errors,...autonomousDiscoveryErrors(run)])];
           const cleanupUnverified=(run.accessAudits??[]).some(a=>a.resources&&
             (!a.resources.cleanupVerified||!a.resources.monitorExited||a.resources.remainingPids?.length!==0));

@@ -225,6 +225,48 @@ still apply. The active emergency guards and 240/300-second deadlines still
 apply. A denial before inference does not consume an inference retry. The
 report records admission, reused audio, synthesis metrics and artifact checks.
 
+## Standalone LIVE batch pilot
+
+From the repository root in Windows PowerShell, after closing development tools:
+
+```powershell
+powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.ps1 -Action Start -BatchPilot
+```
+
+The default is the Vietnamese topic `kinh nghiệm đi làm`, 3 successful draft
+videos, 15 candidate attempts and a 120-request scheduler ceiling, with
+`1080P60`, `EXCEPTION_ONLY` and immediate production. The configured
+Hugging Face request, token and cost budgets still apply. The launcher loads
+credentials from the backend's existing local configuration or inherited
+environment and records only non-secret provider settings. Discord is off.
+
+Use `-Topics 'topic A,topic B'`, `-VideoTarget`, `-AttemptBudget`,
+`-AiRequestBudget` or `-UseSchedule -ScheduleStart 23:00 -ScheduleEnd 07:00`
+to configure the pilot. The default launcher cutoff is 180 minutes. Use
+`-MaxRunMinutes` to allow more time for a scheduled wait. Each activation
+uses a single Vietnam production window; at its end the scheduler drains
+active work. Daily usage and prior artifact records survive restart.
+
+```powershell
+powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.ps1 -Action Check -BatchPilot
+powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.ps1 -Action Status -BatchPilot
+powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.ps1 -Action Stop -BatchPilot
+```
+
+`Check` verifies startup and native measurement with LIVE disabled.
+`Stop` requests a drain; leave the launcher window open until it writes its
+report. The pilot uses `%TEMP%\production-auto-v123-live-pilot` by default.
+An alternate root must be dedicated to the pilot; pass the same `-DataRoot`
+for every operation. The accepted saved-candidate artifact stays in its
+original data root. Its source is excluded from the fresh pilot.
+
+Find `standalone-acceptance\latest-report.json` in the pilot data root,
+with logs and immutable reports in its `run-*` subdirectories. The report
+contains discovery, collection and editorial outcomes, open reviews,
+provider usage, per-video audio and render telemetry, verified MP4 paths and
+SHA-256 hashes, and the final scheduler state. PASS requires three distinct,
+machine-validated MP4s from LIVE-discovered roots in that pilot window.
+
 ## Discord
 
 Set STUDIO_AUTOMATION_DISCORD_ENABLED=1 only after configuring

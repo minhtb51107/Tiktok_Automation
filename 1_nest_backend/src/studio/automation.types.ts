@@ -21,6 +21,7 @@ export interface AutomationPolicy {
   autoPublish: false;
   requestId?: string;
   mutationKey?: string;
+  pilotWindow?: {dayKey:string;endsAt:string};
 }
 export const defaultAutomationPolicy = (): AutomationPolicy => ({
   schemaVersion: 'automation-policy/1',
@@ -88,6 +89,7 @@ export interface ProductionReservation {
   };
   aiLedgerIds?: string[];
   infrastructureFailure?: boolean;
+  acquisitionAttempts?: number;
   cachedRecovery?: boolean;
   edit?: {
     videoId: string;

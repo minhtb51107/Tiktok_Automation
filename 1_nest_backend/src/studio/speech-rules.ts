@@ -6,7 +6,7 @@
  * safe dictionary. Context rules never fire without evidence; otherwise the token is
  * kept verbatim and recorded as an ambiguous term.
  */
-export const SPEECH_DICTIONARY_VERSION = 'vi-social-speech/3';
+export const SPEECH_DICTIONARY_VERSION = 'vi-social-speech/3.1';
 export const SPEECH_POLICY_VERSION = 'vi-speech-policy/3';
 export const SPEECH_NORMALIZER_VERSION = 'vi-speech-norm/3';
 
@@ -349,6 +349,86 @@ const WORK_CTX = set(
 
 /** Single-token rules, evaluated in this order for each term (first match wins). */
 export const SPEECH_RULES: SpeechRule[] = [
+  {
+    id: 'CTX-TRL',
+    terms: ['trl'],
+    spoken: 'trả lời',
+    category: 'ABBREVIATION',
+    caseMode: 'lower',
+    when: (c) => !gluedPunct(c) && (['có', 'phải', 'sẽ', 'thể', 'xin'].includes(p(c)) ||
+      ['bác', 'bạn', 'tin', 'câu', 'giúp', 'luôn'].includes(n(c))),
+  },
+  {
+    id: 'CTX-MTR',
+    terms: ['mtr'],
+    spoken: 'môi trường',
+    category: 'ABBREVIATION',
+    caseMode: 'lower',
+    when: (c) => !gluedPunct(c) &&
+      (c.clauseWords.has('kcn') || ['ổn', 'làm', 'học', 'độc'].includes(n(c)) ||
+        (c.clauseWords.has('khu') && c.clauseWords.has('nghiệp'))),
+  },
+  {
+    id: 'CTX-NHG',
+    terms: ['nhg'],
+    spoken: 'nhưng',
+    category: 'TEENCODE',
+    caseMode: 'lower',
+    when: (c) => !gluedPunct(c) && (n(c)==='mà' || SUBJECTS.has(n(c)) || n(c)==='mọi'),
+  },
+  {
+    id: 'ABBR-TRVIA',
+    terms: ['trvia'],
+    spoken: 'trộm vía',
+    category: 'ABBREVIATION',
+    caseMode: 'lower',
+    when: (c) => !gluedPunct(c),
+  },
+  {
+    id: 'CTX-GTH',
+    terms: ['gth'],
+    spoken: 'giới thiệu',
+    category: 'ABBREVIATION',
+    caseMode: 'lower',
+    when: (c) => !gluedPunct(c) && (['về', 'bản', 'cho', 'qua'].includes(n(c)) ||
+      ['xin', 'được', 'đc', 'nhờ'].includes(p(c))),
+  },
+  {
+    id: 'CTX-VS',
+    terms: ['vs'],
+    spoken: 'với',
+    category: 'ABBREVIATION',
+    caseMode: 'lower',
+    when: (c) => !gluedPunct(c) && (
+      (p(c)==='à' && n(c)==='là') ||
+      (['cty', 'ty'].includes(p(c)) && n(c)==='làm' && c.clauseWords.has('về')) ||
+      (['nói', 'đổi', 'quen', 'hợp'].includes(p(c)) && ['bạn', 'anh', 'chị', 'em', 'mình', 'họ'].includes(n(c)))
+    ),
+  },
+  {
+    id: 'ABBR-XDINH',
+    terms: ['xđinh', 'xđịnh', 'xdinh'],
+    spoken: 'xác định',
+    category: 'ABBREVIATION',
+    caseMode: 'lower',
+    when: (c) => !gluedPunct(c),
+  },
+  {
+    id: 'CTX-LQUAN',
+    terms: ['lquan'],
+    spoken: 'liên quan',
+    category: 'ABBREVIATION',
+    caseMode: 'lower',
+    when: (c) => !gluedPunct(c) && ['trtiep', 'trực', 'đến', 'tới'].includes(n(c)),
+  },
+  {
+    id: 'CTX-TRTIEP',
+    terms: ['trtiep'],
+    spoken: 'trực tiếp',
+    category: 'ABBREVIATION',
+    caseMode: 'lower',
+    when: (c) => !gluedPunct(c) && (['đến', 'tới'].includes(n(c)) || ['lquan', 'quan'].includes(p(c))),
+  },
   // ---------- Safe mappings (no context needed) ----------
   {
     id: 'TYPO-VIERJC',
@@ -1380,6 +1460,13 @@ export const PRESERVED_STYLE_TERMS = new Set([
 ]);
 /** Tokens that are intentionally kept but reported for human review when unresolved. */
 export const AMBIGUOUS_REASONS: Record<string, string> = {
+  trl: 'Possible "trả lời" without sufficient context',
+  mtr: 'Possible "môi trường" without sufficient context',
+  nhg: 'Possible "nhưng" without sufficient context',
+  gth: 'Possible "giới thiệu" without sufficient context',
+  lquan: 'Possible "liên quan" without sufficient context',
+  trtiep: 'Possible "trực tiếp" without sufficient context',
+  vs: 'Possible "với" or comparison (versus) without sufficient context',
   t: 'Pronoun (tôi/tao/tớ) – never replaced without certainty',
   b: 'Pronoun/abbreviation (bạn) without vocative evidence',
   c: 'Pronoun (chị) – never replaced without certainty',

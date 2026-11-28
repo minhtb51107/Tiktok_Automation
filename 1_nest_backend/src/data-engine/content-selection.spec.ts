@@ -184,3 +184,24 @@ describe('DATA-QUALITY-01 source planning (SYNTHETIC)',()=>{
    }
  });
 });
+
+test('a later batch skips known root IDs before enrichment and counts new attempts durably',async()=>{
+  const dir=await mkdtemp(path.join(os.tmpdir(),'quality-pilot-roots-'));
+  const old=fixture(), fresh=structuredClone(old);
+  fresh.root.id='FRESH'; fresh.root.url='https://www.threads.com/@fresh/post/FRESH';
+  fresh.root.author={handle:'fresh',name:null};
+  const calls:string[]=[];
+  const e=new ContentDiscovery(new DataEngine(new DataStore(dir)),{
+    execution:'SYNTHETIC',
+    discover:async()=>[old,fresh].map((c,observedOrder)=>({url:c.root.url,observedOrder,post:c.root})),
+    enrich:async url=>{calls.push(url);return fresh;},
+  });
+  const request={requestId:'later-batch',style:'SERIOUS',topic:'công việc',keywords:['công việc'],maxPosts:10,maxEnrich:1,
+    maxRunMs:60000,excludeRootIds:[old.root.id]};
+  const run=await e.start(request);
+  expect(run.candidates).toHaveLength(2);
+  expect(calls).toEqual([fresh.root.url]);
+  expect((await e.get(run.id)).attemptedRootIds).toEqual([fresh.root.id]);
+  await e.start(request);
+  expect(calls).toHaveLength(1);
+});

@@ -248,7 +248,7 @@ describe('normalization and metadata', () => {
       expect(s.items[0].manualLocks).not.toContain('NARRATION_TEXT');
       expect(s.items[0].automaticNormalization).toMatchObject({
         policyVersion: 'vi-speech-policy/3',
-        dictionaryVersion: 'vi-social-speech/3',
+        dictionaryVersion: 'vi-social-speech/3.1',
         changed: true,
         ambiguousTerms: ['bh'],
       });

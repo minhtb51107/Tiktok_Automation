@@ -457,6 +457,9 @@ function core(
     const reason = AMBIGUOUS_REASONS[key];
     if (!reason) return;
     const ctx = contextFor(src, st, i);
+    if (key === 'vs' && (token.text === 'VS' || ctx.nextSameClause?.lower === 'code' ||
+      (/^\p{Lu}/u.test(ctx.prevSameClause?.text ?? '') && /^\p{Lu}/u.test(ctx.nextSameClause?.text ?? ''))))
+      return; // Keep a product name or explicit comparison as written.
     if (token.text.length === 1) {
       const nextWord = ctx.nextSameClause?.text ?? '';
       const pronounLike =

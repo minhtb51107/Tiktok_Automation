@@ -403,6 +403,7 @@ describe('Vietnamese TTS Normalization Engine V3 — offline regression (115+ ca
           modelVersion: 'MOCK / MOCK',
           cacheKey: `legacy-${idx}`,
           durationMs: 10000,
+          durationEvidence: 'FFPROBE',
           filePath: `audio/${s.id}/assets/${wavName}`,
           uri: `/api/studio/sessions/${s.id}/audio/asset-v2-${idx}`,
           createdAt: '2026-11-17T00:00:00.000Z',
@@ -484,4 +485,30 @@ describe('Vietnamese TTS Normalization Engine V3 — offline regression (115+ ca
       fetchSpy.mockRestore();
     }
   });
+});
+
+it('expands the abbreviations from the accepted work-advice video in narration', () => {
+  const reply='Tui có thể trl bác ý 1+2 nè:)\n1. Tui thấy kcn mtr ổn á, ngoại trừ giờ giấc khá tricky nhg mà mn khá thân thiện, k toxic (tui làm 2 kcn òy, trvia nà zị) đặc thù sx nên là kiểu thời gian cũng như là mấy cái bảo mật cao. À vs là k đc la cà nữa 🌝\n2. Ngày đầu đi làm thì đa số sẽ đc gth về cty vs làm quen hoy, mặc đồ lịch sự, rồi để ý mấy quy định nà đc nè';
+  const narration=prepareTtsInput(reply);
+  expect(narration.valid).toBe(true);
+  expect(narration.originalText).toBe(reply);
+  for (const part of ['trả lời bác','khu công nghiệp môi trường ổn','nhưng mà mọi người','trộm vía nà zị',
+    'À với là không được','giới thiệu về công ty với làm quen hoy'])
+    expect(narration.spokenText).toContain(part);
+  expect(narration.ambiguousTerms.filter(term=>['trl','mtr','nhg','trvia','gth','vs'].includes(term.term))).toEqual([]);
+  expect(prepareTtsInput(narration.spokenText).ttsInputHash).toBe(narration.ttsInputHash);
+  expect(narration.ttsInputHash).not.toBe(createHash('sha256').update(reply).digest('hex'));
+
+  const other=prepareTtsInput('Vị trí này trong kcn xđinh môi trường vất vả, overtime suốt vì lquan trtiep đến sản xuất.');
+  expect(other.spokenText).toContain('khu công nghiệp xác định môi trường vất vả');
+  expect(other.spokenText).toContain('liên quan trực tiếp đến sản xuất');
+  expect(prepareTtsInput('onboard vị trí kế hoạch sản xuất tại kcn với 1 cái bằng đh trái ngành.').spokenText)
+    .toContain('khu công nghiệp với một cái bằng đại học trái ngành');
+});
+
+it('keeps identifiers, comparison names and unresolved slang out of automatic substitutions', () => {
+  const text='Mở VS Code. Arsenal vs Chelsea. Bạn gửi mtr, rồi chọn gth đi. Cần vs thêm. @trl #trvia.';
+  const r=prepareTtsInput(text);
+  expect(r.spokenText).toBe(text);
+  expect(r.ambiguousTerms.map(term=>term.term)).toEqual(['mtr','gth','vs']);
 });

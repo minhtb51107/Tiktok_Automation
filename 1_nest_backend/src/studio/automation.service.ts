@@ -83,6 +83,16 @@ export function productionWindow(
   };
 }
 
+function batchPilotWindow(now: Date, schedule: AutomationPolicy['schedule']) {
+  const window = productionWindow(now, schedule);
+  const localClock = Object.fromEntries(localTime.formatToParts(now).map(part=>[part.type,part.value]));
+  const nextDay = schedule.enabled && schedule.start<schedule.end && localClock.hour+':'+localClock.minute>=schedule.end;
+  const dayKey = nextDay ? productionWindow(new Date(now.getTime()+86400000),schedule).dayKey : window.dayKey;
+  const end = schedule.enabled ? schedule.end : '00:00';
+  const overnight = !schedule.enabled || schedule.start>schedule.end;
+  return {dayKey,endsAt:new Date(Date.parse(dayKey+'T'+end+':00+07:00')+(overnight?86400000:0)).toISOString()};
+}
+
 export function validateAutomationPolicy(value: AutomationPolicy) {
   const ranges: Record<string, number> = {
     dailyVideoLimit: 10,
@@ -119,7 +129,9 @@ export function validateAutomationPolicy(value: AutomationPolicy) {
       value.approvalPolicy,
     ) ||
     value.maxConcurrentHeavyWorkers !== 1 ||
-    value.autoPublish !== false
+    value.autoPublish !== false ||
+    (value.pilotWindow!==undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(value.pilotWindow?.dayKey) ||
+      !Number.isFinite(Date.parse(value.pilotWindow?.endsAt))))
   )
     throw new BadRequestException('INVALID_AUTOMATION_POLICY');
   return value;
@@ -138,15 +150,12 @@ export function productionUsage(day: ProductionDay) {
     ).length,
     attempts:
       candidates.filter((row) => !row.cachedRecovery).length +
-      batches.filter(
-        (r) =>
-          !active(r) &&
-          !r.infrastructureFailure &&
-          !r.dispatch?.recovery?.cacheOnly &&
-          !candidates.some(
-            (c) => c.batchId === r.batchId && c.kind === 'NEW_VIDEO',
-          ),
-      ).length,
+      batches.reduce((n,r)=>{
+        if(active(r)||r.dispatch?.recovery?.cacheOnly) return n;
+        const evaluated=candidates.filter(c=>c.batchId===r.batchId&&c.kind==='NEW_VIDEO'&&!c.cachedRecovery).length;
+        const acquisitions=r.acquisitionAttempts??0;
+        return n+Math.max(0,acquisitions-evaluated,(!r.infrastructureFailure&&!evaluated)?1:0);
+      },0),
     rerenders: candidates.filter((r) => r.kind === 'RERENDER').length,
     aiRequests: candidates.reduce(
       (n, r) => n + (r.aiLedgerIds?.length ?? 0),
@@ -279,6 +288,8 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         revision: policy.revision + 1,
         requestId,
         mutationKey: digest,
+        ...(action==='START' ? {pilotWindow:process.env.STUDIO_AUTOMATION_BATCH_PILOT==='1'
+          ? batchPilotWindow(new Date(),policy.schedule) : undefined} : {}),
       });
       if(recovery){
         if(!['DISABLED','BLOCKED'].includes(policy.mode))throw new ConflictException('TTS_RECOVERY_REQUIRES_IDLE_POLICY');
@@ -300,7 +311,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
   async status() {
     const policy = await this.policy(),
       window = productionWindow(new Date(), policy.schedule);
-    const day = await this.store.day(window.dayKey, new Date().toISOString());
+    const day = await this.store.day(policy.pilotWindow?.dayKey??window.dayKey, new Date().toISOString());
     const { newVideos, waiting, attempts, rerenders, aiRequests } =
       productionUsage(day);
     return {
@@ -328,10 +339,14 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     const batches = (await this.pipeline.listAuto()).filter((batch) =>
       batchIds.has(batch.id),
     );
+    const status=await this.status();
+    const pilotDay=status.policy.pilotWindow?.dayKey;
+    const usageBatches=pilotDay?batches.filter(batch=>batch.dispatch?.dayKey===pilotDay):batches;
     return {
-      ...(await this.status()),
+      ...status,
       days,
       batches,
+      inference: this.pipeline.ai?.evaluator?.requestSummary?.(usageBatches.flatMap(batch=>batch.results.flatMap(row=>row.aiLedgerIds??[])))??null,
       editorialFeedback: await this.store.list('feedback'),
       editorialTelemetry: batches
         .filter((batch) => batch.collected)
@@ -504,6 +519,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
               : 'COMPLETED';
         slot.finishedAt = batch.completedAt;
         if (batch.browserInfrastructure) slot.infrastructureFailure = true;
+        if(batch.collected?.attemptedRootIds)slot.acquisitionAttempts=batch.collected.attemptedRootIds.length;
         slot.error = [
           ...batch.errors,
           ...batch.results.flatMap((r) => r.warnings),
@@ -777,9 +793,11 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       const savedOnly=process.env.STUDIO_AUTOMATION_SAVED_BATCH_ID;
       const savedBatch=savedOnly?batches.find(batch=>batch.id===savedOnly):undefined;
       const continuation=savedBatch?.ttsAdmissionContinuation;
+      const pilotEnded=!!policy.pilotWindow && now.getTime()>=Date.parse(policy.pilotWindow.endsAt);
+      const pilotCanDispatch=!policy.pilotWindow||(!pilotEnded&&policy.pilotWindow.dayKey===window.dayKey);
       const canRecover = policy.mode==='ENABLED' && (savedOnly ?
         !!continuation && continuation.requestId===policy.requestId :
-        this.pipeline.productionLiveAuthorized() && window.open);
+        this.pipeline.productionLiveAuthorized() && window.open && pilotCanDispatch);
       const infrastructure = savedOnly?null:await this.monitorRecovery(
         days,
         batches,
@@ -823,6 +841,12 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
           mode: 'DISABLED',
           revision: policy.revision + 1,
         });
+        return;
+      }
+      if(pilotEnded&&policy.mode==='ENABLED'){
+        this.blocker='PILOT_WINDOW_ENDED';
+        await this.store.savePolicy({...policy,mode:this.pipeline.hasActiveAuto()||this.studio.hasHeavyWorker()?'DRAINING':'DISABLED',
+          revision:policy.revision+1});
         return;
       }
       if(savedOnly){
