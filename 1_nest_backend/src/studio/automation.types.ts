@@ -80,6 +80,7 @@ export interface ProductionReservation {
     preset: OperatorRenderPreset;
     reviewBeforeRender: boolean;
     policyRevision: number;
+    discoveryKeyword?: string;
     recovery?: {
       batchId: string;
       collectionId: string;
@@ -90,6 +91,8 @@ export interface ProductionReservation {
   aiLedgerIds?: string[];
   infrastructureFailure?: boolean;
   acquisitionAttempts?: number;
+  discoveryOutcome?: 'RESULTS' | 'EMPTY' | 'FAILED';
+  discoveryErrors?: string[];
   cachedRecovery?: boolean;
   edit?: {
     videoId: string;

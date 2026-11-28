@@ -129,6 +129,7 @@ export interface AutomaticDispatch {
   reviewBeforeRender: boolean;
   reviewSlots?:number;
   dayKey: string;
+  discoveryKeyword?: string;
   recovery?: { batchId: string; collectionId: string; sourceUrl: string; cacheOnly?: boolean };
 }
 
@@ -227,25 +228,27 @@ export function measuredMp4Duration(manifest: Pick<RenderManifest, 'probe'>) {
   return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
 }
 
-export const autonomousProductRequest = (body: any): AutonomousProductBatch['request'] => {
+export const autonomousProductRequest = (body: any, discoveryKeyword?: string): AutonomousProductBatch['request'] => {
   const topic = typeof body?.topic === 'string' ? body.topic.trim() : '',
     style = body?.style ?? 'SERIOUS',
     targetVideos = body?.targetVideos ?? 1,
     maxCandidates = body?.maxCandidates ?? 30,
     maxEnrich = body?.maxEnrich ?? 10,
     maxRunMs = body?.maxRunMs ?? 3_600_000,
-    keywordExpansion = body?.keywordExpansion === 'EXPLICIT' ? 'EXPLICIT' : 'OFF',
+    keywordExpansion = (discoveryKeyword===undefined ? body?.keywordExpansion==='EXPLICIT' : discoveryKeyword!==topic) ? 'EXPLICIT' : 'OFF',
     explicit = Array.isArray(body?.keywords)
       ? body.keywords.map((x: unknown) => String(x).trim()).filter(Boolean)
       : [],
-    keywords = [...new Set<string>([topic, ...(keywordExpansion === 'EXPLICIT' ? explicit : [])])];
+    keywords = discoveryKeyword === undefined
+      ? [...new Set<string>([topic, ...(keywordExpansion === 'EXPLICIT' ? explicit : [])])]
+      : [discoveryKeyword];
   if (
     !topic || topic.length > 120 || style !== 'SERIOUS' ||
     !Number.isInteger(targetVideos) || targetVideos < 1 || targetVideos > 3 ||
     !Number.isInteger(maxCandidates) || maxCandidates < 1 || maxCandidates > 30 ||
     !Number.isInteger(maxEnrich) || maxEnrich < 1 || maxEnrich > 10 || maxEnrich > maxCandidates ||
     !Number.isInteger(maxRunMs) || maxRunMs < 60_000 || maxRunMs > 3_600_000 ||
-    !keywords.length || keywords.length > 8 || keywords.some((x) => x.length > 120)
+    !keywords.length || keywords.length > 8 || keywords.some((x) => !x.trim() || x.length > 120)
   ) throw new BadRequestException('Invalid autonomous DRAFT request');
   return { topic, style, keywords, keywordExpansion, targetVideos, maxCandidates, maxEnrich, maxRunMs, voice: 'my_yen', speed: 1.3 };
 };
@@ -621,7 +624,7 @@ export class ProductPipelineService {
         throw new BadRequestException('AUTONOMOUS_LIVE_APPROVAL_REQUIRED');
       if (process.env.STUDIO_AUTOMATION_ENABLED==='1'&&!dispatch)throw new ConflictException('USE_AUTOMATION_SCHEDULER');
       if (!this.quality) throw new BadRequestException('AUTONOMOUS_DISCOVERY_UNAVAILABLE');
-      const request = autonomousProductRequest(body);
+      const request = autonomousProductRequest(body, dispatch?.discoveryKeyword);
       const dispatchRequestId: string | undefined = body.requestId;
       if (dispatchRequestId !== undefined &&
           (typeof dispatchRequestId !== 'string' || !/^[\w-]{1,100}$/.test(dispatchRequestId)))

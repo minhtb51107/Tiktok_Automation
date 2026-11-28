@@ -151,7 +151,7 @@ it('reserves before dispatch, reconciles a crash, and drains without new work', 
   expect((await restarted.policy()).mode).toBe('DISABLED');
   expect(
     productionUsage(await db.day('2026-11-26', date.toISOString())).attempts,
-  ).toBe(1);
+  ).toBe(0);
   expect(start).toHaveBeenCalledTimes(2);
 });
 
@@ -735,4 +735,40 @@ it('pins the pilot budget and drains at its persisted window end instead of disp
   await service.tick(end);
   expect(dispatch).not.toHaveBeenCalled();
   expect(await service.status()).toMatchObject({policy:{mode:'DISABLED',pilotWindow:policy.pilotWindow},blocker:'PILOT_WINDOW_ENDED'});
+});
+
+it.each(['EMPTY','UNKNOWN'] as const)('bounds %s discovery independently of candidate work', async outcome => {
+  const db=store();
+  const date=new Date('2026-11-26T16:20:00.000Z');
+  const topic='kinh nghiệm đi làm';
+  const errors=outcome==='EMPTY' ? ['CONVERSATION_NO_RESULTS','DISCOVERY_NO_RESULTS_AT_DISCOVERY'] :
+    ['CONVERSATION_NO_PUBLIC_CANDIDATES','DISCOVERY_UNKNOWN_AT_DISCOVERY'];
+  const batches:any[]=[];
+  const dispatch=jest.fn(async (body:any, config:any)=>{
+    const batch={id:'batch-'+(batches.length+1),dispatchRequestId:body.requestId,status:'FAILED',errors,
+      results:[],collected:{attemptedRootIds:[]},completedAt:date.toISOString()};
+    batches.push(batch);
+    return batch;
+  });
+  const studio={hasHeavyWorker:()=>false};
+  const service=new AutomationService(db,new AutomationReviewService(db,studio as any),{
+    listAuto:async()=>batches,hasActiveAuto:()=>false,productionLiveAuthorized:()=>true,startAuto:dispatch,
+  } as any,studio as any);
+  Object.assign(service,{owned:true,runtimePreflight:async()=>true});
+  await service.configure({requestId:'configure',revision:0,policy:{topics:[topic]}},'PATCH');
+  await service.configure({requestId:'enable',revision:1},'START');
+  await service.tick(date);
+  await service.tick(new Date(+date+15000));
+  if(outcome==='UNKNOWN'){
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect((await service.status()).blocker).toBe('DISCOVERY_RECOVERY_COOLDOWN');
+  }
+  for(const offset of [61000,80000,95000,120000]) await service.tick(new Date(+date+offset));
+  const queries=dispatch.mock.calls.map(([,config])=>config.discoveryKeyword);
+  expect(queries).toEqual(outcome==='EMPTY'?[topic,'đi làm','chia sẻ '+topic]:[topic,topic]);
+  expect(dispatch.mock.calls.every(([body])=>body.topic===topic)).toBe(true);
+  const state=await db.day('2026-11-26',date.toISOString());
+  expect(productionUsage(state)).toMatchObject({attempts:0,discoveryAttempts:queries.length,aiRequests:0});
+  expect(state.reservations[0].discoveryErrors).toEqual(errors);
+  expect((await service.status()).blocker).toBe(outcome==='EMPTY'?'DISCOVERY_EXHAUSTED':'DISCOVERY_FAILED');
 });

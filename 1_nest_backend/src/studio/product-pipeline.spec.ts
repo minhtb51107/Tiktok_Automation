@@ -575,3 +575,10 @@ it('reuses the two saved narrations and sends only the missing scene to Kokoro',
     }finally{narration.mockRestore();}
   }finally{source.mockRestore();await rm(temp,{recursive:true,force:true});}
 });
+
+it('uses exactly one discovery variant while preserving the Unicode editorial topic',()=>{
+  const original='kinh nghiệm đi làm', variant='đi làm';
+  expect(autonomousProductRequest({topic:original},variant)).toMatchObject({
+    topic:original,keywords:[variant],
+  });
+});

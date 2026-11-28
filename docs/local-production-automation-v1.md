@@ -230,7 +230,7 @@ report records admission, reused audio, synthesis metrics and artifact checks.
 From the repository root in Windows PowerShell, after closing development tools:
 
 ```powershell
-powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.ps1 -Action Start -BatchPilot
+powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.ps1 -Action Start -BatchPilot -DataRoot "$env:TEMP\production-auto-v123-live-pilot-utf8"
 ```
 
 The default is the Vietnamese topic `kinh nghiệm đi làm`, 3 successful draft
@@ -253,12 +253,24 @@ powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.p
 powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.ps1 -Action Stop -BatchPilot
 ```
 
-`Check` verifies startup and native measurement with LIVE disabled.
-`Stop` requests a drain; leave the launcher window open until it writes its
-report. The pilot uses `%TEMP%\production-auto-v123-live-pilot` by default.
-An alternate root must be dedicated to the pilot; pass the same `-DataRoot`
-for every operation. The accepted saved-candidate artifact stays in its
-original data root. Its source is excluded from the fresh pilot.
+`Check` verifies startup, native measurement, and a real UTF-8 PATCH/GET
+roundtrip with four Vietnamese topics. It compares the responses, saved
+policy and discovery keywords while AUTO stays disabled. Add `-ProbeDiscovery`
+to run one public search-only probe. It collects no replies and makes no AI
+requests. `Start` verifies its configured topics before enabling AUTO.
+
+`Stop` requests a drain. Leave the launcher window open until it writes its
+report. The pilot uses `%TEMP%\production-auto-v123-live-pilot-utf8` by default.
+Pass the same `-DataRoot` to each operation when using an alternate dedicated
+directory. The earlier failed pilot and the accepted video remain in their
+existing roots. The source of the accepted video is excluded from discovery.
+
+Discovery has six fresh dispatches per production window, independent of
+candidate attempts. Confirmed empty results can advance through two relevant
+query variants. An unclassified discovery failure can get one same-query
+retry after 60 seconds. Access protection and native browser faults use
+their existing guards. The report distinguishes discovery exhaustion,
+candidate and AI budget exhaustion, and the video target.
 
 Find `standalone-acceptance\latest-report.json` in the pilot data root,
 with logs and immutable reports in its `run-*` subdirectories. The report

@@ -11,6 +11,7 @@ param(
     [switch]$RetryTimeout,
     [switch]$ContinueAdmission,
     [switch]$BatchPilot,
+    [switch]$ProbeDiscovery,
     [ValidateNotNullOrEmpty()][string]$Topics = 'kinh nghi'+[char]0x1EC7+'m '+[char]0x0111+'i l'+[char]0x00E0+'m',
     [ValidateRange(1,3)][int]$VideoTarget = 3,
     [ValidateRange(1,15)][int]$AttemptBudget = 15,
@@ -22,13 +23,18 @@ param(
     [string]$ItemId = '5ffe9fd3-06e0-44a7-bea2-4a9ceebc164f'
 )
 $ErrorActionPreference = 'Stop'
+if ($ProbeDiscovery -and (!$BatchPilot -or $Action -ne 'Check')) { throw 'ProbeDiscovery requires BatchPilot Check.' }
 if ($ContinueAdmission -and $RetryTimeout) { throw 'Select one recovery operation.' }
 if ($ContinueAdmission -and !$PSBoundParameters.ContainsKey('ItemId')) { $ItemId = '18ff2031-b1c4-4b4d-a72e-3605179b4c99' }
 $backend = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if ($BatchPilot) {
     if ($ContinueAdmission -or $RetryTimeout) { throw 'BatchPilot uses fresh discovery.' }
-    if (!$PSBoundParameters.ContainsKey('DataRoot')) { $DataRoot = Join-Path $env:TEMP 'production-auto-v123-live-pilot' }
+    if (!$PSBoundParameters.ContainsKey('DataRoot')) { $DataRoot = Join-Path $env:TEMP 'production-auto-v123-live-pilot-utf8' }
     $DataRoot = [IO.Path]::GetFullPath($DataRoot)
+    $failedRoot = Join-Path $env:TEMP 'production-auto-v123-live-pilot'
+    if ($Action -in @('Start','Check') -and [string]::Equals($DataRoot.TrimEnd([IO.Path]::DirectorySeparatorChar), $failedRoot, 'OrdinalIgnoreCase')) {
+        throw 'Use the new UTF-8 pilot root. The failed pilot is preserved as evidence.'
+    }
     $marker = Join-Path $DataRoot '.standalone-batch-pilot-v1'
     if ($Action -in @('Start','Check') -and !(Test-Path -LiteralPath $DataRoot)) {
         $null=New-Item -ItemType Directory -Path $DataRoot
@@ -67,7 +73,8 @@ $statePath = Join-Path $ops 'active.json'
 $reportPath = Join-Path $ops 'latest-report.json'
 $renderRoot = Join-Path $root "renders/$SessionId"
 $api = "http://127.0.0.1:$Port/api/studio/automation"
-function Read-Json([string]$Path) { Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json }
+$utf8 = [System.Text.UTF8Encoding]::new($false,$true)
+function Read-Json([string]$Path) { [IO.File]::ReadAllText($Path,$utf8) | ConvertFrom-Json }
 function Write-Json([string]$Path, $Value) {
     $tmp = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
     [IO.File]::WriteAllText($tmp, ($Value | ConvertTo-Json -Depth 100), [Text.UTF8Encoding]::new($false))
@@ -78,12 +85,58 @@ function Get-Owned($State) {
     $p = Get-Process -Id ([int]$State.pid) -ErrorAction SilentlyContinue
     if ($p -and $p.ProcessName -eq 'node' -and $p.StartTime.ToUniversalTime().Ticks.ToString() -eq $State.started) { $p }
 }
-function Call-Api([string]$Route, [string]$Method = 'GET', $Body = $null) {
-    $params = @{ Uri="$api/$Route"; Method=$Method; Headers=@{Authorization="Bearer $token"}; TimeoutSec=10 }
-    if ($null -ne $Body) { $params.ContentType='application/json'; $params.Body=$Body | ConvertTo-Json -Depth 12 -Compress }
-    $response = Invoke-RestMethod @params
-    if ($null -ne $response.data) { return $response.data }
-    $response
+function Invoke-JsonApi([string]$Uri,[string]$Method,$Body,[int]$TimeoutSec,$RequestEvidence=$null) {
+    $params = @{ Uri=$Uri; Method=$Method; Headers=@{Authorization="Bearer $token";Accept='application/json'}; TimeoutSec=$TimeoutSec; UseBasicParsing=$true }
+    if ($null -ne $Body) {
+        $params.ContentType='application/json; charset=utf-8'
+        $json=$Body | ConvertTo-Json -Depth 12 -Compress
+        $params.Body=[System.Text.Encoding]::UTF8.GetBytes($json)
+        if ($null -ne $RequestEvidence) {
+            $RequestEvidence.topics=($utf8.GetString($params.Body) | ConvertFrom-Json).policy.topics
+            $RequestEvidence.byteCount=$params.Body.Length
+        }
+    }
+    $response=Invoke-WebRequest @params
+    $json=$utf8.GetString($response.RawContentStream.ToArray()) | ConvertFrom-Json
+    if ($null -ne $json.data) { return $json.data }
+    $json
+}
+function Call-Api([string]$Route, [string]$Method = 'GET', $Body = $null, $RequestEvidence = $null) {
+    Invoke-JsonApi "$api/$Route" $Method $Body 10 $RequestEvidence
+}
+function Assert-OrdinalTopics($Expected,$Actual,[string]$Source) {
+    if (@($Actual).Count -ne @($Expected).Count) { throw "UTF-8 topic count mismatch in $Source." }
+    for ($i=0; $i -lt $Expected.Count; $i++) {
+        if (![string]::Equals([string]$Expected[$i],[string]$Actual[$i],'Ordinal')) {
+            throw "UTF-8 topic mismatch in $Source at index $i."
+        }
+    }
+}
+function Set-VerifiedPilotPolicy($Requested,[int]$Revision) {
+    $wire=@{}
+    $patched=Call-Api policy PATCH @{requestId=[guid]::NewGuid().ToString();revision=$Revision;policy=$Requested} $wire
+    $readBack=Call-Api policy
+    $saved=Read-Json $policyPath
+    $status=Call-Api status
+    if ($patched.mode -ne 'DISABLED' -or $readBack.mode -ne 'DISABLED' -or $saved.mode -ne 'DISABLED' -or
+        $status.policy.mode -ne 'DISABLED' -or $status.active -or $patched.revision -ne $readBack.revision -or
+        $patched.revision -ne $saved.revision -or $patched.revision -ne $status.policy.revision) {
+        throw 'Could not verify the persisted pilot policy with production disabled.'
+    }
+    Assert-OrdinalTopics $Requested.topics $wire.topics 'UTF-8 request bytes'
+    Assert-OrdinalTopics $Requested.topics $patched.topics 'PATCH response'
+    Assert-OrdinalTopics $Requested.topics $readBack.topics 'GET policy'
+    Assert-OrdinalTopics $Requested.topics $saved.topics 'persisted UTF-8 policy'
+    Assert-OrdinalTopics $Requested.topics @($status.discoveryPlan | ForEach-Object { $_.topic }) 'discovery plan'
+    if (@($status.discoveryPlan | Where-Object { @($_.keywords).Count -ne 1 }).Count) { throw 'Unexpected initial discovery keyword count.' }
+    Assert-OrdinalTopics $Requested.topics @($status.discoveryPlan | ForEach-Object { $_.keywords }) 'discovery keywords'
+    @{
+        encoding='application/json; charset=utf-8'
+        requestedTopics=$Requested.topics; requestTopics=$wire.topics; requestByteCount=$wire.byteCount; patchTopics=$patched.topics; getTopics=$readBack.topics
+        persistedTopics=$saved.topics; discoveryPlan=$status.discoveryPlan; revision=$saved.revision
+        policySha256=(Get-FileHash -LiteralPath $policyPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        mode=$saved.mode; powerShellVersion=$PSVersionTable.PSVersion.ToString()
+    }
 }
 function Request-Drain {
     for ($attempt=0; $attempt -lt 3; $attempt++) {
@@ -211,9 +264,10 @@ try {
             if ($Action -ne 'Start' -or !$policy.pilotWindow -or $pilotPolicy.dailyVideoLimit -ne $policy.dailyVideoLimit -or
                 $pilotPolicy.dailyAttemptLimit -ne $policy.dailyAttemptLimit -or $pilotPolicy.dailyAiRequestLimit -ne $policy.dailyAiRequestLimit -or
                 $pilotPolicy.schedule.enabled -ne $policy.schedule.enabled -or $ScheduleStart -ne $policy.schedule.start -or
-                $ScheduleEnd -ne $policy.schedule.end -or ($pilotPolicy.topics -join ',') -cne ($policy.topics -join ',')) {
+                $ScheduleEnd -ne $policy.schedule.end) {
                 throw 'An interrupted pilot must be resumed with its original configuration.'
             }
+            Assert-OrdinalTopics $pilotPolicy.topics $policy.topics 'existing pilot configuration'
         }
         $final.mode='BATCH_PILOT'
         $final.configuration=$pilotPolicy
@@ -261,7 +315,7 @@ try {
         HUGGINGFACE_LEDGER_PATH=(Join-Path $root 'ai-inference-ledger.jsonl')
         STUDIO_AUTOMATION_SAVED_BATCH_ID=$(if($ContinueAdmission){$BatchId}else{''})
         STUDIO_PRODUCT_AUTOMATION_LIVE_ENABLED=$liveEnabled
-        STUDIO_DATA_QUALITY_LIVE_ENABLED=$liveEnabled
+        STUDIO_DATA_QUALITY_LIVE_ENABLED=$(if($ProbeDiscovery){'1'}else{$liveEnabled})
         STUDIO_DATA04_LIVE_ENABLED=$liveEnabled
     }
     $run = Join-Path $ops ('run-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8))
@@ -296,8 +350,7 @@ try {
     }
     $final.initialStatus=$current
     if ($BatchPilot) {
-        $providerStatus=Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/studio/data/ai/status" -TimeoutSec 10
-        if ($providerStatus.data) { $providerStatus=$providerStatus.data }
+        $providerStatus=Invoke-JsonApi "http://127.0.0.1:$Port/api/studio/data/ai/status" 'GET' $null 10
         $final.provider=$providerStatus.config
         if (!$final.provider) { throw 'Could not read the configured Hugging Face provider.' }
         if ($Action -eq 'Start' -and $final.provider.credential -ne 'present') { throw 'Hugging Face credentials are missing from the local backend configuration.' }
@@ -319,14 +372,33 @@ try {
         Write-Warning 'LOW_MEMORY_WARNING: cold physical headroom below 1024 MiB. Scheduler checks mandatory floors.'
     }
     Write-Host "Logs: $run"
-    if ($Action -eq 'Check') { $final.result='CHECKED_NO_PRODUCTION'; return }
+    if ($Action -eq 'Check') {
+        if ($BatchPilot) {
+            $fixtures='["kinh nghi\u1ec7m \u0111i l\u00e0m","c\u00f4ng vi\u1ec7c","h\u1ecdc ti\u1ebfng Anh","l\u1eadp tr\u00ecnh"]' | ConvertFrom-Json
+            $checkPolicy=$pilotPolicy.Clone()
+            $checkPolicy.topics=@($fixtures)
+            $final.unicodeRoundtrip=Set-VerifiedPilotPolicy $checkPolicy $current.policy.revision
+            if ($ProbeDiscovery) {
+                $query=$final.unicodeRoundtrip.discoveryPlan[0].keywords[0]
+                $probe=Invoke-JsonApi "http://127.0.0.1:$Port/api/studio/data/content-quality/searches" 'POST' @{
+                    liveApproved=$true; requestId=[guid]::NewGuid().ToString();query=$query;limit=10;maxRunMs=60000
+                } 120
+                Assert-OrdinalTopics @($query) @($probe.request.query) 'discovery request echo'
+                $final.discoveryProbe=@{id=$probe.id;query=$probe.request.query;status=$probe.status;execution=$probe.execution
+                    discoveredRoots=@($probe.candidates | Where-Object { $_ }).Count; relevantResults=@($probe.results | Where-Object { $_ }).Count
+                    accessOutcomes=@($probe.accessAudits | ForEach-Object { $_.outcome }); errors=$probe.errors; elapsedMs=$probe.elapsedMs}
+            }
+        }
+        $final.result='CHECKED_NO_PRODUCTION'
+        return
+    }
     if ($worker.HasExited) { throw 'Backend exited before starting production.' }
     if ($BatchPilot) {
         if (!$reattach) {
             $current=Call-Api status
             if ($current.policy.mode -eq 'BLOCKED') { $current=Request-Drain }
-            $configured=Call-Api policy PATCH @{requestId=[guid]::NewGuid().ToString();revision=$current.policy.revision;policy=$pilotPolicy}
-            $null=Call-Api start POST @{requestId=[guid]::NewGuid().ToString();revision=$configured.revision}
+            $final.unicodeRoundtrip=Set-VerifiedPilotPolicy $pilotPolicy $current.policy.revision
+            $null=Call-Api start POST @{requestId=[guid]::NewGuid().ToString();revision=$final.unicodeRoundtrip.revision}
         }
         $final.startedProductionAt=(Get-Date).ToString('o')
         $deadline=(Get-Date).AddMinutes($MaxRunMinutes)
@@ -338,7 +410,8 @@ try {
                     $final.stopReason=if($current.blocker){$current.blocker}else{$current.policy.mode}
                     break
                 }
-                if ($current.blocker -in @('DAILY_LIMIT_REACHED','INVENTORY_FULL')) { $final.stopReason=$current.blocker; break }
+                if ($current.blocker -in @('VIDEO_TARGET_REACHED','CANDIDATE_BUDGET_EXHAUSTED','AI_BUDGET_EXHAUSTED',
+                    'DISCOVERY_EXHAUSTED','DISCOVERY_FAILED','INVENTORY_FULL')) { $final.stopReason=$current.blocker; break }
             }
             if ((Get-Date) -ge $deadline) { $final.stopReason='PILOT_TIME_LIMIT'; break }
             Start-Sleep -Seconds 2

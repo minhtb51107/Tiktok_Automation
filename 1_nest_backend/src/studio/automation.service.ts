@@ -27,6 +27,7 @@ import {
 import {
   ProductPipelineService,
   activeTtsRecovery,
+  autonomousProductRequest,
   seriousDraftDurationStatus,
   type AutonomousProductBatch,
   type AutonomousVideoResult,
@@ -53,6 +54,43 @@ const active = (r: ProductionReservation) =>
   r.status === 'RESERVED' || r.status === 'RUNNING';
 const terminal = (b: AutonomousProductBatch) =>
   !['QUEUED', 'RUNNING'].includes(b.status);
+const DISCOVERY_BATCH_LIMIT = 6;
+const DISCOVERY_RECOVERY_DELAY_MS = 60000;
+const freshDiscovery = (row: ProductionReservation) => row.dispatch && !row.dispatch.recovery;
+
+function discoveryKeywords(topic: string) {
+  const variants = [topic.replace(/^kinh nghiệm\s+/iu,''), 'chia sẻ '+topic, topic+' thực tế'];
+  return [...new Set([topic,...variants.filter(query=>query.length<=120)])].slice(0,3);
+}
+
+function nextDiscovery(topics: string[], reservations: ProductionReservation[], now: Date) {
+  const fresh = reservations.filter(freshDiscovery);
+  if (fresh.length >= DISCOVERY_BATCH_LIMIT) return {blocker:'DISCOVERY_EXHAUSTED'} as const;
+  let failed = false, coolingDown = false;
+  for (let offset=0; offset<topics.length; offset++) {
+    const topic=topics[(fresh.length+offset)%topics.length];
+    const history=fresh.filter(row=>row.dispatch.topic===topic);
+    const last=history[history.length-1];
+    const keyword=last?.dispatch?.discoveryKeyword??topic;
+    if(last?.infrastructureFailure) return {topic,keyword}; // The existing native probe owns this retry.
+    if(last?.discoveryOutcome==='FAILED'){
+      if(history[history.length-2]?.discoveryOutcome==='FAILED'){
+        failed=true;
+        continue;
+      }
+      if(Date.parse(last.finishedAt??'')+DISCOVERY_RECOVERY_DELAY_MS>now.getTime()){
+        coolingDown=true;
+        continue;
+      }
+      return {topic,keyword};
+    }
+    const empty=new Set(history.filter(row=>row.discoveryOutcome==='EMPTY').map(row=>row.dispatch.discoveryKeyword??topic));
+    const next=last?.discoveryOutcome==='RESULTS'?keyword:discoveryKeywords(topic).find(query=>!empty.has(query));
+    if(next) return {topic,keyword:next};
+  }
+  return {blocker:coolingDown?'DISCOVERY_RECOVERY_COOLDOWN':failed?'DISCOVERY_FAILED':'DISCOVERY_EXHAUSTED'} as const;
+}
+
 const clock = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 export function productionWindow(
@@ -154,8 +192,10 @@ export function productionUsage(day: ProductionDay) {
         if(active(r)||r.dispatch?.recovery?.cacheOnly) return n;
         const evaluated=candidates.filter(c=>c.batchId===r.batchId&&c.kind==='NEW_VIDEO'&&!c.cachedRecovery).length;
         const acquisitions=r.acquisitionAttempts??0;
-        return n+Math.max(0,acquisitions-evaluated,(!r.infrastructureFailure&&!evaluated)?1:0);
+        // Old ledgers lack acquisition evidence and keep their original accounting.
+        return n+Math.max(0,acquisitions-evaluated,(r.acquisitionAttempts===undefined&&!r.infrastructureFailure&&!evaluated)?1:0);
       },0),
+    discoveryAttempts: batches.filter(freshDiscovery).length,
     rerenders: candidates.filter((r) => r.kind === 'RERENDER').length,
     aiRequests: candidates.reduce(
       (n, r) => n + (r.aiLedgerIds?.length ?? 0),
@@ -312,7 +352,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     const policy = await this.policy(),
       window = productionWindow(new Date(), policy.schedule);
     const day = await this.store.day(policy.pilotWindow?.dayKey??window.dayKey, new Date().toISOString());
-    const { newVideos, waiting, attempts, rerenders, aiRequests } =
+    const { newVideos, waiting, attempts, discoveryAttempts, rerenders, aiRequests } =
       productionUsage(day);
     return {
       policy,
@@ -324,7 +364,8 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       ),
       active: this.pipeline.hasActiveAuto(),
       blocker: this.blocker,
-      usage: { newVideos, waiting, attempts, rerenders, aiRequests },
+      usage: { newVideos, waiting, attempts, discoveryAttempts, discoveryLimit:DISCOVERY_BATCH_LIMIT, rerenders, aiRequests },
+      discoveryPlan: policy.topics.map(topic=>({topic,keywords:autonomousProductRequest({topic},topic).keywords})),
     };
   }
   async report() {
@@ -519,7 +560,13 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
               : 'COMPLETED';
         slot.finishedAt = batch.completedAt;
         if (batch.browserInfrastructure) slot.infrastructureFailure = true;
-        if(batch.collected?.attemptedRootIds)slot.acquisitionAttempts=batch.collected.attemptedRootIds.length;
+        if(batch.collected?.attemptedRootIds || slot.dispatch.discoveryKeyword)
+          slot.acquisitionAttempts=batch.collected?.attemptedRootIds?.length??0;
+        if(freshDiscovery(slot)){
+          slot.discoveryErrors=batch.errors;
+          slot.discoveryOutcome=batch.collected?.attemptedRootIds?.length?'RESULTS':
+            (batch.errors.length===0&&batch.collected || batch.errors.includes('DISCOVERY_NO_RESULTS_AT_DISCOVERY'))?'EMPTY':'FAILED';
+        }
         slot.error = [
           ...batch.errors,
           ...batch.results.flatMap((r) => r.warnings),
@@ -631,6 +678,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         aiRequestLimit: d.aiLimit,
         reviewBeforeRender: d.reviewBeforeRender,
         reviewSlots: d.reviewSlots,
+        ...(d.discoveryKeyword ? { discoveryKeyword: d.discoveryKeyword } : {}),
         ...(d.recovery ? { recovery: d.recovery } : {}),
       },
     );
@@ -915,7 +963,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
       const attempts = Math.min(10, policy.dailyAttemptLimit - usage.attempts);
       const aiLimit = policy.dailyAiRequestLimit - usage.aiRequests;
       if (usage.newVideos >= policy.dailyVideoLimit) {
-        this.blocker = 'DAILY_LIMIT_REACHED';
+        this.blocker = 'VIDEO_TARGET_REACHED';
         return;
       }
       if (capacity <= 0) {
@@ -929,19 +977,19 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         aiLimit > 0 && attempts > 0,
       );
       if ((aiLimit <= 0 || attempts <= 0) && !saved) {
-        this.blocker = 'DAILY_LIMIT_REACHED';
+        this.blocker = attempts <= 0 ? 'CANDIDATE_BUDGET_EXHAUSTED' : 'AI_BUDGET_EXHAUSTED';
+        return;
+      }
+      const discovery=saved?null:nextDiscovery(policy.topics,day.reservations,now);
+      if(discovery?.blocker){
+        this.blocker=discovery.blocker;
         return;
       }
       if (!policy.topics.length || !(await this.runtimePreflight())) {
         this.blocker = 'RESOURCE_BLOCKED';
         return;
       }
-      const topic =
-        saved?.topic ??
-        policy.topics[
-          day.reservations.filter((x) => x.dispatch).length %
-            policy.topics.length
-        ];
+      const topic = saved?.topic ?? discovery.topic;
       const id = randomUUID(),
         slot: ProductionReservation = {
           id,
@@ -958,7 +1006,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
             topic,
             capacity: saved ? 1 : capacity,
             attempts: saved ? 1 : attempts,
-            ...(saved ? { recovery: saved.recovery } : {}),
+            ...(saved ? { recovery: saved.recovery } : { discoveryKeyword: discovery.keyword }),
             aiLimit: saved?.recovery.cacheOnly ? 0 : aiLimit,
             reviewSlots: policy.maxPendingReviews - reviews.length,
             preset: policy.renderPreset,
