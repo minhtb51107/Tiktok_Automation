@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { assertBrowserResourceHandoff } from '../data-engine/browser-resource-guard';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { sessionReadiness } from './session-readiness';
@@ -1297,6 +1298,18 @@ export class StudioService {
   }
   private readonly productionScope = new AsyncLocalStorage<symbol>();
   private productionOwner?: symbol;
+  async verifyTtsTimeoutRecovery(session: StudioSession, itemId:string, voice:string,speed:number, previousPid:number) {
+    assertBrowserResourceHandoff();
+    await this.voice.closeAndWait();
+    if(!Number.isSafeInteger(previousPid)||previousPid<=0)throw Error('TTS_PREVIOUS_WORKER_UNVERIFIED');
+    try { process.kill(previousPid,0); throw Error('TTS_PREVIOUS_WORKER_UNVERIFIED'); }
+    catch(error){if((error as NodeJS.ErrnoException).code!=='ESRCH')throw error;}
+    const item=session.items.find(row=>row.id===itemId&&row.selected);
+    if(!item||item.voiceSettings?.voice!==voice||item.voiceSettings?.speed!==speed)throw Error('TTS_RECOVERY_SETTINGS_CHANGED');
+    const normalized=prepareTtsInput(item.spokenText,item.pronunciationOverrides);
+    return this.voice.verifyTimeoutCheckpoint(session.id,normalized.spokenText,voice,speed,
+      {itemId,normalizationVersion:normalized.normalizationVersion});
+  }
   async productionTtsAdmission() {
     assertBrowserResourceHandoff();
     await this.voice.closeAndWait().catch(()=>{throw Error('RESOURCE_CLEANUP_UNVERIFIED');});
@@ -2274,7 +2287,11 @@ export class StudioService {
     itemId: string,
     body: any,
     execution?: LocalTtsExecution,
+    productionDeadlineAt?: number,
   ) {
+    if(productionDeadlineAt!==undefined&&(!this.productionOwner||this.productionScope.getStore()!==this.productionOwner||body?.draft!==true))
+      throw new ForbiddenException('PRODUCTION_TTS_SCOPE_REQUIRED');
+    const deadline=productionDeadlineAt===undefined?undefined:Math.min(productionDeadlineAt,Date.now()+300000);
     return this.exclusive(async () => {
       const s = await this.load(id);
       if (s.revision !== body?.revision)
@@ -2350,7 +2367,16 @@ export class StudioService {
       } else if (body.action === 'GENERATE') {
         assertBrowserResourceHandoff();
         const hasSettings = body.voice !== undefined || body.speed !== undefined;
-        const runtime = hasSettings ? await this.voice.preflight() : undefined;
+        const started=Date.now();
+        let runtime:Awaited<ReturnType<KokoroRuntime['preflight']>>;
+        try{runtime=hasSettings?await this.voice.preflight(false,deadline):undefined;}
+        catch(error){
+          if(deadline===undefined)throw error;
+          s.voiceJobs=[...(s.voiceJobs??[]),{itemId:item.id,status:'ERROR',error:(error as Error).message,
+            failureCategory:ttsFailureCategory(error),startedAt:new Date(started).toISOString(),
+            completedAt:new Date().toISOString(),elapsedMs:Date.now()-started}];
+          return this.persist(s);
+        }
         if (runtime) s.voiceRuntime = runtime;
         if (hasSettings && (runtime!.status === 'READY' ||
             (runtime!.declaredVoices.length > 0 &&
@@ -2369,6 +2395,7 @@ export class StudioService {
           runtime,
           body.draft === true,
           execution,
+          deadline,
         );
       } else throw new BadRequestException('Unknown voice operation');
       return this.persist(s);
@@ -2414,6 +2441,7 @@ export class StudioService {
     preflighted?: NonNullable<StudioSession['voiceRuntime']>,
     draft = false,
     execution?: LocalTtsExecution,
+    productionDeadlineAt?: number,
   ) {
     if (!draft && item.contentMapping?.status === 'REVIEW_REQUIRED')
       throw new ConflictException(
@@ -2497,6 +2525,7 @@ export class StudioService {
           regenerate,
           { itemId: item.id, normalizationVersion },
           execution,
+          productionDeadlineAt,
         );
         await this.tick('Saving asset');
         // Returning to cached settings reuses the existing manifest, not another ID.
@@ -2590,6 +2619,11 @@ export class StudioService {
       job.error = e instanceof Error ? e.message : 'TTS failed';
       job.failureCategory = ttsFailureCategory(e);
       job.status = 'ERROR';
+      if(job.ttsInputHash&&item.voiceSettings?.voice&&s.voiceRuntime&&this.voice.checkpointReference){
+        const normalized=prepareTtsInput(item.spokenText,item.pronunciationOverrides);
+        job.checkpointReference=await this.voice.checkpointReference(s.id,normalized.spokenText,item.voiceSettings.voice,
+          item.voiceSettings.speed,s.voiceRuntime,{itemId:item.id,normalizationVersion:normalized.normalizationVersion}).catch(()=>null);
+      }
       const diagnostic = this.voice.diagnostics?.();
       if (diagnostic && diagnostic.inputHash === job.ttsInputHash) {
         const samples = diagnostic.samples.filter((r) => r.atMs >= started);

@@ -391,20 +391,29 @@ describe('product pipeline snapshot', () => {
   });
 });
 
-it('stops automatic voice actions immediately on the first resource guard failure',async()=>{
+it.each([
+  ['RESOURCE_GUARD_STOP','RESOURCE_GUARD_STOP'],
+  ['TIMEOUT','Kokoro inference deadline exceeded'],
+  ['ALLOCATION_FAILURE','Allocator failed'],
+  ['CLEANUP_UNVERIFIED','RESOURCE_CLEANUP_UNVERIFIED'],
+  ['AUDIO_VALIDATION_FAILED','Invalid measured PCM audio format'],
+])('stops on %s and preserves the persisted voice error',async(failureCategory,error)=>{
   const contract=await import('./production-contract');
   const source=jest.spyOn(contract,'sourceBlockers').mockReturnValue([]);
   try{
     const items=[{id:'one',selected:true,order:0,spokenText:'Câu chuyện.'},
       {id:'two',selected:true,order:1,spokenText:'Câu trả lời.'}];
     const state={id:'draft',revision:1,items};
-    const voiceAction=jest.fn(async()=>({...state,voiceJobs:[{itemId:'one',status:'ERROR',error:'RESOURCE_GUARD_STOP'}]}));
+    const voiceAction=jest.fn(async()=>({...state,voiceJobs:[{itemId:'one',status:'ERROR',error,failureCategory,elapsedMs:123,
+      checkpointReference:'chunks/test/manifest.json',resourceDiagnostics:{chunkProgress:[{index:9,total:11}]}}]}));
     const studio={load:async()=>state,jobs:{findRequest:async()=>null},restoreOperatorAvatars:async()=>state,
       applyAutomaticSeriousAssets:async()=>state,normalizeAutomaticDraft:async()=>state,voiceAction};
     const pipeline=new ProductPipelineService(studio as any,null,null,null);
     Object.assign(pipeline,{checkAuto:async()=>undefined,saveAuto:async()=>undefined});
-    await expect((pipeline as any).continueAutomaticDraft({id:'batch',request:{voice:'my_yen',speed:1.3}},
-      {sessionId:'draft',sourceUrl:'https://www.threads.com/@tester/post/ROOT'})).rejects.toThrow('RESOURCE_GUARD_STOP');
+    const row:any={sessionId:'draft',sourceUrl:'https://www.threads.com/@tester/post/ROOT'};
+    await expect((pipeline as any).continueAutomaticDraft({id:'batch',request:{voice:'my_yen',speed:1.3}},row)).rejects.toThrow(error);
+    expect(row.voiceFailure).toMatchObject({failureCategory,error,itemId:'one',elapsedMs:123,completedChunks:9,totalChunks:11,
+      checkpointReference:'chunks/test/manifest.json'});
     expect(voiceAction).toHaveBeenCalledTimes(1);
   }finally{source.mockRestore();}
 });
@@ -451,4 +460,42 @@ it('exhausts three denied TTS probes without launching any worker',async()=>{
   expect(measure).toHaveBeenCalledTimes(3);
   expect(send).not.toHaveBeenCalled();
   expect(wait).toMatchObject({status:'BLOCKED',blockReason:'ADMISSION_DENIED',retries:0});
+});
+
+it('authorizes only the latest exact timeout and preserves the consumed resource recovery',async()=>{
+  const at='2026-11-28T04:06:00.000Z', text='Câu chuyện.';
+  const normalized=prepareTtsInput(text);
+  const job:any={id:'batch',status:'FAILED',dispatch:{recovery:{cacheOnly:true}},startedAt:at,request:{voice:'my_yen',speed:1.3},
+    ttsWait:{status:'RESOLVED',retries:1,sessionId:'draft',sourceUrl:'source',inputHash:'exact'},
+    results:[{sessionId:'draft',sourceUrl:'source',checkpoint:'DRAFT',collectionId:'collection',assessmentId:'assessment',status:'TTS_FAILED',
+       aiLedgerIds:['previous']}]};
+  const failure={itemId:'item',status:'ERROR',error:'Kokoro inference deadline exceeded',failureCategory:'TIMEOUT',
+    completedAt:at,elapsedMs:122381,ttsInputHash:normalized.ttsInputHash,
+    resourceDiagnostics:{ownedWorkerPid:42,chunkProgress:[{index:9,total:11}]}};
+  const session={id:'draft',items:[{id:'item',selected:true,spokenText:text}],voiceJobs:[failure]};
+  const checkpoint={checkpointReference:'chunks/exact/manifest.json',completedChunks:9,totalChunks:11};
+  const verify=jest.fn(async()=>checkpoint);
+  const studio={hasHeavyWorker:()=>false,withProductionWorker:async(work)=>work(),verifyTtsTimeoutRecovery:verify,
+    productionTtsAdmission:async()=>({allowed:true})};
+  const pipeline=new ProductPipelineService(studio as any,
+    {engine:{collection:async()=>({collection:{root:{id:'root',url:'source'}}})}} as any,
+    {evaluator:{get:async()=>({collectionId:'collection',rootSourceId:'root'})}} as any,null);
+  const send=jest.fn((_id:string)=>undefined);
+  Object.assign(pipeline,{getAuto:async()=>job,listAuto:async()=>[job],saveAuto:async()=>undefined,exactTtsSession:async()=>({session,inputHash:'exact'}),
+    scheduleAuto:send});
+  const request={batchId:'batch',sessionId:'draft',itemId:'item',failedAt:at};
+  await expect(pipeline.authorizeTtsTimeoutRecovery({...request,failedAt:'stale'},'first')).rejects.toThrow('STALE_TTS_TIMEOUT_FAILURE');
+  await pipeline.authorizeTtsTimeoutRecovery(request,'first');
+  await pipeline.authorizeTtsTimeoutRecovery(request,'first');
+  await expect(pipeline.authorizeTtsTimeoutRecovery(request,'second')).rejects.toThrow('TTS_TIMEOUT_RETRY_ALREADY_AUTHORIZED');
+  expect(verify).toHaveBeenCalledTimes(1);
+  expect(job.results[0].voiceFailure).toMatchObject({...checkpoint,itemId:'item',failureCategory:'TIMEOUT',elapsedMs:122381,error:failure.error});
+  expect(job.ttsWait.retries).toBe(1);
+  expect(job.results[0].aiLedgerIds).toEqual(['previous']);
+  expect(send).not.toHaveBeenCalled();
+  await pipeline.probeTtsResourceWait(job.id,Date.now()+1000);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(job.ttsTimeoutRecovery.retries).toBe(1);
+  expect(job.ttsWait.retries).toBe(1);
+  await expect(pipeline.authorizeTtsTimeoutRecovery(request,'first')).rejects.toThrow('TTS_TIMEOUT_RETRY_ALREADY_AUTHORIZED');
 });

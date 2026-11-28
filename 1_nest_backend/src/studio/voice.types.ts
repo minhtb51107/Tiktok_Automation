@@ -39,6 +39,7 @@ export interface VoiceAsset {
 }
 export interface VoiceJob {
   failureCategory?:import('./tts-resource-policy').TtsFailureCategory;
+  checkpointReference?:string|null;
   inputCharacters?:number;
   ttsInputHash?:string;
   resourceDiagnostics?:ReturnType<import('./kokoro-runtime').KokoroRuntime['diagnostics']>;

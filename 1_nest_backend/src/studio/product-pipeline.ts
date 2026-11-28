@@ -1,3 +1,4 @@
+import type { TtsFailureEvidence } from './tts-resource-policy';
 import { BadRequestException, ConflictException, Injectable, Optional } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
@@ -116,6 +117,7 @@ export interface AutonomousVideoResult {
   estimatedSeconds: { minimum: number; maximum: number } | null;
   measuredSeconds: number | null;
   timelineSeconds: number | null;
+  voiceFailure?: TtsFailureEvidence;
   warnings: string[];
 }
 
@@ -126,6 +128,13 @@ export interface AutomaticDispatch {
   reviewSlots?:number;
   dayKey: string;
   recovery?: { batchId: string; collectionId: string; sourceUrl: string; cacheOnly?: boolean };
+}
+
+export interface TtsTimeoutRequest {
+  batchId:string;
+  sessionId:string;
+  itemId:string;
+  failedAt:string;
 }
 
 export interface TtsResourceWait {
@@ -165,6 +174,7 @@ export interface AutonomousProductBatch {
   collected?: { discoveredRoots: number; collectedReplies: number };
   inference?: import('../data-engine/ai-provider').AiRequestSummary;
   ttsWait?: TtsResourceWait;
+  ttsTimeoutRecovery?: TtsResourceWait & { requestId:string; failedAt:string; itemId:string; checkpointReference:string };
   browserInfrastructure?: { failureCode: string; cleanupVerified: boolean; diagnosticReference: string };
   dispatchRequestId?: string;
   dispatch?: AutomaticDispatch;
@@ -1034,7 +1044,7 @@ export class ProductPipelineService {
         .map(item=>({id:item.id,selected:order.has(sourceId(item)),displayText:item.displayText,spokenText:item.spokenText}))});
   }
 
-  private async continueAutomaticDraft(batch: AutonomousProductBatch, result: AutonomousVideoResult) {
+  private async continueAutomaticDraft(batch: AutonomousProductBatch, result: AutonomousVideoResult, deadlineAt=Date.now()+(batch.request.maxRunMs??3600000)) {
     if (!result.sessionId) throw Error('AUTONOMOUS_DRAFT_SESSION_MISSING');
     const id = result.sessionId, preset = batch.dispatch?.preset ?? '1080P60';
     const requestId = 'auto-render-' + batch.id + '-' + canonicalPost(result.sourceUrl)?.id;
@@ -1065,14 +1075,14 @@ export class ProductPipelineService {
           const cached=currentNarration(current,item);
           if(cached&&(await fs.stat(await this.studio.audioFile(id,cached.id)).catch(()=>null))?.size>44)continue;
           current=await this.studio.voiceAction(id,item.id,{revision:current.revision,action:'GENERATE',
-            voice:batch.request.voice,speed:batch.request.speed,draft:true});
+            voice:batch.request.voice,speed:batch.request.speed,draft:true},undefined,deadlineAt);
           const generated=current.items.find(row=>row.id===item.id);
           if(!generated||!currentNarration(current,generated)){
             const voiceJob=current.voiceJobs?.filter(job=>job.itemId===item.id).slice(-1)[0];
-            if(voiceJob?.status==='ERROR'&&voiceJob.error?.includes('RESOURCE_GUARD_STOP'))
+            if(voiceJob?.status==='ERROR'&&voiceJob.error){
+              result.voiceFailure=this.voiceFailure(voiceJob);
               throw Error(voiceJob.error);
-            if(voiceJob?.error?.includes('RESOURCE_CLEANUP_UNVERIFIED'))
-              throw Error('RESOURCE_CLEANUP_UNVERIFIED');
+            }
             throw Error('CURRENT_MEASURED_AUDIO_REQUIRED:'+item.id);
           }
         }
@@ -1120,6 +1130,7 @@ export class ProductPipelineService {
       await this.saveAuto(batch);
     }
     await this.checkAuto(batch);
+    if(!existing&&Date.now()>=deadlineAt)throw Error('AUTONOMOUS_STAGE_TIMEOUT');
     if(!existing)await this.studio.productionRenderHandoff();
     batch.stage = 'RENDERING';
     await this.saveAuto(batch);
@@ -1127,7 +1138,7 @@ export class ProductPipelineService {
     result.renderJobId = submitted.jobId;
     result.checkpoint = 'RENDER_SUBMITTED';
     await this.saveAuto(batch);
-    const completed = await this.waitStudioJob(submitted.jobId, Date.now() + batch.request.maxRunMs);
+    const completed = await this.waitStudioJob(submitted.jobId, deadlineAt);
     const finishedManifest = await this.studio.renders.load(id, submitted.jobId).catch(()=>null);
     if (completed.status !== 'SUCCEEDED' && finishedManifest?.status!=='COMPLETED') {
       result.status = /RENDER_PRESET_UNSUPPORTED|RENDER_FPS_CONVERSION_UNSUPPORTED/.test(completed.error ?? '')
@@ -1146,9 +1157,9 @@ export class ProductPipelineService {
   }
 
   private async processAutomaticCollection(batch: AutonomousProductBatch, collection: ThreadCollection,
-    result: AutonomousVideoResult, index: number) {
+    result: AutonomousVideoResult, index: number, deadlineAt?:number) {
     const identity = canonicalPost(collection.root.url);
-    if (result.sessionId) return this.continueAutomaticDraft(batch, result);
+    if (result.sessionId) return this.continueAutomaticDraft(batch, result, deadlineAt);
     const started=Date.now();
     const rejectRoot=(code:string)=>{
       const evidence:EvaluationEvidence={sourceId:collection.root.id,hardBlockers:[code],heuristicScore:null,
@@ -1300,7 +1311,7 @@ export class ProductPipelineService {
     result.checkpoint = 'DRAFT';
     await this.saveAuto(batch);
     await this.registerAutomaticDraft(collection.root.url,draft,collectionId,assessment.id);
-    await this.continueAutomaticDraft(batch,result);
+    await this.continueAutomaticDraft(batch,result,deadlineAt);
   }
 
   async savedAssessmentCandidate(batch: AutonomousProductBatch, result: AutonomousVideoResult, now = Date.now()) {
@@ -1343,6 +1354,52 @@ export class ProductPipelineService {
         overrides:item.pronunciationOverrides,normalized:prepareTtsInput(item.spokenText,item.pronunciationOverrides).ttsInputHash}))});
     return {session,inputHash};
   }
+  private voiceFailure(job: NonNullable<StudioSession['voiceJobs']>[number]): TtsFailureEvidence {
+    const last=job.resourceDiagnostics?.chunkProgress?.slice(-1)[0];
+    return { failureCategory:job.failureCategory??'UNKNOWN',error:job.error,itemId:job.itemId,elapsedMs:job.elapsedMs,
+      completedChunks:Number.isInteger(last?.index)?Number(last.index):null,
+      totalChunks:Number.isInteger(last?.total)?Number(last.total):null,
+      checkpointReference:job.checkpointReference??null,deadline:job.resourceDiagnostics?.deadline,phaseMs:job.resourceDiagnostics?.phaseMs };
+  }
+  async authorizeTtsTimeoutRecovery(request:TtsTimeoutRequest, requestId:string) {
+    return this.serializeAuto(async()=>{
+      const batch=await this.getAuto(request.batchId),existing=batch.ttsTimeoutRecovery;
+      if(existing){
+        if(existing.requestId===requestId&&existing.sessionId===request.sessionId&&existing.itemId===request.itemId&&
+           existing.failedAt===request.failedAt&&existing.status==='WAITING')return;
+        throw new ConflictException('TTS_TIMEOUT_RETRY_ALREADY_AUTHORIZED');
+      }
+      if(this.hasActiveAuto()||this.studio.hasHeavyWorker()||
+          batch.status!=='FAILED'||batch.ttsWait?.status!=='RESOLVED'||batch.ttsWait.retries!==1||!batch.dispatch?.recovery?.cacheOnly)
+        throw new ConflictException('TTS_TIMEOUT_RECOVERY_INELIGIBLE');
+      if((await this.listAuto()).some(other=>{
+        const wait=other.ttsTimeoutRecovery??other.ttsWait;
+        return other.id!==batch.id&&(['QUEUED','RUNNING'].includes(other.status)||wait&&wait.status!=='RESOLVED');
+      }))throw new ConflictException('TTS_TIMEOUT_RECOVERY_CONFLICT');
+      const row=batch.results.find(result=>result.sessionId===request.sessionId&&result.status==='TTS_FAILED'&&
+         result.checkpoint==='DRAFT'&&result.assessmentId&&result.collectionId&&!result.renderJobId);
+      if(!row||batch.ttsWait.sessionId!==row.sessionId||batch.ttsWait.sourceUrl!==row.sourceUrl)
+        throw new ConflictException('TTS_TIMEOUT_SESSION_MISMATCH');
+      const {session,inputHash}=await this.exactTtsSession(batch,row);
+      const failure=session.voiceJobs?.slice(-1)[0],item=session.items.find(item=>item.id===request.itemId&&item.selected);
+      if(!item||!failure||failure.status!=='ERROR'||failure.failureCategory!=='TIMEOUT'||
+          failure.completedAt!==request.failedAt||failure.itemId!==request.itemId||
+          failure.ttsInputHash!==prepareTtsInput(item.spokenText,item.pronunciationOverrides).ttsInputHash||
+          batch.ttsWait.inputHash!==inputHash)throw new ConflictException('STALE_TTS_TIMEOUT_FAILURE');
+      const [collection,assessment]=await Promise.all([
+        this.conversations.engine.collection(row.collectionId),this.ai.evaluator.get(row.assessmentId)]);
+      if(collection.collection.root.url!==row.sourceUrl||assessment.collectionId!==row.collectionId||
+         assessment.rootSourceId!==collection.collection.root.id)throw Error('TTS_RECOVERY_ASSESSMENT_CHANGED');
+      const checkpoint=await this.studio.withProductionWorker(()=>this.studio.verifyTtsTimeoutRecovery(
+        session,request.itemId,batch.request.voice,batch.request.speed,failure.resourceDiagnostics?.ownedWorkerPid));
+      row.voiceFailure={...this.voiceFailure(failure),...checkpoint};
+      row.warnings=[failure.error];
+      batch.ttsTimeoutRecovery={status:'WAITING',requestId,failedAt:request.failedAt,itemId:request.itemId,
+        checkpointReference:checkpoint.checkpointReference,sessionId:row.sessionId,sourceUrl:row.sourceUrl,inputHash,
+        previousFailure:failure.error,nextProbeAt:Date.now(),probes:0,retries:0};
+      await this.saveAuto(batch);
+    });
+  }
   async adoptTtsResourceWait(id: string) {
     return this.serializeAuto(async()=>{
       const batch=await this.getAuto(id);
@@ -1365,7 +1422,7 @@ export class ProductPipelineService {
   }
   async probeTtsResourceWait(id: string, now: number) {
     return this.serializeAuto(async()=>{
-      const batch=await this.getAuto(id), wait=batch.ttsWait;
+      const batch=await this.getAuto(id), wait=batch.ttsTimeoutRecovery??batch.ttsWait;
       if(!wait || this.hasActiveAuto() || this.studio.hasHeavyWorker())return wait;
       if(wait.status==='RETRYING'){
         wait.status='BLOCKED';wait.blockReason='RETRY_EXHAUSTED'; // A restart cannot consume the same recovery retry twice.
@@ -1425,20 +1482,23 @@ export class ProductPipelineService {
         job.status = 'RUNNING';
         job.startedAt ??= new Date().toISOString();
         await this.saveAuto(job);
-        if(job.ttsWait?.status==='RETRYING'){
-          const wait=job.ttsWait;
+        const deadlineAt=Date.now()+job.request.maxRunMs;
+        const recoveryWait=job.ttsTimeoutRecovery??job.ttsWait;
+        if(recoveryWait?.status==='RETRYING'){
+          const wait=recoveryWait;
           const row=job.results.find(result=>result.sessionId===wait.sessionId&&result.sourceUrl===wait.sourceUrl);
           if(!row||(await this.exactTtsSession(job,row)).inputHash!==wait.inputHash){
             wait.status='BLOCKED';job.status='BLOCKED';return;
           }
           try {
-            await this.continueAutomaticDraft(job,row);
+            await this.continueAutomaticDraft(job,row,deadlineAt);
             wait.status='RESOLVED';
             job.status=row.status==='COMPLETED'?'COMPLETED':row.status==='WAITING_HUMAN'?'PARTIAL':'FAILED';
             job.stage='COMPLETED';
           } catch(error) {
             const message=(error as Error).message;
-            if(/RESOURCE/.test(message))await this.parkTtsResourceFailure(job,row,message);
+            if(/RESOURCE/.test(message)&&!job.ttsTimeoutRecovery)await this.parkTtsResourceFailure(job,row,message);
+            else if(/RESOURCE/.test(message)){wait.status='BLOCKED';wait.blockReason='RETRY_EXHAUSTED';job.status='BLOCKED';row.status='RESOURCE_STOPPED';row.warnings=[message];}
             else {wait.status='RESOLVED';job.status='FAILED';row.status=row.renderJobId?'RENDER_FAILED':'TTS_FAILED';row.warnings=[message];}
           }
           return;
@@ -1499,7 +1559,7 @@ export class ProductPipelineService {
           } else if (!result.checkpoint || result.status === 'COMPLETED' || result.status === 'WAITING_HUMAN' ||
             result.status === 'NOT_ENOUGH_CONTENT' || result.status === 'AI_FAILED' || result.status === 'AI_BUDGET_EXHAUSTED') continue;
           try {
-            await this.processAutomaticCollection(job,collection,result,index);
+            await this.processAutomaticCollection(job,collection,result,index,deadlineAt);
           } catch (error) {
             const message=(error as Error).message;
             if (message === 'AUTONOMOUS_CANCELLED') throw error;

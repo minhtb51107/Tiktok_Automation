@@ -7,12 +7,15 @@ param(
     [string]$SessionId = '578a7376-0afc-41be-b032-3b593643d77b',
     [string]$SourceId = 'DYFgbQ2k-FR',
     [ValidateRange(1024,65535)][int]$Port = 57374,
-    [string]$RuntimeConfig
+    [string]$RuntimeConfig,
+    [switch]$RetryTimeout,
+    [string]$ItemId = '5ffe9fd3-06e0-44a7-bea2-4a9ceebc164f'
 )
 $ErrorActionPreference = 'Stop'
 $backend = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $root = (Resolve-Path -LiteralPath $DataRoot).Path
 if ([guid]::Parse($BatchId).ToString() -cne $BatchId -or
+    [guid]::Parse($ItemId).ToString() -cne $ItemId -or
     [guid]::Parse($SessionId).ToString() -cne $SessionId -or $SourceId -notmatch '^[a-zA-Z0-9_-]+$') {
     throw 'Invalid saved production identifiers.'
 }
@@ -56,6 +59,17 @@ function Read-Outcome {
     if ($batch.id -ne $BatchId -or $rows.Count -ne 1) { throw 'Saved candidate does not match its batch and session.' }
     [pscustomobject]@{ batch=$batch; row=$rows[0] }
 }
+function Read-VoiceFailure {
+    $session=Read-Json (Join-Path $root "$SessionId.json")
+    $last=@($session.voiceJobs | Select-Object -Last 1)
+    if ($last.Count -eq 1 -and $last[0].status -eq 'ERROR') {
+        $job=$last[0]
+        $progress=$job.resourceDiagnostics.chunkProgress | Select-Object -Last 1
+        [pscustomobject]@{failureCategory=$job.failureCategory; error=$job.error; itemId=$job.itemId;
+            failedAt=$job.completedAt; elapsedMs=$job.elapsedMs; completedChunks=$progress.index;
+            totalChunks=$progress.total; checkpointReference=$job.checkpointReference}
+    }
+}
 function Get-ValidatedVideo($Outcome) {
     $row = $Outcome.row
     if ($row.status -ne 'COMPLETED' -or $row.artifact.validation -ne 'MACHINE_VALIDATED') { return $null }
@@ -86,7 +100,7 @@ if ($Action -in @('Status','Stop')) {
     [pscustomobject]@{
         runtimeOnline=($null -ne $live); api=$live; savedPolicy=(Read-Json $policyPath).mode
         batchStatus=$outcome.batch.status; stage=$outcome.batch.stage; candidateStatus=$outcome.row.status
-        ttsWait=$outcome.batch.ttsWait; renderJobId=$outcome.row.renderJobId; mp4Root=$renderRoot
+        ttsWait=$outcome.batch.ttsWait; timeoutRecovery=$outcome.batch.ttsTimeoutRecovery; voiceFailure=(Read-VoiceFailure); renderJobId=$outcome.row.renderJobId; mp4Root=$renderRoot
         logDirectory=$state.logDirectory; report=$reportPath
     } | ConvertTo-Json -Depth 20
     return
@@ -109,9 +123,16 @@ try {
     $policy = Read-Json $policyPath
     if ($policy.mode -notin @('DISABLED','BLOCKED')) { throw 'The saved policy must be DISABLED or BLOCKED before launch.' }
     if ($policy.dailyVideoLimit -ne 1 -or $policy.renderPreset -ne '1080P60') { throw 'Expected the existing one-video 1080P60 policy.' }
-    if ($Action -eq 'Start' -and ($outcome.batch.ttsWait.status -ne 'BLOCKED' -or
+    if ($Action -eq 'Start' -and $RetryTimeout) {
+        $failure=Read-VoiceFailure
+        if ($outcome.batch.ttsTimeoutRecovery -or $outcome.batch.ttsWait.status -ne 'RESOLVED' -or
+            $outcome.batch.ttsWait.retries -ne 1 -or $outcome.row.status -ne 'TTS_FAILED' -or
+            $failure.failureCategory -ne 'TIMEOUT' -or $failure.itemId -ne $ItemId -or $outcome.row.renderJobId) {
+            throw 'The exact saved timeout is stale, ineligible or already authorized.'
+        }
+    } elseif ($Action -eq 'Start' -and ($outcome.batch.ttsWait.status -ne 'BLOCKED' -or
         $outcome.batch.ttsWait.blockReason -ne 'ADMISSION_DENIED' -or $outcome.batch.ttsWait.retries -ne 0 -or
-        $outcome.row.renderJobId)) { throw 'The exact saved admission checkpoint is not eligible for this launcher.' }
+        $outcome.row.renderJobId)) { throw 'The exact saved admission checkpoint is not eligible. Use -RetryTimeout for a saved timeout.' }
     $build = Join-Path $backend 'dist/main.js'
     if (!(Test-Path -LiteralPath $build -PathType Leaf)) { throw 'The current backend build is missing.' }
     if (!$RuntimeConfig) { $RuntimeConfig = Join-Path $backend '.studio-data/runtime.local.json' }
@@ -176,8 +197,12 @@ try {
     Write-Host "Logs: $run"
     if ($Action -eq 'Check') { $final.result='CHECKED_NO_PRODUCTION'; return }
     if ($worker.HasExited) { throw 'Backend exited before starting production.' }
-    $unresolved = @($initialReport.batches | Where-Object { $_.ttsWait -and $_.ttsWait.status -ne 'RESOLVED' })
-    if ($unresolved.Count -ne 1 -or $unresolved[0].id -ne $BatchId -or
+    $unresolved = @($initialReport.batches | Where-Object {
+        $pending = if ($_.ttsTimeoutRecovery) { $_.ttsTimeoutRecovery } else { $_.ttsWait }
+        $pending -and $pending.status -ne 'RESOLVED'
+    })
+    if (($RetryTimeout -and $unresolved.Count -ne 0) -or
+        (!$RetryTimeout -and ($unresolved.Count -ne 1 -or $unresolved[0].id -ne $BatchId)) -or
         @($initialReport.batches | Where-Object { $_.status -in @('QUEUED','RUNNING') }).Count) {
         throw 'The requested batch must be the only pending production recovery.'
     }
@@ -194,13 +219,17 @@ try {
     $final.startedProductionAt=(Get-Date).ToString('o')
     $current=Call-Api status
     $final.startRequestId=[guid]::NewGuid().ToString()
-    $null=Call-Api start POST @{requestId=$final.startRequestId;revision=$current.policy.revision;retryTtsAdmission=$true}
+    $start=@{requestId=$final.startRequestId;revision=$current.policy.revision}
+    if($RetryTimeout){
+        $start.retryTtsTimeout=@{batchId=$BatchId;sessionId=$SessionId;itemId=$ItemId;failedAt=$failure.failedAt}
+    }else{$start.retryTtsAdmission=$true}
+    $null=Call-Api start POST $start
     $draining=$false
     $deadline=(Get-Date).AddHours(8)
     for ($poll=0; ; $poll++) {
         if ($worker.HasExited) { throw 'Backend exited before settling. Saved checkpoints remain on disk.' }
         $outcome=Read-Outcome
-        $wait=$outcome.batch.ttsWait
+        $wait=if($RetryTimeout){$outcome.batch.ttsTimeoutRecovery}else{$outcome.batch.ttsWait}
         # Drain immediately after the exact saved retry is admitted. The active
         # retry continues while the scheduler stops accepting other work.
         if (!$draining -and ($wait.status -in @('RETRYING','RESOLVED') -or (Get-Date) -gt $deadline)) {
@@ -214,7 +243,11 @@ try {
         Start-Sleep -Milliseconds 400
     }
     $final.video=Get-ValidatedVideo (Read-Outcome)
-    $final.result=if ($final.video) {'PASS'} elseif ((Read-Outcome).batch.ttsWait.status -eq 'BLOCKED') {'BLOCKED'} else {'STOPPED_WITHOUT_MP4'}
+    $outcome=Read-Outcome
+    $wait=if($RetryTimeout){$outcome.batch.ttsTimeoutRecovery}else{$outcome.batch.ttsWait}
+    $final.productionFailure=if($final.video){$null}elseif($outcome.row.voiceFailure){$outcome.row.voiceFailure}else{Read-VoiceFailure}
+    if(!$final.video){$final.productionWarnings=$outcome.row.warnings;$final.resourceBlocker=$wait.blockReason}
+    $final.result=if ($final.video) {'PASS'} elseif ($wait.status -eq 'BLOCKED') {'BLOCKED'} elseif ($outcome.row.status -in @('TTS_FAILED','RENDER_FAILED')) {'FAILED'} else {'STOPPED_WITHOUT_MP4'}
 } catch {
     $final.error=$_.Exception.Message
     throw
@@ -248,6 +281,8 @@ try {
                 Write-Json (Join-Path $run 'report.json') $final
                 if ($Action -ne 'Check') { Write-Json $reportPath $final }
                 Write-Host "Result: $($final.result)"
+                if ($final.productionFailure) { Write-Host "Last voice failure: $($final.productionFailure.failureCategory) - $($final.productionFailure.error)" }
+                if ($final.resourceBlocker) { Write-Host "Recovery blocker: $($final.resourceBlocker)" }
                 Write-Host "Report: $(Join-Path $run 'report.json')"
                 if ($final.video) { Write-Host "MP4: $($final.video.path)" }
             }

@@ -214,8 +214,13 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
     return this.store.serialize(async () => {
       const policy = await this.policy(),
         requestId = automationRequestId(body?.requestId);
+      const timeout = action==='START'?body?.retryTtsTimeout:undefined;
+      if(timeout!==undefined&&(!timeout||typeof timeout!=='object'||body.retryTtsAdmission===true||
+         Object.keys(timeout).length!==4||!['batchId','sessionId','itemId'].every(key=>typeof timeout[key]==='string'&&/^[a-f0-9-]{36}$/.test(timeout[key]))||
+         typeof timeout.failedAt!=='string'||!Number.isFinite(Date.parse(timeout.failedAt))))
+        throw new BadRequestException('INVALID_TTS_TIMEOUT_RECOVERY');
       const patch = action === 'PATCH' ? body?.policy : undefined,
-        digest = body?.retryTtsAdmission===true&&action==='START'
+        digest = timeout ? automationKey(action,body.revision,'retryTtsTimeout',timeout) : body?.retryTtsAdmission===true&&action==='START'
           ? automationKey(action,body?.revision,patch,'retryTtsAdmission')
           : automationKey(action, body?.revision, patch);
       if (policy.requestId === requestId) {
@@ -270,6 +275,13 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         requestId,
         mutationKey: digest,
       });
+      if(timeout){
+        if(!['DISABLED','BLOCKED'].includes(policy.mode))throw new ConflictException('TTS_TIMEOUT_RECOVERY_REQUIRES_IDLE_POLICY');
+        const dayReservations=(await this.store.list<ProductionDay>('days')).flatMap(day=>day.reservations);
+        if(!dayReservations.some(row=>row.batchId===timeout.batchId&&row.dispatch?.recovery?.cacheOnly))
+          throw new ConflictException('TTS_TIMEOUT_RESERVATION_UNVERIFIED');
+        await this.pipeline.authorizeTtsTimeoutRecovery(timeout,requestId);
+      }
       if(action==='START' && body.retryTtsAdmission===true){
         const batches=await this.pipeline.listAuto();
         for(const batch of batches.filter(batch=>batch.ttsWait?.blockReason==='ADMISSION_DENIED'))
@@ -476,7 +488,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         continue;
       }
       if (slot.status === 'RUNNING' || slot.status === 'RESERVED' ||
-          (batch.ttsWait?.status === 'RESOLVED' && slot.finishedAt !== batch.completedAt)) {
+          ((batch.ttsTimeoutRecovery??batch.ttsWait)?.status === 'RESOLVED' && slot.finishedAt !== batch.completedAt)) {
         slot.batchId = batch.id;
         slot.status =
           batch.status === 'BLOCKED' || batch.status === 'FAILED'
@@ -770,7 +782,7 @@ export class AutomationService implements OnModuleInit, OnModuleDestroy {
         !infrastructure ||
         ['CLEARED', 'RETRY_ADMITTED'].includes(infrastructure.status);
       const ttsRecoveries=batches.filter(batch=>days.some(day=>day.reservations.some(slot=>slot.batchId===batch.id&&slot.dispatch)));
-      let ttsWait=ttsRecoveries.find(batch=>batch.ttsWait&&batch.ttsWait.status!=='RESOLVED');
+      let ttsWait=ttsRecoveries.find(batch=>{const wait=batch.ttsTimeoutRecovery??batch.ttsWait;return wait&&wait.status!=='RESOLVED';});
       if(!ttsWait&&canRecover&&infrastructureReady&&!this.pipeline.hasActiveAuto()&&!this.studio.hasHeavyWorker()){
         for(const batch of ttsRecoveries){
           if(!batch.dispatch?.recovery?.cacheOnly||batch.status!=='FAILED'||batch.ttsWait)continue;

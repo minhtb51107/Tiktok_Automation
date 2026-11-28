@@ -182,6 +182,28 @@ artifact only after checking the machine validation, inventory, render strategy
 and SHA-256. A blocked run keeps its checkpoint for another explicit admission
 request when headroom improves.
 
+## V1.2.2 standalone timeout recovery
+
+For the saved timeout in the standalone pilot, use the same launcher and the
+explicit timeout switch after closing development applications.
+
+```powershell
+powershell.exe -NoProfile -File .\1_nest_backend\scripts\production-acceptance.ps1 -Action Start -RetryTimeout
+```
+
+The launcher sends the exact batch, session, failed item and failure timestamp
+under `retryTtsTimeout` with the current policy revision. One authorization is
+allowed for that timeout. The prior resource retry, reservation and inference
+history remain intact. The runtime checks previous worker exit and checkpoint
+identity before admitting another worker. The unchanged Kokoro worker checks
+the ordered chunk plan again and regenerates only missing or invalid chunks.
+
+Automatic production audio uses a 240-second synthesis ceiling and a
+300-second total scene ceiling, reduced by a shorter enclosing job deadline.
+The local probe limits are unchanged. Voice diagnostics include the deadline
+policy and observed model-load, synthesis and assembly timing.
+`latest-report.json` records the underlying error when no MP4 is produced.
+
 ## Discord
 
 Set STUDIO_AUTOMATION_DISCORD_ENABLED=1 only after configuring

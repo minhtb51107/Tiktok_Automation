@@ -1,6 +1,6 @@
 /** Advisory headroom is deliberately separate from emergency stop conditions. */
 export const TTS_RESOURCE_POLICY = {version:'tts-resource/2',coldWarningMiB:1536,warmWarningMiB:384,stopMiB:256,commitStopMiB:512,probeMaxCharacters:160,probeTimeoutMs:90000};
-export type TtsFailureCategory='RESOURCE_GUARD_STOP'|'ALLOCATION_FAILURE'|'TIMEOUT'|'WINDOWS_OOM_EVIDENCE'|'UNKNOWN';
+export type TtsFailureCategory='RESOURCE_GUARD_STOP'|'ALLOCATION_FAILURE'|'TIMEOUT'|'WINDOWS_OOM_EVIDENCE'|'CLEANUP_UNVERIFIED'|'AUDIO_VALIDATION_FAILED'|'UNKNOWN';
 export class TtsExecutionError extends Error {
  constructor(readonly category:TtsFailureCategory,message:string,readonly evidence?:Record<string,unknown>){super(message);}
 }
@@ -15,6 +15,7 @@ export function ttsResourceWarnings(availableBytes:number,warm=false){
 export function ttsFailureCategory(error:unknown):TtsFailureCategory {
  if(error instanceof TtsExecutionError)return error.category;
  const message=error instanceof Error?error.message:'';
+ if(message.includes('CLEANUP_UNVERIFIED'))return 'CLEANUP_UNVERIFIED';
  if(/^(?:RESOURCE_GUARD_STOP|BLOCKED_RESOURCE):/.test(message))return 'RESOURCE_GUARD_STOP';
  return 'UNKNOWN'; // A process exit or the word OOM is not Windows evidence.
 }
@@ -22,6 +23,26 @@ export interface BoundedProbeExecution {
  mode:'LOCAL_BOUNDED_PROBE';approvalId:string;leaseToken:string;approved:true;
 }
 export const DRAFT_TTS_LIMITS={workerTimeoutMs:240000,totalTimeoutMs:300000,maxCharacters:2000};
+export function ttsDeadlines(now: number, execution?: LocalTtsExecution, productionDeadlineAt?: number) {
+  if (execution?.mode==='LOCAL_BOUNDED_PROBE') return {policy:execution.mode,totalDeadlineAt:now+120000,synthesisLimitMs:TTS_RESOURCE_POLICY.probeTimeoutMs};
+  if (execution?.mode==='LOCAL_DRAFT_BATCH') return {policy:execution.mode,totalDeadlineAt:Math.min(execution.deadlineAt,now+DRAFT_TTS_LIMITS.totalTimeoutMs),synthesisLimitMs:DRAFT_TTS_LIMITS.workerTimeoutMs};
+  if (productionDeadlineAt!==undefined) return {policy:'AUTOMATIC_PRODUCTION',totalDeadlineAt:Math.min(productionDeadlineAt,now+DRAFT_TTS_LIMITS.totalTimeoutMs),synthesisLimitMs:DRAFT_TTS_LIMITS.workerTimeoutMs};
+  return {policy:'DEFAULT',totalDeadlineAt:undefined,synthesisLimitMs:120000};
+}
+export function ttsRemainingSynthesis(plan: ReturnType<typeof ttsDeadlines>, now: number) {
+  return Math.min(plan.synthesisLimitMs,(plan.totalDeadlineAt??Infinity)-now);
+}
+export interface TtsFailureEvidence {
+  failureCategory: TtsFailureCategory;
+  error: string;
+  itemId: string;
+  elapsedMs: number;
+  completedChunks: number | null;
+  totalChunks: number | null;
+  checkpointReference: string | null;
+  deadline?: SynthesisMetrics['deadline'];
+  phaseMs?: SynthesisMetrics['phaseMs'];
+}
 export interface ApprovedDraftExecution {
  mode:'LOCAL_DRAFT_BATCH';approvalId:string;leaseToken:string;approved:true;
  inputHash:string;deadlineAt:number;
@@ -41,6 +62,8 @@ export interface SynthesisMetrics {
  runtimeBefore?:unknown;runtimeAfter?:unknown;inferenceBefore?:unknown;inferenceAfter?:unknown;
   chunkSamples?:Array<{index:number;characters:number;before:unknown;after:unknown}>;
   modelLoadStrategy?:'MMAP_ASSIGN';
+ deadline?:ReturnType<typeof ttsDeadlines>;
+ phaseMs?:{modelLoad:number|null;synthesis:number|null;assembly:number|null};
  synthesizedChunks?:number; reusedChunks?:number; modelLoads?:number;
 }
 
